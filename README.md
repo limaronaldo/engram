@@ -1,72 +1,165 @@
 # Engram
 
-**Persistent memory for AI agents.** Hybrid search, knowledge graphs, cloud sync — in a single Rust binary.
-Start free, scale later.
+**Memory infrastructure for AI agents.** Hybrid search, knowledge graphs, cloud sync — in a single Rust binary.
 
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-## Get Started
+---
 
-**Self-host (30 seconds):**
+## Choose Your Path
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### For Coding Agents
+
+Your agent remembers the code, context, and team decisions.
 
 ```bash
-# Clone + install
-git clone https://github.com/limaronaldo/engram.git
-cd engram
-cargo install --path .
+# Scan project context
+engram-cli scan .
 
-# Run as MCP server
-engram-server --mcp
+# Search decisions
+engram-cli search "why did we choose postgres"
 ```
 
-**Cloud (early access):**
-If you want a hosted MCP endpoint, open an issue with the tag `cloud` and I’ll add you to the list.
+**Key features:**
+- Project Context Discovery (CLAUDE.md, .cursorrules, etc.)
+- Decision trails with metadata + tags
+- Local-first, sync optional
+
+</td>
+<td width="50%" valign="top">
+
+### For LLM Apps
+
+Persistent memory that works in production.
+
+```bash
+# Store a memory
+curl -X POST localhost:8080/v1/memories \
+  -d '{"content": "User prefers dark mode"}'
+
+# Hybrid search
+curl localhost:8080/v1/search?q=user+preferences
+```
+
+**Key features:**
+- Hybrid search (BM25 + vectors + fuzzy)
+- MCP / REST / WebSocket / CLI
+- Predictable latency, no reindexing
+
+</td>
+</tr>
+</table>
+
+---
+
+## Quick Start
+
+```bash
+# Install
+git clone https://github.com/limaronaldo/engram.git
+cd engram && cargo install --path .
+
+# Run as MCP server (for Claude Code, Cursor, etc.)
+engram-server --mcp
+
+# Or run as HTTP API
+engram-server --http --port 8080
+```
+
+**Cloud (early access):** [Request access](https://github.com/limaronaldo/engram/issues/new?title=Cloud%20Early%20Access&labels=cloud)
 
 ---
 
 ## Why Engram
 
-AI agents forget everything between sessions. Context windows overflow. Knowledge scatters across chat logs. **Engram fixes this.**
+AI agents forget everything between sessions. Context windows overflow. Knowledge scatters across chat logs.
 
-- **Hybrid search**: BM25 + semantic vectors + fuzzy correction
-- **Knowledge graph**: cross-references, confidence decay, consolidation
-- **Multiple interfaces**: MCP, REST, WebSocket, CLI
-- **Cloud sync**: S3-compatible with optional AES-256-GCM encryption
-- **Intelligence layer**: auto-capture, quality scoring, NL commands
+| Problem | Engram Solution |
+|---------|-----------------|
+| Vector search misses keywords | **Hybrid search**: BM25 + vectors + fuzzy in one call |
+| Context lost between sessions | **Persistent memory** with SQLite + WAL |
+| No project awareness | **Project Context Discovery** (CLAUDE.md, AGENTS.md, etc.) |
+| Cloud-only options | **Local-first** with optional S3/R2 sync |
+| Python runtime required | **Single Rust binary**, no dependencies |
+
+---
+
+## How It Compares
+
+| Feature | Engram | Mem0 | Zep | Letta |
+|---------|--------|------|-----|-------|
+| Language | Rust | Python | Python | Python |
+| MCP Native | Yes | Plugin | No | No |
+| Single Binary | Yes | No | No | No |
+| Local-first | Yes | Optional | Cloud-first | Optional |
+| Hybrid Search | BM25+Vec+Fuzzy | Vec+KV | Vec+Graph | Vec |
+| Project Context | Yes | No | No | No |
+| Edge Deploy | Yes (SQLite) | No | No | No |
+
+---
+
+## Core Features
+
+### Hybrid Search
+```bash
+# Handles typos, finds semantic matches, ranks by relevance
+engram-cli search "asynch awiat rust"
+# → Returns "Use async/await for I/O-bound work in Rust"
+```
+
+### Knowledge Graph
+```bash
+# Cross-references with confidence decay
+engram-cli related 42 --depth 2
+```
+
+### Project Context Discovery
+```bash
+# Ingest AI instruction files into searchable memory
+engram-cli scan . --extract-sections
+
+# Supported: CLAUDE.md, AGENTS.md, .cursorrules, 
+# .github/copilot-instructions.md, .aider.conf.yml, etc.
+```
+
+### Multiple Interfaces
+- **MCP**: Native Model Context Protocol for Claude Code, Cursor
+- **REST**: Standard HTTP API for any client
+- **WebSocket**: Real-time updates
+- **CLI**: Developer-friendly commands
+
+---
 
 ## Editions
 
-| Edition | Who it’s for | What you get |
-|---------|--------------|--------------|
-| **Community (MIT)** | Developers, self-hosters | Single-tenant engine, MCP/REST/CLI, hybrid search, project context |
-| **Cloud (Hosted)** | Teams, no-ops users | Managed MCP/API, team workspaces, backups, usage limits |
-| **Enterprise (Self-hosted)** | Regulated orgs | SSO/SAML, audit trails, governance, SLA |
+| | Community | Cloud | Enterprise |
+|--|-----------|-------|------------|
+| **Price** | Free | $29/mo | Contact us |
+| **Deploy** | Self-host | Managed | Self-host |
+| **Tenancy** | Single | Multi | Multi |
+| **Search** | Hybrid | Hybrid | Hybrid |
+| **Project Context** | Yes | Yes | Yes |
+| **Team Workspaces** | - | Yes | Yes |
+| **SSO/SAML** | - | - | Yes |
+| **Audit Logs** | - | - | Yes |
+| **SLA** | - | 99.9% | Custom |
 
-**Plan ladder:** Community → Cloud → Enterprise.
+---
 
-## CLI Demo (90 seconds)
+## MCP Configuration
 
-```bash
-# Store a memory
-engram-cli create "Use async/await for I/O-bound work" --type learning --tags rust,async
-
-# Find it with fuzzy search
-engram-cli search "asynch awiat"
-
-# Show recent memories
-engram-cli list --limit 5
-```
-
-## MCP Quick Start
-
-Add to your MCP config (e.g., `~/.config/claude/mcp.json`):
+Add to your MCP config (`~/.config/claude/mcp.json` or similar):
 
 ```json
 {
   "mcpServers": {
-    "memory": {
-      "command": "/path/to/engram-server",
+    "engram": {
+      "command": "engram-server",
       "args": ["--mcp"],
       "env": {
         "ENGRAM_DB_PATH": "~/.local/share/engram/memories.db"
@@ -76,55 +169,75 @@ Add to your MCP config (e.g., `~/.config/claude/mcp.json`):
 }
 ```
 
-## Cloud Edition (Planned)
+### Available MCP Tools
 
-The hosted edition will expose a managed MCP/API endpoint with an API key.
+| Tool | Description |
+|------|-------------|
+| `memory_create` | Store a new memory |
+| `memory_search` | Hybrid search with typo tolerance |
+| `memory_get` | Retrieve by ID |
+| `memory_update` | Update content or metadata |
+| `memory_delete` | Remove a memory |
+| `memory_list` | List with filters |
+| `memory_related` | Find cross-references |
+| `memory_scan_project` | Ingest project context files |
+| `memory_stats` | Usage statistics |
 
-```bash
-export ENGRAM_SERVER_URL="https://your-engram-cloud-endpoint"
-export ENGRAM_API_KEY="..."
-```
+---
 
-Want early access? Open an issue with the tag `cloud`.
-
-## Project Context Discovery
-
-Engram can ingest AI instruction files and convert them into searchable memories.
-
-Supported core files (Phase 1):
-
-| File | Tool/Platform | Format |
-|------|---------------|--------|
-| `CLAUDE.md` | Claude Code | Markdown |
-| `AGENTS.md` | Various agents | Markdown |
-| `.cursorrules` | Cursor IDE | Plain text/YAML |
-| `.github/copilot-instructions.md` | GitHub Copilot | Markdown |
-| `GEMINI.md` | Gemini tools | Markdown |
-| `.aider.conf.yml` | Aider | YAML |
-| `CONVENTIONS.md` | General | Markdown |
-| `.windsurfrules` | Windsurf IDE | Plain text |
-
-Example MCP calls:
-
-```json
-{"tool": "memory_scan_project", "arguments": {"path": ".", "extract_sections": true}}
-{"tool": "memory_get_project_context", "arguments": {"path": ".", "include_sections": true}}
-```
-
-## Configuration (Essentials)
+## Configuration
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ENGRAM_DB_PATH` | Path to SQLite DB | `~/.local/share/engram/memories.db` |
+| `ENGRAM_DB_PATH` | SQLite database path | `~/.local/share/engram/memories.db` |
 | `ENGRAM_STORAGE_MODE` | `local` or `cloud-safe` | `local` |
-| `ENGRAM_CLOUD_URI` | S3 URI for cloud sync | - |
-| `ENGRAM_CLOUD_ENCRYPT` | Enable encryption | `false` |
+| `ENGRAM_CLOUD_URI` | S3/R2 URI for sync | - |
+| `ENGRAM_CLOUD_ENCRYPT` | AES-256-GCM encryption | `false` |
 
-## Status & Roadmap
+---
 
-**Status:** Actively maintained.
+## Architecture
 
-**Roadmap ideas:** file watching for project context, wildcard patterns, richer YAML sections, optional parent/child graph edges.
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         Engram Server                           │
+├─────────────────────────────────────────────────────────────────┤
+│  MCP (stdio)  │  REST (HTTP)  │  WebSocket  │  CLI              │
+├─────────────────────────────────────────────────────────────────┤
+│                    Intelligence Layer                           │
+│  • Auto-capture  • Suggestions  • Quality scoring  • NL commands│
+├─────────────────────────────────────────────────────────────────┤
+│                      Search Layer                               │
+│  • BM25 (FTS5)  • Vectors (sqlite-vec)  • Fuzzy  • RRF fusion  │
+├─────────────────────────────────────────────────────────────────┤
+│                     Storage Layer                               │
+│  • SQLite + WAL  • Connection pooling  • Optional S3/R2 sync   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Roadmap
+
+See [docs/CLOUD_ARCHITECTURE.md](docs/CLOUD_ARCHITECTURE.md) for the full Cloud roadmap.
+
+**Current focus:**
+- M1: Gateway & Auth (API gateway, tenant isolation, MCP-over-HTTP)
+- Core: Project Context Discovery (file parsing, MCP tools, search boost)
+
+---
+
+## Contributing
+
+Contributions welcome! Please read the codebase conventions in [CLAUDE.md](CLAUDE.md).
+
+```bash
+cargo test           # Run all tests
+cargo clippy         # Lint
+cargo fmt            # Format
+```
+
+---
 
 ## License
 
