@@ -27,13 +27,14 @@ pub fn bm25_search(
     // Escape special FTS5 characters
     let escaped_query = escape_fts5_query(query);
 
+    // Note: snippet() is not available with external content FTS5 tables
+    // We generate highlights manually from the content instead
     let sql = r#"
         SELECT
             m.id, m.content, m.memory_type, m.importance, m.access_count,
             m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
             m.visibility, m.version, m.has_embedding, m.metadata,
-            bm25(memories_fts) as score,
-            snippet(memories_fts, 0, '<mark>', '</mark>', '...', 32) as snippet
+            bm25(memories_fts) as score
         FROM memories_fts fts
         JOIN memories m ON fts.rowid = m.id
         WHERE memories_fts MATCH ? AND m.valid_to IS NULL
@@ -47,12 +48,11 @@ pub fn bm25_search(
     let rows = stmt.query_map(params![escaped_query, limit], |row| {
         let memory = memory_from_row(row)?;
         let score: f32 = row.get("score")?;
-        let snippet: String = row.get("snippet").unwrap_or_default();
-        Ok((memory, score, snippet))
+        Ok((memory, score))
     })?;
 
     for row in rows {
-        let (mut memory, score, snippet) = row?;
+        let (mut memory, score) = row?;
         memory.tags = load_tags(conn, memory.id)?;
 
         // BM25 returns negative scores (closer to 0 = better)
@@ -65,8 +65,8 @@ pub fn bm25_search(
             vec![]
         };
 
-        let highlights = if explain && !snippet.is_empty() {
-            vec![snippet]
+        let highlights = if explain {
+            generate_highlights(query, &memory.content)
         } else {
             vec![]
         };
@@ -177,6 +177,45 @@ fn extract_matched_terms(query: &str, content: &str) -> Vec<String> {
         })
         .map(String::from)
         .collect()
+}
+
+/// Generate highlight snippets from content (since FTS5 snippet() doesn't work with external content)
+fn generate_highlights(query: &str, content: &str) -> Vec<String> {
+    let content_lower = content.to_lowercase();
+    let terms: Vec<&str> = query
+        .split_whitespace()
+        .map(|t| t.trim_matches(|c| c == '"' || c == '*' || c == '+' || c == '-'))
+        .filter(|t| !t.is_empty())
+        .collect();
+
+    if terms.is_empty() {
+        return vec![];
+    }
+
+    // Find the first matching term and extract context around it
+    for term in &terms {
+        let term_lower = term.to_lowercase();
+        if let Some(pos) = content_lower.find(&term_lower) {
+            let start = pos.saturating_sub(30);
+            let end = (pos + term.len() + 30).min(content.len());
+
+            // Find word boundaries
+            let snippet_start = content[..start].rfind(' ').map(|p| p + 1).unwrap_or(start);
+            let snippet_end = content[end..].find(' ').map(|p| end + p).unwrap_or(end);
+
+            let mut snippet = String::new();
+            if snippet_start > 0 {
+                snippet.push_str("...");
+            }
+            snippet.push_str(content[snippet_start..snippet_end].trim());
+            if snippet_end < content.len() {
+                snippet.push_str("...");
+            }
+            return vec![snippet];
+        }
+    }
+
+    vec![]
 }
 
 /// Convert BM25 results to MatchInfo
