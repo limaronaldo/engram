@@ -25,6 +25,37 @@ This document outlines the architecture for Engram Cloud — the hosted SaaS ver
 └─────────────────────────────────────────────────────────────────┘
 ```
 
+## Cloud Roadmap (Milestones & Dependencies)
+
+This is a tighter issue list with explicit milestones and dependencies.
+
+### Milestones
+
+**M1 — Gateway & Auth (P1, urgent):** Establish hosted entry point and tenant isolation primitives.  
+**M2 — Multi-tenant & Teams (P2):** Enable shared workspaces, metering, and backups.  
+**M3 — Billing & Distribution (P2–P3):** Monetization + SDKs + public-facing polish.  
+**Core Track — Project Context Discovery (OSS):** Land the user-facing differentiator in the OSS engine.
+
+### Issues (with dependencies)
+
+| Milestone | Issue | Title | Depends On |
+|-----------|-------|-------|------------|
+| **M1** | RML-904 | API Gateway with JWT Authentication | — |
+| **M1** | RML-905 | Tenant Provisioning System | RML-904 |
+| **M1** | RML-906 | MCP-over-HTTP Protocol Bridge | RML-904 |
+| **M1** | RML-907 | Fly.io Infrastructure Setup | RML-904 |
+| **M2** | RML-908 | Team Workspaces & Member Management | RML-905 |
+| **M2** | RML-909 | Usage Tracking & Metering | RML-904 |
+| **M2** | RML-910 | Web Dashboard (Next.js) | RML-905 |
+| **M2** | RML-911 | Automated Backup & Restore | RML-905, RML-909 |
+| **M3** | RML-912 | Stripe Billing Integration | RML-909 |
+| **M3** | RML-913 | TypeScript/Python SDKs | RML-904, RML-906 |
+| **M3** | RML-914 | Marketing Landing Page | M1 complete |
+| **M3** | RML-915 | Documentation Site | M1 complete |
+| **Core** | RML-916 | Project Context Core Module (file parsing) | — |
+| **Core** | RML-917 | MCP Tools (scan/get) | RML-916 |
+| **Core** | RML-918 | Search Priority Boost | RML-916 |
+
 ## Repository Structure
 
 ### Recommended Split
@@ -45,13 +76,20 @@ github.com/limaronaldo/
 │   └── README.md
 │
 ├── engram-cloud/              # PRIVATE - Cloud control plane
-│   ├── gateway/              # Multi-tenant API gateway
-│   ├── auth/                 # Auth0/Clerk integration
+│   ├── gateway/              # Multi-tenant API gateway (Rust/Axum)
+│   ├── dashboard/            # Next.js web dashboard
+│   │   ├── app/              # App Router pages
+│   │   ├── lib/
+│   │   │   ├── auth.ts       # Neon Auth client setup
+│   │   │   ├── db.ts         # Drizzle + Neon connection
+│   │   │   └── stripe.ts     # Stripe client
+│   │   └── components/       # React components
+│   ├── db/                   # Neon PostgreSQL schema
+│   │   ├── schema.ts         # Drizzle schema (tenants, usage, etc.)
+│   │   └── migrations/       # Database migrations
 │   ├── billing/              # Stripe integration
-│   ├── tenants/              # Workspace/org management
 │   ├── quotas/               # Rate limiting, usage tracking
-│   ├── admin/                # Admin dashboard
-│   ├── infra/                # Terraform, K8s manifests
+│   ├── infra/                # Fly.io config, deploy scripts
 │   └── workers/              # Background jobs
 │
 └── engram-enterprise/         # PRIVATE (optional) - Enterprise features
@@ -101,13 +139,25 @@ github.com/limaronaldo/
 │  │                    Managed Storage                             │     │
 │  │  ┌─────────┐  ┌─────────┐  ┌─────────┐                        │     │
 │  │  │ SQLite  │  │ SQLite  │  │ SQLite  │   (per-tenant DBs)     │     │
-│  │  │ Tenant A│  │ Tenant B│  │ Tenant C│                        │     │
+│  │  │ Tenant A│  │ Tenant B│  │ Tenant C│   on Fly.io volumes    │     │
 │  │  └─────────┘  └─────────┘  └─────────┘                        │     │
 │  │                                                                │     │
 │  │  ┌─────────────────────────────────────────────────────┐      │     │
-│  │  │              Object Storage (S3/R2)                  │      │     │
+│  │  │              Object Storage (Cloudflare R2)          │      │     │
 │  │  │  • DB backups  • Large embeddings  • Exports         │      │     │
 │  │  └─────────────────────────────────────────────────────┘      │     │
+│  └───────────────────────────────────────────────────────────────┘     │
+│                                                                         │
+│  ┌───────────────────────────────────────────────────────────────┐     │
+│  │                 Neon PostgreSQL (Control Plane)                │     │
+│  │  ┌─────────────────────┐  ┌─────────────────────────────┐     │     │
+│  │  │    neon_auth.*      │  │      engram schema          │     │     │
+│  │  │  • users            │  │  • tenants                  │     │     │
+│  │  │  • sessions         │  │  • workspaces               │     │     │
+│  │  │  • accounts         │  │  • api_keys                 │     │     │
+│  │  │  • organizations    │  │  • usage_daily              │     │     │
+│  │  │  • jwks             │  │  • subscriptions            │     │     │
+│  │  └─────────────────────┘  └─────────────────────────────┘     │     │
 │  └───────────────────────────────────────────────────────────────┘     │
 │                                                                         │
 │                         ENGRAM CLOUD                                    │
@@ -296,16 +346,20 @@ For high-performance needs:
 - **Rust + Axum** (consistency with core)
 - Or **Go** (fast iteration, good for APIs)
 
-### Auth
-- **Clerk** or **Auth0** (faster to market)
-- Or build with JWT + refresh tokens
+### Database & Auth
+- **Neon PostgreSQL** for control plane metadata (tenants, usage, billing)
+- **Neon Auth with Better Auth** for authentication
+  - Users, sessions, organizations stored in `neon_auth` schema
+  - Branch-aware auth (preview envs get isolated auth state)
+  - JWT tokens for API auth + RLS policies
+  - SDK: `@neondatabase/neon-js/auth`
 
 ### Billing
 - **Stripe** (metered billing, subscriptions)
 
 ### Infrastructure
-- **Fly.io** (simple, scales well, SQLite-friendly)
-- Or **Railway** / **Render** for MVP
+- **Fly.io** (simple, scales well, SQLite-friendly for tenant DBs)
+- **Neon PostgreSQL** (control plane, serverless, branching)
 - **Cloudflare R2** for storage (S3-compatible, cheap)
 
 ### Monitoring
@@ -313,12 +367,254 @@ For high-performance needs:
 - **Sentry** for errors
 - **BetterUptime** for status page
 
+## Neon Auth Integration
+
+### Overview
+
+Engram Cloud uses **Neon Auth with Better Auth** for authentication. All auth data lives directly in the Neon PostgreSQL database under the `neon_auth` schema, making it branch-compatible for preview environments.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Neon PostgreSQL                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  neon_auth schema (managed)      engram schema (application)    │
+│  ─────────────────────────       ──────────────────────────     │
+│  • neon_auth.user               • tenants                       │
+│  • neon_auth.session            • workspaces                    │
+│  • neon_auth.account            • api_keys                      │
+│  • neon_auth.organization       • usage_daily                   │
+│  • neon_auth.jwks               • subscriptions                 │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Dashboard Auth Setup (`dashboard/lib/auth.ts`)
+
+```typescript
+import { createAuthClient } from '@neondatabase/neon-js/auth';
+
+export const authClient = createAuthClient(
+  process.env.NEXT_PUBLIC_NEON_AUTH_URL!
+);
+
+// Get current user session
+export async function getSession() {
+  return authClient.getSession();
+}
+
+// Sign out
+export async function signOut() {
+  return authClient.signOut();
+}
+```
+
+### Auth UI Components (`dashboard/app/layout.tsx`)
+
+```tsx
+import { NeonAuthUIProvider, AuthView } from '@neondatabase/neon-js/auth/react/ui';
+import { authClient } from '@/lib/auth';
+
+export default function RootLayout({ children }) {
+  return (
+    <NeonAuthUIProvider authClient={authClient}>
+      {children}
+    </NeonAuthUIProvider>
+  );
+}
+
+// Sign-in page
+export function SignInPage() {
+  return <AuthView pathname="sign-in" />;
+}
+```
+
+### Database Schema with RLS (`db/schema.ts`)
+
+```typescript
+import { pgTable, uuid, text, timestamp, bigint, boolean } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+
+// Tenants table with RLS
+export const tenants = pgTable('tenants', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: text('name').notNull(),
+  ownerId: text('owner_id').notNull(),  // References neon_auth.user.id
+  plan: text('plan').default('free'),
+  stripeCustomerId: text('stripe_customer_id'),
+  stripeSubscriptionId: text('stripe_subscription_id'),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+// Workspaces within a tenant
+export const workspaces = pgTable('workspaces', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').references(() => tenants.id),
+  name: text('name').notNull(),
+  dbPath: text('db_path').notNull(),  // Path to tenant's SQLite DB
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+// API keys for programmatic access
+export const apiKeys = pgTable('api_keys', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').references(() => tenants.id),
+  name: text('name').notNull(),
+  keyHash: text('key_hash').notNull(),  // bcrypt hash of key
+  prefix: text('prefix').notNull(),      // ek_live_xxx (shown to user)
+  lastUsedAt: timestamp('last_used_at'),
+  expiresAt: timestamp('expires_at'),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+// Daily usage tracking
+export const usageDaily = pgTable('usage_daily', {
+  tenantId: uuid('tenant_id').references(() => tenants.id),
+  workspaceId: uuid('workspace_id').references(() => workspaces.id),
+  date: timestamp('date'),
+  apiCalls: bigint('api_calls', { mode: 'number' }).default(0),
+  memoriesCreated: bigint('memories_created', { mode: 'number' }).default(0),
+  searchQueries: bigint('search_queries', { mode: 'number' }).default(0),
+  storageBytes: bigint('storage_bytes', { mode: 'number' }).default(0),
+});
+```
+
+### RLS Policies (SQL)
+
+```sql
+-- Enable RLS on all tables
+ALTER TABLE tenants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE workspaces ENABLE ROW LEVEL SECURITY;
+ALTER TABLE api_keys ENABLE ROW LEVEL SECURITY;
+
+-- Helper function to get current user ID from Neon Auth JWT
+CREATE OR REPLACE FUNCTION auth.uid() RETURNS TEXT AS $$
+  SELECT current_setting('request.jwt.claims', true)::json->>'sub'
+$$ LANGUAGE SQL STABLE;
+
+-- Tenants: users can only see their own tenants
+CREATE POLICY "Users can view own tenants"
+  ON tenants FOR SELECT
+  TO authenticated
+  USING (owner_id = auth.uid());
+
+CREATE POLICY "Users can create tenants"
+  ON tenants FOR INSERT
+  TO authenticated
+  WITH CHECK (owner_id = auth.uid());
+
+-- Workspaces: users can see workspaces in their tenants
+CREATE POLICY "Users can view tenant workspaces"
+  ON workspaces FOR SELECT
+  TO authenticated
+  USING (tenant_id IN (
+    SELECT id FROM tenants WHERE owner_id = auth.uid()
+  ));
+
+-- API keys: users can manage keys for their tenants
+CREATE POLICY "Users can manage tenant API keys"
+  ON api_keys FOR ALL
+  TO authenticated
+  USING (tenant_id IN (
+    SELECT id FROM tenants WHERE owner_id = auth.uid()
+  ));
+```
+
+### Gateway JWT Validation (`gateway/src/auth.rs`)
+
+```rust
+use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NeonAuthClaims {
+    pub sub: String,        // User ID
+    pub email: String,
+    pub role: String,
+    pub exp: usize,
+}
+
+pub struct AuthService {
+    jwks: JwksCache,  // Cached JWKS from Neon
+}
+
+impl AuthService {
+    /// Validate JWT from Neon Auth
+    pub async fn validate_jwt(&self, token: &str) -> Result<NeonAuthClaims, AuthError> {
+        let header = jsonwebtoken::decode_header(token)?;
+        let kid = header.kid.ok_or(AuthError::MissingKeyId)?;
+        
+        let key = self.jwks.get_key(&kid).await?;
+        let validation = Validation::new(Algorithm::RS256);
+        
+        let token_data = decode::<NeonAuthClaims>(
+            token,
+            &DecodingKey::from_rsa_pem(key.as_bytes())?,
+            &validation
+        )?;
+        
+        Ok(token_data.claims)
+    }
+    
+    /// Validate API key (for programmatic access)
+    pub async fn validate_api_key(&self, key: &str) -> Result<TenantId, AuthError> {
+        // API keys start with ek_live_ or ek_test_
+        let prefix = &key[..12];
+        
+        // Look up in database by prefix, verify hash
+        let api_key = sqlx::query_as!(ApiKey,
+            "SELECT * FROM api_keys WHERE prefix = $1",
+            prefix
+        ).fetch_optional(&self.pool).await?;
+        
+        match api_key {
+            Some(k) if bcrypt::verify(key, &k.key_hash)? => {
+                Ok(k.tenant_id)
+            }
+            _ => Err(AuthError::InvalidApiKey)
+        }
+    }
+}
+```
+
+### Environment Variables
+
+```bash
+# Neon Database
+DATABASE_URL=postgresql://user:pass@ep-xxx.us-east-2.aws.neon.tech/engram_cloud
+
+# Neon Auth (provided by Neon console)
+NEXT_PUBLIC_NEON_AUTH_URL=https://auth.neon.tech/your-project-id
+
+# Stripe
+STRIPE_SECRET_KEY=sk_live_xxx
+STRIPE_WEBHOOK_SECRET=whsec_xxx
+
+# Gateway
+GATEWAY_PORT=8080
+JWKS_URL=https://auth.neon.tech/your-project-id/.well-known/jwks.json
+```
+
+### Benefits of Neon Auth
+
+1. **Branch-aware**: Preview branches get isolated auth state
+2. **SQL-queryable**: Join `neon_auth.user` with your tables directly
+3. **No external deps**: Auth data lives in your database
+4. **RLS integration**: JWT claims work with Row Level Security
+5. **Better Auth foundation**: Familiar APIs, extensible
+
 ## API Design
 
 ### Authentication
 
 ```bash
-# All requests require API key
+# Option 1: JWT from Neon Auth (web dashboard)
+curl -H "Authorization: Bearer eyJhbG..." \
+  https://api.engram.dev/v1/memories
+
+# Option 2: API key (programmatic access)
 curl -H "Authorization: Bearer ek_live_xxx" \
   https://api.engram.dev/v1/memories
 ```
