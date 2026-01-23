@@ -38,23 +38,68 @@ This is a tighter issue list with explicit milestones and dependencies.
 
 ### Issues (with dependencies)
 
-| Milestone | Issue | Title | Depends On |
-|-----------|-------|-------|------------|
-| **M1** | RML-904 | API Gateway with JWT Authentication | — |
-| **M1** | RML-905 | Tenant Provisioning System | RML-904 |
-| **M1** | RML-906 | MCP-over-HTTP Protocol Bridge | RML-904 |
-| **M1** | RML-907 | Fly.io Infrastructure Setup | RML-904 |
-| **M2** | RML-908 | Team Workspaces & Member Management | RML-905 |
-| **M2** | RML-909 | Usage Tracking & Metering | RML-904 |
-| **M2** | RML-910 | Web Dashboard (Next.js) | RML-905 |
-| **M2** | RML-911 | Automated Backup & Restore | RML-905, RML-909 |
-| **M3** | RML-912 | Stripe Billing Integration | RML-909 |
-| **M3** | RML-913 | TypeScript/Python SDKs | RML-904, RML-906 |
-| **M3** | RML-914 | Marketing Landing Page | M1 complete |
-| **M3** | RML-915 | Documentation Site | M1 complete |
-| **Core** | RML-916 | Project Context Core Module (file parsing) | — |
-| **Core** | RML-917 | MCP Tools (scan/get) | RML-916 |
-| **Core** | RML-918 | Search Priority Boost | RML-916 |
+| Milestone | Issue | Title | Depends On | Est. |
+|-----------|-------|-------|------------|------|
+| **M1** | RML-904 | API Gateway with JWT Authentication | — | 1w |
+| **M1** | RML-919 | Tenant Data Isolation & RLS | RML-904 | 0.5w |
+| **M1** | RML-905 | Tenant Provisioning System | RML-904, RML-919 | 1w |
+| **M1** | RML-906 | MCP-over-HTTP Protocol Bridge | RML-904 | 1w |
+| **M1** | RML-907 | Fly.io Infrastructure Setup | RML-904, RML-905 | 1w |
+| **M1** | RML-920 | Observability (Logging, Metrics, Tracing) | RML-904 | 1w |
+| **M2** | RML-908 | Team Workspaces & Member Management | RML-905 | 1w |
+| **M2** | RML-909 | Usage Tracking & Metering | RML-904, RML-920 | 1w |
+| **M2** | RML-910 | Web Dashboard (Next.js + Neon Auth) | RML-905, RML-909 | 2w |
+| **M2** | RML-911 | Automated Backup & Restore | RML-905, RML-907 | 1w |
+| **M2** | RML-921 | Secrets & API Key Management | RML-905 | 0.5w |
+| **M2** | RML-922 | Operational Runbooks | RML-907, RML-911 | 0.5w |
+| **M3** | RML-912 | Stripe Billing Integration | RML-909, RML-910 | 1w |
+| **M3** | RML-913 | TypeScript/Python SDKs | RML-904, RML-906 | 1.5w |
+| **M3** | RML-914 | Marketing Landing Page | M1 complete | 1w |
+| **M3** | RML-915 | Documentation Site | M1 complete | 1.5w |
+| **M3** | RML-923 | SOC2 Compliance Baseline | M2 complete | 2w |
+| **Core** | RML-916 | Project Context Core Module | — | 1w |
+| **Core** | RML-917 | Project Context MCP Tools | RML-916 | 0.5w |
+| **Core** | RML-918 | Project Context Search Boost | RML-916 | 0.5w |
+
+### Timeline Summary
+
+| Milestone | Issues | Duration | Cumulative |
+|-----------|--------|----------|------------|
+| **M1** | 6 | ~5 weeks | Week 5 |
+| **M2** | 6 | ~6 weeks | Week 11 |
+| **M3** | 5 | ~7 weeks | Week 18 |
+| **Core** | 3 | ~2 weeks | (parallel) |
+
+> **Note:** Core track runs in parallel with M1-M2. Total to revenue-ready: ~18 weeks.
+
+### Definition of Done
+
+#### M1 — Gateway & Auth
+- [ ] Gateway deployed on Fly.io, accepting requests
+- [ ] Neon Auth JWT + API key validation working
+- [ ] RLS policies enforced on all control plane tables
+- [ ] MCP tools callable via HTTP with auth
+- [ ] Structured logging with trace IDs
+- [ ] Basic metrics dashboard (latency, error rate)
+- [ ] First external tenant onboarded (dogfood)
+
+#### M2 — Multi-tenant & Teams
+- [ ] Team invites and role-based access working
+- [ ] Usage tracking accurate within 1% of actual
+- [ ] Dashboard shows usage, workspaces, API keys
+- [ ] Daily backups to R2 with verified restore
+- [ ] API key rotation without downtime
+- [ ] Runbooks documented and tested
+- [ ] 10+ beta tenants onboarded
+
+#### M3 — Billing & Distribution
+- [ ] Stripe checkout and subscription management live
+- [ ] Plan limits enforced (free tier caps)
+- [ ] SDKs published to npm and PyPI
+- [ ] Landing page live with signup flow
+- [ ] Docs site covers all APIs and guides
+- [ ] SOC2 readiness assessment complete
+- [ ] Public launch announcement ready
 
 ## Repository Structure
 
