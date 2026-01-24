@@ -107,6 +107,9 @@ impl EngramHandler {
             "memory_get_entities" => self.tool_get_entities(params),
             "memory_search_entities" => self.tool_search_entities(params),
             "memory_entity_stats" => self.tool_entity_stats(params),
+            // Graph traversal tools (RML-926)
+            "memory_traverse" => self.tool_memory_traverse(params),
+            "memory_find_path" => self.tool_find_path(params),
             _ => json!({"error": format!("Unknown tool: {}", name)}),
         }
     }
@@ -234,12 +237,37 @@ impl EngramHandler {
     }
 
     fn tool_memory_related(&self, params: Value) -> Value {
+        use engram::storage::graph_queries::{get_related_multi_hop, TraversalOptions};
+
         let id = params.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+        let depth = params.get("depth").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
+        let include_entities = params
+            .get("include_entities")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        // For backward compatibility, depth=1 uses the simple get_related
+        if depth <= 1 && !include_entities {
+            return self
+                .storage
+                .with_connection(|conn| {
+                    let related = get_related(conn, id)?;
+                    Ok(json!(related))
+                })
+                .unwrap_or_else(|e| json!({"error": e.to_string()}));
+        }
+
+        // Use multi-hop traversal for depth > 1 or when entities are included
+        let options = TraversalOptions {
+            depth,
+            include_entities,
+            ..Default::default()
+        };
 
         self.storage
             .with_connection(|conn| {
-                let related = get_related(conn, id)?;
-                Ok(json!(related))
+                let result = get_related_multi_hop(conn, id, &options)?;
+                Ok(json!(result))
             })
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }
@@ -1008,6 +1036,103 @@ impl EngramHandler {
             .with_connection(|conn| {
                 let stats = get_entity_stats(conn)?;
                 Ok(json!(stats))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // =========================================================================
+    // Graph Traversal Tools (RML-926)
+    // =========================================================================
+
+    fn tool_memory_traverse(&self, params: Value) -> Value {
+        use engram::storage::graph_queries::{
+            get_related_multi_hop, TraversalDirection, TraversalOptions,
+        };
+        use engram::types::EdgeType;
+
+        let id = params.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+        let depth = params.get("depth").and_then(|v| v.as_u64()).unwrap_or(2) as usize;
+        let include_entities = params
+            .get("include_entities")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let min_score = params
+            .get("min_score")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+        let min_confidence = params
+            .get("min_confidence")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+        let limit_per_hop = params
+            .get("limit_per_hop")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(50) as usize;
+
+        // Parse direction
+        let direction = match params.get("direction").and_then(|v| v.as_str()) {
+            Some("outgoing") => TraversalDirection::Outgoing,
+            Some("incoming") => TraversalDirection::Incoming,
+            _ => TraversalDirection::Both,
+        };
+
+        // Parse edge types filter
+        let edge_types: Vec<EdgeType> = params
+            .get("edge_types")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .filter_map(|s| s.parse().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let options = TraversalOptions {
+            depth,
+            edge_types,
+            min_score,
+            min_confidence,
+            limit_per_hop,
+            include_entities,
+            direction,
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let result = get_related_multi_hop(conn, id, &options)?;
+                Ok(json!(result))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_find_path(&self, params: Value) -> Value {
+        use engram::storage::graph_queries::find_path;
+
+        let from_id = params.get("from_id").and_then(|v| v.as_i64()).unwrap_or(0);
+        let to_id = params.get("to_id").and_then(|v| v.as_i64()).unwrap_or(0);
+        let max_depth = params
+            .get("max_depth")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5) as usize;
+
+        self.storage
+            .with_connection(|conn| {
+                let path = find_path(conn, from_id, to_id, max_depth)?;
+                match path {
+                    Some(node) => Ok(json!({
+                        "found": true,
+                        "path": node.path,
+                        "edge_path": node.edge_path,
+                        "depth": node.depth,
+                        "cumulative_score": node.cumulative_score,
+                        "connection_type": node.connection_type
+                    })),
+                    None => Ok(json!({
+                        "found": false,
+                        "message": format!("No path found from {} to {} within depth {}", from_id, to_id, max_depth)
+                    })),
+                }
             })
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }

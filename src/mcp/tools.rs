@@ -150,11 +150,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
     ),
     (
         "memory_related",
-        "Get all memories related to a given memory",
+        "Get memories related to a given memory with optional multi-hop traversal",
         r#"{
             "type": "object",
             "properties": {
-                "id": {"type": "integer"},
+                "id": {"type": "integer", "description": "Starting memory ID"},
+                "depth": {"type": "integer", "default": 1, "description": "Traversal depth (1 = direct relations only)"},
+                "include_entities": {"type": "boolean", "default": true, "description": "Include connections through shared entities"},
                 "edge_type": {"type": "string", "description": "Filter by edge type"},
                 "include_decayed": {"type": "boolean", "default": false}
             },
@@ -354,6 +356,82 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "include_sections": {"type": "boolean", "default": true, "description": "Include section memories"},
                 "file_types": {"type": "array", "items": {"type": "string"}, "description": "Filter by file type (claude-md, cursorrules, etc.)"}
             }
+        }"#,
+    ),
+    // Entity Extraction (RML-925)
+    (
+        "memory_extract_entities",
+        "Extract named entities (people, organizations, projects, concepts) from a memory and store them",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID to extract entities from"}
+            },
+            "required": ["id"]
+        }"#,
+    ),
+    (
+        "memory_get_entities",
+        "Get all entities linked to a memory",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID"}
+            },
+            "required": ["id"]
+        }"#,
+    ),
+    (
+        "memory_search_entities",
+        "Search for entities by name prefix",
+        r#"{
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query (prefix match)"},
+                "entity_type": {"type": "string", "description": "Filter by entity type (person, organization, project, concept, etc.)"},
+                "limit": {"type": "integer", "default": 20}
+            },
+            "required": ["query"]
+        }"#,
+    ),
+    (
+        "memory_entity_stats",
+        "Get statistics about extracted entities",
+        r#"{
+            "type": "object",
+            "properties": {}
+        }"#,
+    ),
+    // Graph Traversal (RML-926)
+    (
+        "memory_traverse",
+        "Traverse the knowledge graph from a starting memory with full control over traversal options",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Starting memory ID"},
+                "depth": {"type": "integer", "default": 2, "description": "Maximum traversal depth"},
+                "direction": {"type": "string", "enum": ["outgoing", "incoming", "both"], "default": "both"},
+                "edge_types": {"type": "array", "items": {"type": "string"}, "description": "Filter by edge types (related_to, depends_on, etc.)"},
+                "min_score": {"type": "number", "default": 0, "description": "Minimum edge score threshold"},
+                "min_confidence": {"type": "number", "default": 0, "description": "Minimum confidence threshold"},
+                "limit_per_hop": {"type": "integer", "default": 50, "description": "Max results per hop"},
+                "include_entities": {"type": "boolean", "default": true, "description": "Include entity-based connections"}
+            },
+            "required": ["id"]
+        }"#,
+    ),
+    (
+        "memory_find_path",
+        "Find the shortest path between two memories in the knowledge graph",
+        r#"{
+            "type": "object",
+            "properties": {
+                "from_id": {"type": "integer", "description": "Starting memory ID"},
+                "to_id": {"type": "integer", "description": "Target memory ID"},
+                "max_depth": {"type": "integer", "default": 5, "description": "Maximum path length to search"}
+            },
+            "required": ["from_id", "to_id"]
         }"#,
     ),
 ];
