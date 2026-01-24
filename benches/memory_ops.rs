@@ -23,6 +23,7 @@ fn bench_memory_create(c: &mut Criterion) {
                         metadata: Default::default(),
                         importance: Some(0.5),
                         defer_embedding: true,
+                        scope: MemoryScope::Global,
                     };
                     create_memory(conn, &input)
                 })
@@ -48,6 +49,7 @@ fn bench_memory_get(c: &mut Criterion) {
                     metadata: Default::default(),
                     importance: Some(0.5),
                     defer_embedding: true,
+                    scope: MemoryScope::Global,
                 };
                 create_memory(conn, &input)
             })
@@ -93,6 +95,7 @@ fn bench_memory_list(c: &mut Criterion) {
                     metadata: Default::default(),
                     importance: Some((i % 10) as f32 / 10.0),
                     defer_embedding: true,
+                    scope: MemoryScope::Global,
                 };
                 create_memory(conn, &input)
             })
@@ -152,6 +155,7 @@ fn bench_crossref_operations(c: &mut Criterion) {
                     metadata: Default::default(),
                     importance: None,
                     defer_embedding: true,
+                    scope: MemoryScope::Global,
                 };
                 create_memory(conn, &input)
             })
@@ -229,6 +233,7 @@ fn bench_stats(c: &mut Criterion) {
                     metadata: Default::default(),
                     importance: None,
                     defer_embedding: true,
+                    scope: MemoryScope::Global,
                 };
                 create_memory(conn, &input)
             })
@@ -236,7 +241,7 @@ fn bench_stats(c: &mut Criterion) {
     }
 
     c.bench_function("get_stats", |b| {
-        b.iter(|| storage.with_connection(|conn| get_stats(conn)).unwrap())
+        b.iter(|| storage.with_connection(get_stats).unwrap())
     });
 }
 

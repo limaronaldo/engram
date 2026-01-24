@@ -1,9 +1,8 @@
 //! Performance benchmarks for search operations (RML-902)
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use engram::embedding::{create_embedder, TfIdfEmbedder};
-use engram::search::bm25::bm25_search;
-use engram::search::{hybrid_search, FuzzyEngine, SearchConfig};
+use engram::embedding::{Embedder, TfIdfEmbedder};
+use engram::search::{bm25_search, hybrid_search, FuzzyEngine, SearchConfig};
 use engram::storage::queries::*;
 use engram::storage::Storage;
 use engram::types::*;
@@ -40,6 +39,7 @@ fn setup_storage_with_data(count: usize) -> Storage {
                     metadata: Default::default(),
                     importance: Some((i % 10) as f32 / 10.0),
                     defer_embedding: true,
+                    scope: MemoryScope::Global,
                 };
                 create_memory(conn, &input)
             })
@@ -215,8 +215,8 @@ fn bench_search_at_scale(c: &mut Criterion) {
 
         group.bench_with_input(
             BenchmarkId::new("memories", size),
-            &(query, &query_embedding),
-            |b, (query, embedding)| {
+            &(query.to_string(), query_embedding.clone()),
+            |b, (query, embedding): &(String, Vec<f32>)| {
                 b.iter(|| {
                     let options = SearchOptions {
                         limit: Some(10),
@@ -226,7 +226,7 @@ fn bench_search_at_scale(c: &mut Criterion) {
                         .with_connection(|conn| {
                             hybrid_search(
                                 conn,
-                                black_box(query),
+                                black_box(query.as_str()),
                                 Some(embedding.as_slice()),
                                 &options,
                                 &config,
