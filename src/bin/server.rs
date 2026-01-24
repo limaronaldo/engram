@@ -386,7 +386,7 @@ impl EngramHandler {
         let max_nodes = params
             .get("max_nodes")
             .and_then(|v| v.as_i64())
-            .unwrap_or(500) as i64;
+            .unwrap_or(500);
 
         self.storage
             .with_connection(|conn| {
@@ -987,18 +987,14 @@ impl EngramHandler {
             }
         };
 
-        let mut config = IngestConfig::default();
-        config.format = format;
-        if let Some(chunk_size) = input.chunk_size {
-            config.chunk_size = chunk_size;
-        }
-        if let Some(overlap) = input.overlap {
-            config.overlap = overlap;
-        }
-        if let Some(max_file_size) = input.max_file_size {
-            config.max_file_size = max_file_size;
-        }
-        config.extra_tags = input.tags.unwrap_or_default();
+        let default_config = IngestConfig::default();
+        let config = IngestConfig {
+            format,
+            chunk_size: input.chunk_size.unwrap_or(default_config.chunk_size),
+            overlap: input.overlap.unwrap_or(default_config.overlap),
+            max_file_size: input.max_file_size.unwrap_or(default_config.max_file_size),
+            extra_tags: input.tags.unwrap_or_default(),
+        };
 
         let ingestor = DocumentIngestor::new(&self.storage);
         match ingestor.ingest_file(&input.path, config) {
@@ -1272,61 +1268,6 @@ impl EngramHandler {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::tempdir;
-
-    fn test_handler() -> EngramHandler {
-        let storage = Storage::open_in_memory().unwrap();
-        let embedder = create_embedder(&EmbeddingConfig::default()).unwrap();
-        EngramHandler {
-            storage,
-            embedder,
-            fuzzy_engine: Arc::new(Mutex::new(FuzzyEngine::new())),
-            search_config: SearchConfig::default(),
-        }
-    }
-
-    #[test]
-    fn test_tool_ingest_document_idempotent() {
-        let dir = tempdir().unwrap();
-        let file_path = dir.path().join("doc.md");
-        std::fs::write(&file_path, "# Title\n\nHello world.\n").unwrap();
-
-        let handler = test_handler();
-
-        let first = handler.tool_ingest_document(json!({
-            "path": file_path.to_string_lossy(),
-            "format": "md"
-        }));
-        assert!(first.get("error").is_none(), "first ingest error: {first}");
-        assert!(
-            first
-                .get("chunks_created")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0)
-                > 0
-        );
-
-        let second = handler.tool_ingest_document(json!({
-            "path": file_path.to_string_lossy(),
-            "format": "md"
-        }));
-        assert!(
-            second.get("error").is_none(),
-            "second ingest error: {second}"
-        );
-        assert_eq!(
-            second
-                .get("chunks_created")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(1),
-            0
-        );
-    }
-}
-
 impl McpHandler for EngramHandler {
     fn handle_request(&self, request: McpRequest) -> McpResponse {
         match request.method.as_str() {
@@ -1425,4 +1366,59 @@ fn main() -> Result<()> {
     server.run()?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn test_handler() -> EngramHandler {
+        let storage = Storage::open_in_memory().unwrap();
+        let embedder = create_embedder(&EmbeddingConfig::default()).unwrap();
+        EngramHandler {
+            storage,
+            embedder,
+            fuzzy_engine: Arc::new(Mutex::new(FuzzyEngine::new())),
+            search_config: SearchConfig::default(),
+        }
+    }
+
+    #[test]
+    fn test_tool_ingest_document_idempotent() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("doc.md");
+        std::fs::write(&file_path, "# Title\n\nHello world.\n").unwrap();
+
+        let handler = test_handler();
+
+        let first = handler.tool_ingest_document(json!({
+            "path": file_path.to_string_lossy(),
+            "format": "md"
+        }));
+        assert!(first.get("error").is_none(), "first ingest error: {first}");
+        assert!(
+            first
+                .get("chunks_created")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                > 0
+        );
+
+        let second = handler.tool_ingest_document(json!({
+            "path": file_path.to_string_lossy(),
+            "format": "md"
+        }));
+        assert!(
+            second.get("error").is_none(),
+            "second ingest error: {second}"
+        );
+        assert_eq!(
+            second
+                .get("chunks_created")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1),
+            0
+        );
+    }
 }

@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Options for point-in-time queries
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TemporalQueryOptions {
     /// The point in time to query (None = current)
     pub as_of: Option<DateTime<Utc>>,
@@ -29,19 +29,6 @@ pub struct TemporalQueryOptions {
     /// Include deleted memories (if tracking soft deletes)
     #[serde(default)]
     pub include_deleted: bool,
-}
-
-impl Default for TemporalQueryOptions {
-    fn default() -> Self {
-        Self {
-            as_of: None,
-            created_after: None,
-            created_before: None,
-            updated_after: None,
-            updated_before: None,
-            include_deleted: false,
-        }
-    }
 }
 
 impl TemporalQueryOptions {

@@ -186,7 +186,7 @@ impl QualityScorer {
                 / word_count as f32;
 
             // Words between 3-10 chars are typically clear
-            if avg_word_len >= 3.0 && avg_word_len <= 10.0 {
+            if (3.0..=10.0).contains(&avg_word_len) {
                 score += 0.2;
             }
         }

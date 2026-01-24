@@ -39,7 +39,7 @@ impl TfIdfEmbedder {
     fn hash_sign(token: &str) -> f32 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         format!("{}_sign", token).hash(&mut hasher);
-        if hasher.finish() % 2 == 0 {
+        if hasher.finish().is_multiple_of(2) {
             1.0
         } else {
             -1.0

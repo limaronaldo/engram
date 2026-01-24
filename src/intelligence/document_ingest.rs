@@ -59,6 +59,7 @@ impl DocumentFormat {
     }
 
     /// Parse format from string
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "md" | "markdown" => Some(DocumentFormat::Markdown),
@@ -702,8 +703,10 @@ Content for section 2.
         let storage = Storage::open_in_memory().unwrap();
         let ingestor = DocumentIngestor::new(&storage);
 
-        let mut config = IngestConfig::default();
-        config.chunk_size = 0;
+        let config = IngestConfig {
+            chunk_size: 0,
+            ..Default::default()
+        };
 
         let err = ingestor.ingest_file(&file_path, config).unwrap_err();
         assert!(err.to_string().contains("chunk_size"));
@@ -718,9 +721,11 @@ Content for section 2.
         let storage = Storage::open_in_memory().unwrap();
         let ingestor = DocumentIngestor::new(&storage);
 
-        let mut config = IngestConfig::default();
-        config.chunk_size = 200;
-        config.overlap = 200;
+        let config = IngestConfig {
+            chunk_size: 200,
+            overlap: 200,
+            ..Default::default()
+        };
 
         let err = ingestor.ingest_file(&file_path, config).unwrap_err();
         assert!(err.to_string().contains("overlap"));
@@ -735,8 +740,10 @@ Content for section 2.
         let storage = Storage::open_in_memory().unwrap();
         let ingestor = DocumentIngestor::new(&storage);
 
-        let mut config = IngestConfig::default();
-        config.format = Some(DocumentFormat::Pdf);
+        let config = IngestConfig {
+            format: Some(DocumentFormat::Pdf),
+            ..Default::default()
+        };
 
         let err = ingestor.ingest_file(&file_path, config).unwrap_err();
         assert!(err.to_string().contains("PDF"));

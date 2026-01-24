@@ -346,7 +346,7 @@ fn get_edges_for_traversal(
     let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
     let crossrefs = stmt
-        .query_map(param_refs.as_slice(), |row| crossref_from_row(row))?
+        .query_map(param_refs.as_slice(), crossref_from_row)?
         .filter_map(|r| r.ok())
         .collect();
 

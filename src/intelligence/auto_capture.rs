@@ -731,8 +731,10 @@ mod tests {
 
     #[test]
     fn test_disabled_capture() {
-        let mut config = AutoCaptureConfig::default();
-        config.enabled = false;
+        let config = AutoCaptureConfig {
+            enabled: false,
+            ..Default::default()
+        };
 
         let engine = AutoCaptureEngine::new(config);
         let candidates = engine.analyze("We decided to use Rust for everything", "conversation");

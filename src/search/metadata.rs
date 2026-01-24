@@ -18,7 +18,7 @@ pub enum MetadataQuery {
 }
 
 /// Query operators
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct QueryOperators {
     #[serde(rename = "$eq")]
     pub eq: Option<Value>,
@@ -42,24 +42,6 @@ pub struct QueryOperators {
     pub exists: Option<bool>,
     #[serde(rename = "$regex")]
     pub regex: Option<String>,
-}
-
-impl Default for QueryOperators {
-    fn default() -> Self {
-        Self {
-            eq: None,
-            ne: None,
-            gt: None,
-            gte: None,
-            lt: None,
-            lte: None,
-            r#in: None,
-            nin: None,
-            contains: None,
-            exists: None,
-            regex: None,
-        }
-    }
 }
 
 /// Parse a metadata filter into SQL WHERE clauses
