@@ -12,7 +12,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use engram::embedding::create_embedder;
 use engram::error::Result;
 use engram::graph::KnowledgeGraph;
-use engram::intelligence::ProjectContextEngine;
+use engram::intelligence::{DocumentFormat, DocumentIngestor, IngestConfig, ProjectContextEngine};
 use engram::mcp::{
     get_tool_definitions, methods, InitializeResult, McpHandler, McpRequest, McpResponse,
     McpServer, ToolCallResult,
@@ -102,6 +102,7 @@ impl EngramHandler {
             "memory_sync_status" => self.tool_sync_status(params),
             "memory_scan_project" => self.tool_scan_project(params),
             "memory_get_project_context" => self.tool_get_project_context(params),
+            "memory_ingest_document" => self.tool_ingest_document(params),
             // Entity tools (RML-925)
             "memory_extract_entities" => self.tool_extract_entities(params),
             "memory_get_entities" => self.tool_get_entities(params),
@@ -957,6 +958,53 @@ impl EngramHandler {
                 }))
             })
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_ingest_document(&self, params: Value) -> Value {
+        use serde::Deserialize;
+
+        #[derive(Debug, Deserialize)]
+        struct IngestParams {
+            path: String,
+            format: Option<String>,
+            chunk_size: Option<usize>,
+            overlap: Option<usize>,
+            max_file_size: Option<u64>,
+            tags: Option<Vec<String>>,
+        }
+
+        let input: IngestParams = match serde_json::from_value(params) {
+            Ok(i) => i,
+            Err(e) => return json!({"error": e.to_string()}),
+        };
+
+        let format = match input.format.as_deref() {
+            None | Some("auto") => None,
+            Some("md") | Some("markdown") => Some(DocumentFormat::Markdown),
+            Some("pdf") => Some(DocumentFormat::Pdf),
+            Some(other) => {
+                return json!({"error": format!("Invalid format: {}", other)});
+            }
+        };
+
+        let mut config = IngestConfig::default();
+        config.format = format;
+        if let Some(chunk_size) = input.chunk_size {
+            config.chunk_size = chunk_size;
+        }
+        if let Some(overlap) = input.overlap {
+            config.overlap = overlap;
+        }
+        if let Some(max_file_size) = input.max_file_size {
+            config.max_file_size = max_file_size;
+        }
+        config.extra_tags = input.tags.unwrap_or_default();
+
+        let ingestor = DocumentIngestor::new(&self.storage);
+        match ingestor.ingest_file(&input.path, config) {
+            Ok(result) => json!(result),
+            Err(e) => json!({"error": e.to_string()}),
+        }
     }
 
     // =========================================================================

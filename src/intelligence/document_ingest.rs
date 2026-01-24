@@ -97,7 +97,7 @@ impl Default for IngestConfig {
 }
 
 /// Result of document ingestion
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct IngestResult {
     /// Document ID (SHA-256 hash of file content)
     pub document_id: String,
@@ -165,6 +165,18 @@ impl<'a> DocumentIngestor<'a> {
         let path = path.as_ref();
         let start = Instant::now();
         let mut warnings = Vec::new();
+
+        if config.chunk_size == 0 {
+            return Err(EngramError::InvalidInput(
+                "chunk_size must be greater than 0".to_string(),
+            ));
+        }
+
+        if config.overlap >= config.chunk_size {
+            return Err(EngramError::InvalidInput(
+                "overlap must be less than chunk_size".to_string(),
+            ));
+        }
 
         // Check file exists
         if !path.exists() {
@@ -555,12 +567,8 @@ fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
             break;
         }
 
-        start += chunk_char_count.saturating_sub(overlap);
-
-        // Ensure progress
-        if start == 0 {
-            start = chunk_char_count;
-        }
+        let step = chunk_char_count.saturating_sub(overlap);
+        start += if step == 0 { chunk_char_count } else { step };
     }
 
     chunks
@@ -569,6 +577,8 @@ fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn test_chunk_text_small() {
@@ -645,5 +655,43 @@ Content for section 2.
         assert_eq!(config.chunk_size, DEFAULT_CHUNK_SIZE);
         assert_eq!(config.overlap, DEFAULT_OVERLAP);
         assert_eq!(config.max_file_size, DEFAULT_MAX_FILE_SIZE);
+    }
+
+    #[test]
+    fn test_ingest_idempotent() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("doc.md");
+        fs::write(&file_path, "# Title\n\nHello world.\n").unwrap();
+
+        let storage = Storage::open_in_memory().unwrap();
+        let ingestor = DocumentIngestor::new(&storage);
+
+        let first = ingestor
+            .ingest_file(&file_path, IngestConfig::default())
+            .unwrap();
+        assert!(first.chunks_created > 0);
+        assert_eq!(first.chunks_skipped, 0);
+
+        let second = ingestor
+            .ingest_file(&file_path, IngestConfig::default())
+            .unwrap();
+        assert_eq!(second.chunks_created, 0);
+        assert_eq!(second.chunks_skipped, first.chunks_total);
+    }
+
+    #[test]
+    fn test_invalid_chunk_size() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("doc.md");
+        fs::write(&file_path, "Hello").unwrap();
+
+        let storage = Storage::open_in_memory().unwrap();
+        let ingestor = DocumentIngestor::new(&storage);
+
+        let mut config = IngestConfig::default();
+        config.chunk_size = 0;
+
+        let err = ingestor.ingest_file(&file_path, config).unwrap_err();
+        assert!(err.to_string().contains("chunk_size"));
     }
 }
