@@ -567,8 +567,22 @@ mod tests {
                     suggested_relation: EntityRelation::Mentions,
                 };
                 let entity_id = upsert_entity(conn, &entity)?;
-                let _ = link_entity_to_memory(conn, id_a, entity_id, EntityRelation::Mentions, 0.9, None)?;
-                let _ = link_entity_to_memory(conn, id_b, entity_id, EntityRelation::Mentions, 0.8, None)?;
+                let _ = link_entity_to_memory(
+                    conn,
+                    id_a,
+                    entity_id,
+                    EntityRelation::Mentions,
+                    0.9,
+                    None,
+                )?;
+                let _ = link_entity_to_memory(
+                    conn,
+                    id_b,
+                    entity_id,
+                    EntityRelation::Mentions,
+                    0.8,
+                    None,
+                )?;
 
                 // Traverse from A with entities enabled
                 let options = TraversalOptions {

@@ -288,11 +288,7 @@ impl<'a> DocumentIngestor<'a> {
 
                 let results = list_memories(conn, &options)?;
                 for memory in &results {
-                    if let Some(hash) = memory
-                        .metadata
-                        .get("chunk_hash")
-                        .and_then(|v| v.as_str())
-                    {
+                    if let Some(hash) = memory.metadata.get("chunk_hash").and_then(|v| v.as_str()) {
                         hashes.insert(hash.to_string());
                     }
                 }

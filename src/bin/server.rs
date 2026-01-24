@@ -1301,15 +1301,27 @@ mod tests {
             "format": "md"
         }));
         assert!(first.get("error").is_none(), "first ingest error: {first}");
-        assert!(first.get("chunks_created").and_then(|v| v.as_u64()).unwrap_or(0) > 0);
+        assert!(
+            first
+                .get("chunks_created")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                > 0
+        );
 
         let second = handler.tool_ingest_document(json!({
             "path": file_path.to_string_lossy(),
             "format": "md"
         }));
-        assert!(second.get("error").is_none(), "second ingest error: {second}");
+        assert!(
+            second.get("error").is_none(),
+            "second ingest error: {second}"
+        );
         assert_eq!(
-            second.get("chunks_created").and_then(|v| v.as_u64()).unwrap_or(1),
+            second
+                .get("chunks_created")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1),
             0
         );
     }
