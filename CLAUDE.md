@@ -66,18 +66,22 @@ Engram is an AI memory system with four layers:
 - `MemoryType` - Enum: Note, Todo, Issue, Decision, Preference, Learning, Context, Credential
 - `MemoryScope` - Enum: Global, User(id), Session(id), Agent(id)
 - `EdgeType` - Cross-reference types: RelatedTo, Supersedes, Contradicts, DependsOn, etc.
-- `EntityType` - Enum: Person, Organization, Project, Technology, Concept, Location, Event
+- `EntityType` - Enum: Person, Organization, Project, Concept, Location, DateTime, Reference, Other
 - `SearchResult` - Memory + score + optional match explanation
 
 ### Database Schema (v4)
 
 ```sql
 -- Core tables
-memories (id, content, memory_type, tags, metadata, importance, 
-          scope, owner_id, visibility, created_at, updated_at)
-          
-cross_references (source_id, target_id, edge_type, weight, 
-                  confidence, created_at, updated_at)
+memories (id, content, memory_type, importance, quality_score,
+          scope, owner_id, source, created_at, updated_at)
+
+memory_tags (memory_id, tag)
+
+memory_metadata (memory_id, key, value)
+
+crossrefs (source_id, target_id, edge_type, weight, 
+           confidence, created_at, updated_at)
 
 -- Entity tables
 entities (id, name, normalized_name, entity_type, mention_count, 
@@ -88,7 +92,7 @@ memory_entities (memory_id, entity_id, relationship_type,
 
 -- Search indexes
 memories_fts (FTS5 virtual table)
-memory_vectors (sqlite-vec)
+embeddings (memory_id, embedding BLOB via sqlite-vec)
 ```
 
 ### Database Patterns
@@ -130,11 +134,8 @@ Tools are defined in `mcp/tools.rs` and handled in `bin/server.rs::EngramHandler
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ENGRAM_DB_PATH` | SQLite database path | `~/.local/share/engram/memories.db` |
-| `ENGRAM_STORAGE_MODE` | `local` or `cloud-safe` | `local` |
-| `ENGRAM_CLOUD_URI` | S3 URI for sync | - |
-| `ENGRAM_CLOUD_ENCRYPT` | Enable AES-256 encryption | `false` |
-| `DATABASE_URL` | PostgreSQL connection (future use) | - |
-| `NEON_DATABASE_URL` | Neon PostgreSQL connection | - |
+| `ENGRAM_STORAGE_URI` | S3 URI for cloud sync (e.g., `s3://bucket/path`) | - |
+| `ENGRAM_CLOUD_ENCRYPT` | Enable AES-256 encryption for cloud sync | `false` |
 | `LINEAR_API_KEY` | Linear API for project management | - |
 
 ### Cloud Storage (Cloudflare R2)

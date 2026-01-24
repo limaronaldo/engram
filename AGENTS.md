@@ -61,7 +61,7 @@ Engram is a high-performance AI memory infrastructure written in Rust. It provid
 ### Naming
 - Memory types: `Note`, `Todo`, `Issue`, `Decision`, `Preference`, `Learning`, `Context`, `Credential`
 - Edge types: `RelatedTo`, `Supersedes`, `Contradicts`, `Implements`, `Extends`, `References`, `DependsOn`, `Blocks`, `FollowsUp`
-- Entity types: `Person`, `Organization`, `Project`, `Technology`, `Concept`, `Location`, `Event`
+- Entity types: `Person`, `Organization`, `Project`, `Concept`, `Location`, `DateTime`, `Reference`, `Other`
 
 ## MCP Tools Reference
 
@@ -80,8 +80,7 @@ Engram is a high-performance AI memory infrastructure written in Rust. It provid
 | Tool | Description |
 |------|-------------|
 | `memory_search` | Hybrid search (BM25 + semantic) with fuzzy correction and reranking |
-| `memory_semantic_search` | Pure vector similarity search |
-| `memory_suggest` | Spelling suggestions for search queries |
+| `memory_search_suggest` | Spelling suggestions for search queries |
 
 ### Graph & Cross-Reference Tools
 
@@ -131,8 +130,9 @@ Engram is a high-performance AI memory infrastructure written in Rust. It provid
 | Tool | Description |
 |------|-------------|
 | `memory_stats` | Get storage statistics |
-| `memory_rebuild_embeddings` | Regenerate all embeddings |
-| `memory_rebuild_crossrefs` | Regenerate cross-reference graph |
+| `memory_sync_status` | Get cloud sync status |
+| `memory_export_graph` | Export knowledge graph |
+| `memory_versions` | Get memory version history |
 
 ## Feature Implementation Status
 
@@ -156,11 +156,15 @@ Engram is a high-performance AI memory infrastructure written in Rust. It provid
 
 ```sql
 -- Core tables
-memories (id, content, memory_type, tags, metadata, importance, 
-          scope, owner_id, visibility, created_at, updated_at)
-          
-cross_references (source_id, target_id, edge_type, weight, 
-                  confidence, created_at, updated_at)
+memories (id, content, memory_type, importance, quality_score,
+          scope, owner_id, source, created_at, updated_at)
+
+memory_tags (memory_id, tag)
+
+memory_metadata (memory_id, key, value)
+
+crossrefs (source_id, target_id, edge_type, weight, 
+           confidence, created_at, updated_at)
 
 -- Entity tables (RML-925)
 entities (id, name, normalized_name, entity_type, mention_count, 
@@ -171,7 +175,7 @@ memory_entities (memory_id, entity_id, relationship_type,
 
 -- FTS and vector search
 memories_fts (FTS5 virtual table for full-text search)
-memory_vectors (sqlite-vec for semantic search)
+embeddings (memory_id, embedding BLOB via sqlite-vec)
 ```
 
 ## Testing
@@ -220,12 +224,8 @@ cargo build --release
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ENGRAM_DB_PATH` | SQLite database path | `~/.local/share/engram/memories.db` |
-| `ENGRAM_STORAGE_MODE` | `local` or `cloud-safe` | `local` |
-| `ENGRAM_CLOUD_URI` | S3 URI for sync | - |
-| `ENGRAM_CLOUD_ENCRYPT` | Enable AES-256 encryption | `false` |
-| `ENGRAM_LOG_LEVEL` | Logging level | `info` |
-| `ENGRAM_HTTP_PORT` | HTTP server port | `8080` |
-| `ENGRAM_WS_PORT` | WebSocket server port | `8081` |
+| `ENGRAM_STORAGE_URI` | S3 URI for cloud sync (e.g., `s3://bucket/path`) | - |
+| `ENGRAM_CLOUD_ENCRYPT` | Enable AES-256 encryption for cloud sync | `false` |
 
 ### Cloud Storage (Cloudflare R2)
 

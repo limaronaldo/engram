@@ -97,19 +97,6 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
         }"#,
     ),
     (
-        "memory_semantic_search",
-        "Search by semantic similarity only",
-        r#"{
-            "type": "object",
-            "properties": {
-                "query": {"type": "string"},
-                "limit": {"type": "integer", "default": 10},
-                "min_score": {"type": "number", "default": 0.5}
-            },
-            "required": ["query"]
-        }"#,
-    ),
-    (
         "memory_search_suggest",
         "Get search suggestions and typo corrections",
         r#"{

@@ -172,8 +172,7 @@ Add to your MCP config (`~/.config/claude/mcp.json` or similar):
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `ENGRAM_DB_PATH` | SQLite database path | `~/.local/share/engram/memories.db` |
-| `ENGRAM_STORAGE_MODE` | `local` or `cloud-safe` | `local` |
-| `ENGRAM_CLOUD_URI` | S3/R2 URI for sync | - |
+| `ENGRAM_STORAGE_URI` | S3/R2 URI for cloud sync | - |
 | `ENGRAM_CLOUD_ENCRYPT` | AES-256-GCM encryption | `false` |
 
 ---
