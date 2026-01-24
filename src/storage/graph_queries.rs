@@ -346,7 +346,7 @@ fn get_edges_for_traversal(
     let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
     let crossrefs = stmt
-        .query_map(param_refs.as_slice(), |row| crossref_from_row(row))?
+        .query_map(param_refs.as_slice(), crossref_from_row)?
         .filter_map(|r| r.ok())
         .collect();
 
@@ -567,8 +567,22 @@ mod tests {
                     suggested_relation: EntityRelation::Mentions,
                 };
                 let entity_id = upsert_entity(conn, &entity)?;
-                let _ = link_entity_to_memory(conn, id_a, entity_id, EntityRelation::Mentions, 0.9, None)?;
-                let _ = link_entity_to_memory(conn, id_b, entity_id, EntityRelation::Mentions, 0.8, None)?;
+                let _ = link_entity_to_memory(
+                    conn,
+                    id_a,
+                    entity_id,
+                    EntityRelation::Mentions,
+                    0.9,
+                    None,
+                )?;
+                let _ = link_entity_to_memory(
+                    conn,
+                    id_b,
+                    entity_id,
+                    EntityRelation::Mentions,
+                    0.8,
+                    None,
+                )?;
 
                 // Traverse from A with entities enabled
                 let options = TraversalOptions {

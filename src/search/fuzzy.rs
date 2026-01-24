@@ -2,6 +2,8 @@
 //!
 //! Uses Levenshtein distance for typo correction and suggestion.
 
+#![allow(clippy::needless_range_loop)]
+
 use std::collections::{HashMap, HashSet};
 
 /// Maximum edit distance for fuzzy matching
@@ -239,6 +241,7 @@ pub fn damerau_levenshtein(a: &str, b: &str) -> usize {
         matrix[0][j] = j;
     }
 
+    #[allow(clippy::needless_range_loop)]
     for i in 1..=a_len {
         for j in 1..=b_len {
             let cost = if a_chars[i - 1] == b_chars[j - 1] {

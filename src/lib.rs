@@ -3,6 +3,10 @@
 //! Persistent memory for AI agents with semantic search, cloud sync,
 //! and knowledge graph visualization.
 
+#![allow(clippy::type_complexity)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::large_enum_variant)]
+
 pub mod auth;
 pub mod embedding;
 pub mod error;

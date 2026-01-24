@@ -85,6 +85,10 @@ levenshtein = "1.0"
 hex = "0.4"
 sha2 = "0.10"
 
+# Document ingestion (RML-928)
+pulldown-cmark = "0.10"
+pdf-extract = "0.7"
+
 # Async channels for embedding queue
 async-channel = "2.1"
 futures = "0.3"

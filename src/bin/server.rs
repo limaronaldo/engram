@@ -12,7 +12,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use engram::embedding::create_embedder;
 use engram::error::Result;
 use engram::graph::KnowledgeGraph;
-use engram::intelligence::ProjectContextEngine;
+use engram::intelligence::{DocumentFormat, DocumentIngestor, IngestConfig, ProjectContextEngine};
 use engram::mcp::{
     get_tool_definitions, methods, InitializeResult, McpHandler, McpRequest, McpResponse,
     McpServer, ToolCallResult,
@@ -102,6 +102,7 @@ impl EngramHandler {
             "memory_sync_status" => self.tool_sync_status(params),
             "memory_scan_project" => self.tool_scan_project(params),
             "memory_get_project_context" => self.tool_get_project_context(params),
+            "memory_ingest_document" => self.tool_ingest_document(params),
             // Entity tools (RML-925)
             "memory_extract_entities" => self.tool_extract_entities(params),
             "memory_get_entities" => self.tool_get_entities(params),
@@ -385,7 +386,7 @@ impl EngramHandler {
         let max_nodes = params
             .get("max_nodes")
             .and_then(|v| v.as_i64())
-            .unwrap_or(500) as i64;
+            .unwrap_or(500);
 
         self.storage
             .with_connection(|conn| {
@@ -959,6 +960,49 @@ impl EngramHandler {
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }
 
+    fn tool_ingest_document(&self, params: Value) -> Value {
+        use serde::Deserialize;
+
+        #[derive(Debug, Deserialize)]
+        struct IngestParams {
+            path: String,
+            format: Option<String>,
+            chunk_size: Option<usize>,
+            overlap: Option<usize>,
+            max_file_size: Option<u64>,
+            tags: Option<Vec<String>>,
+        }
+
+        let input: IngestParams = match serde_json::from_value(params) {
+            Ok(i) => i,
+            Err(e) => return json!({"error": e.to_string()}),
+        };
+
+        let format = match input.format.as_deref() {
+            None | Some("auto") => None,
+            Some("md") | Some("markdown") => Some(DocumentFormat::Markdown),
+            Some("pdf") => Some(DocumentFormat::Pdf),
+            Some(other) => {
+                return json!({"error": format!("Invalid format: {}", other)});
+            }
+        };
+
+        let default_config = IngestConfig::default();
+        let config = IngestConfig {
+            format,
+            chunk_size: input.chunk_size.unwrap_or(default_config.chunk_size),
+            overlap: input.overlap.unwrap_or(default_config.overlap),
+            max_file_size: input.max_file_size.unwrap_or(default_config.max_file_size),
+            extra_tags: input.tags.unwrap_or_default(),
+        };
+
+        let ingestor = DocumentIngestor::new(&self.storage);
+        match ingestor.ingest_file(&input.path, config) {
+            Ok(result) => json!(result),
+            Err(e) => json!({"error": e.to_string()}),
+        }
+    }
+
     // =========================================================================
     // Entity Tools (RML-925)
     // =========================================================================
@@ -1322,4 +1366,59 @@ fn main() -> Result<()> {
     server.run()?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn test_handler() -> EngramHandler {
+        let storage = Storage::open_in_memory().unwrap();
+        let embedder = create_embedder(&EmbeddingConfig::default()).unwrap();
+        EngramHandler {
+            storage,
+            embedder,
+            fuzzy_engine: Arc::new(Mutex::new(FuzzyEngine::new())),
+            search_config: SearchConfig::default(),
+        }
+    }
+
+    #[test]
+    fn test_tool_ingest_document_idempotent() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("doc.md");
+        std::fs::write(&file_path, "# Title\n\nHello world.\n").unwrap();
+
+        let handler = test_handler();
+
+        let first = handler.tool_ingest_document(json!({
+            "path": file_path.to_string_lossy(),
+            "format": "md"
+        }));
+        assert!(first.get("error").is_none(), "first ingest error: {first}");
+        assert!(
+            first
+                .get("chunks_created")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                > 0
+        );
+
+        let second = handler.tool_ingest_document(json!({
+            "path": file_path.to_string_lossy(),
+            "format": "md"
+        }));
+        assert!(
+            second.get("error").is_none(),
+            "second ingest error: {second}"
+        );
+        assert_eq!(
+            second
+                .get("chunks_created")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1),
+            0
+        );
+    }
 }

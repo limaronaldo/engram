@@ -423,6 +423,23 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             "required": ["from_id", "to_id"]
         }"#,
     ),
+    // Document Ingestion (RML-928)
+    (
+        "memory_ingest_document",
+        "Ingest a document (PDF or Markdown) into memory. Extracts text, splits into chunks with overlap, and creates memories with deduplication.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Local file path to the document"},
+                "format": {"type": "string", "enum": ["auto", "md", "pdf"], "default": "auto", "description": "Document format (auto-detect from extension if not specified)"},
+                "chunk_size": {"type": "integer", "default": 1200, "description": "Maximum characters per chunk"},
+                "overlap": {"type": "integer", "default": 200, "description": "Overlap between chunks in characters"},
+                "max_file_size": {"type": "integer", "default": 10485760, "description": "Maximum file size in bytes (default 10MB)"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Additional tags to add to all chunks"}
+            },
+            "required": ["path"]
+        }"#,
+    ),
 ];
 
 /// Get all tool definitions as ToolDefinition structs

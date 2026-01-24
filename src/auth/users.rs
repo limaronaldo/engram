@@ -111,7 +111,7 @@ impl<'a> UserManager<'a> {
 
     /// Create a new user
     pub fn create_user(&self, user: &User, password: Option<&str>) -> Result<()> {
-        let password_hash = password.map(|p| hash_password(p));
+        let password_hash = password.map(hash_password);
 
         self.conn.execute(
             r#"
@@ -204,11 +204,9 @@ impl<'a> UserManager<'a> {
             )
             .optional()?;
 
-        if let Some((id, hash)) = result {
-            if let Some(stored_hash) = hash {
-                if verify_password(password, &stored_hash) {
-                    return self.get_user(&UserId::from_string(id));
-                }
+        if let Some((id, Some(stored_hash))) = result {
+            if verify_password(password, &stored_hash) {
+                return self.get_user(&UserId::from_string(id));
             }
         }
         Ok(None)

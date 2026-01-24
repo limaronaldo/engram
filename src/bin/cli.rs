@@ -233,7 +233,7 @@ fn main() -> Result<()> {
         }
 
         Commands::Stats => {
-            let stats = storage.with_connection(|conn| get_stats(conn))?;
+            let stats = storage.with_connection(get_stats)?;
             println!("{}", serde_json::to_string_pretty(&stats)?);
         }
 
@@ -335,7 +335,7 @@ fn main() -> Result<()> {
                         println!("  quit              - Exit");
                     }
                     "stats" => {
-                        let stats = storage.with_connection(|conn| get_stats(conn))?;
+                        let stats = storage.with_connection(get_stats)?;
                         println!("Memories: {}", stats.total_memories);
                         println!("Tags: {}", stats.total_tags);
                         println!("Cross-refs: {}", stats.total_crossrefs);
