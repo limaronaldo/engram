@@ -23,11 +23,25 @@ pub fn memory_from_row(row: &Row) -> rusqlite::Result<Memory> {
     let has_embedding: i32 = row.get("has_embedding")?;
     let metadata_str: String = row.get("metadata")?;
 
+    // Scope columns (with fallback for backward compatibility)
+    let scope_type: String = row
+        .get("scope_type")
+        .unwrap_or_else(|_| "global".to_string());
+    let scope_id: Option<String> = row.get("scope_id").unwrap_or(None);
+
     let memory_type = memory_type_str.parse().unwrap_or(MemoryType::Note);
     let visibility = match visibility_str.as_str() {
         "shared" => Visibility::Shared,
         "public" => Visibility::Public,
         _ => Visibility::Private,
+    };
+
+    // Parse scope from type and id
+    let scope = match (scope_type.as_str(), scope_id) {
+        ("user", Some(id)) => MemoryScope::User { user_id: id },
+        ("session", Some(id)) => MemoryScope::Session { session_id: id },
+        ("agent", Some(id)) => MemoryScope::Agent { agent_id: id },
+        _ => MemoryScope::Global,
     };
 
     let metadata: HashMap<String, serde_json::Value> =
@@ -54,6 +68,7 @@ pub fn memory_from_row(row: &Row) -> rusqlite::Result<Memory> {
         }),
         owner_id,
         visibility,
+        scope,
         version,
         has_embedding: has_embedding != 0,
     })
@@ -102,7 +117,8 @@ fn get_memory_internal(conn: &Connection, id: i64, track_access: bool) -> Result
     let mut stmt = conn.prepare_cached(
         "SELECT id, content, memory_type, importance, access_count,
                 created_at, updated_at, last_accessed_at, owner_id,
-                visibility, version, has_embedding, metadata
+                visibility, version, has_embedding, metadata,
+                scope_type, scope_id
          FROM memories WHERE id = ? AND valid_to IS NULL",
     )?;
 
@@ -147,9 +163,13 @@ pub fn create_memory(conn: &Connection, input: &CreateMemoryInput) -> Result<Mem
     let metadata_json = serde_json::to_string(&input.metadata)?;
     let importance = input.importance.unwrap_or(0.5);
 
+    // Extract scope type and id for database storage
+    let scope_type = input.scope.scope_type();
+    let scope_id = input.scope.scope_id().map(|s| s.to_string());
+
     conn.execute(
-        "INSERT INTO memories (content, memory_type, importance, metadata, created_at, updated_at, valid_from)
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO memories (content, memory_type, importance, metadata, created_at, updated_at, valid_from, scope_type, scope_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
             input.content,
             input.memory_type.as_str(),
@@ -158,6 +178,8 @@ pub fn create_memory(conn: &Connection, input: &CreateMemoryInput) -> Result<Mem
             now,
             now,
             now,
+            scope_type,
+            scope_id,
         ],
     )?;
 
@@ -244,6 +266,13 @@ pub fn update_memory(conn: &Connection, id: i64, input: &UpdateMemoryInput) -> R
         let metadata_json = serde_json::to_string(metadata)?;
         updates.push("metadata = ?".to_string());
         values.push(Box::new(metadata_json));
+    }
+
+    if let Some(ref scope) = input.scope {
+        updates.push("scope_type = ?".to_string());
+        values.push(Box::new(scope.scope_type().to_string()));
+        updates.push("scope_id = ?".to_string());
+        values.push(Box::new(scope.scope_id().map(|s| s.to_string())));
     }
 
     // Increment version
@@ -337,7 +366,8 @@ pub fn list_memories(conn: &Connection, options: &ListOptions) -> Result<Vec<Mem
     let mut sql = String::from(
         "SELECT DISTINCT m.id, m.content, m.memory_type, m.importance, m.access_count,
                 m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
-                m.visibility, m.version, m.has_embedding, m.metadata
+                m.visibility, m.version, m.has_embedding, m.metadata,
+                m.scope_type, m.scope_id
          FROM memories m",
     );
 
@@ -369,6 +399,18 @@ pub fn list_memories(conn: &Connection, options: &ListOptions) -> Result<Vec<Mem
     if let Some(ref metadata_filter) = options.metadata_filter {
         for (key, value) in metadata_filter {
             metadata_value_to_param(key, value, &mut conditions, &mut params)?;
+        }
+    }
+
+    // Scope filter
+    if let Some(ref scope) = options.scope {
+        conditions.push("m.scope_type = ?".to_string());
+        params.push(Box::new(scope.scope_type().to_string()));
+        if let Some(scope_id) = scope.scope_id() {
+            conditions.push("m.scope_id = ?".to_string());
+            params.push(Box::new(scope_id.to_string()));
+        } else {
+            conditions.push("m.scope_id IS NULL".to_string());
         }
     }
 
@@ -693,6 +735,7 @@ mod tests {
                         tags: vec![],
                         metadata: metadata1,
                         importance: None,
+                        scope: Default::default(),
                         defer_embedding: true,
                     },
                 )?;
@@ -704,6 +747,7 @@ mod tests {
                         tags: vec![],
                         metadata: metadata2,
                         importance: None,
+                        scope: Default::default(),
                         defer_embedding: true,
                     },
                 )?;
@@ -759,5 +803,157 @@ mod tests {
                 Ok(())
             })
             .unwrap();
+    }
+
+    #[test]
+    fn test_memory_scope_isolation() {
+        use crate::types::MemoryScope;
+
+        let storage = Storage::open_in_memory().unwrap();
+
+        storage
+            .with_connection(|conn| {
+                // Create memory with user scope
+                let user1_memory = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "User 1 memory".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec!["test".to_string()],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: MemoryScope::user("user-1"),
+                        defer_embedding: true,
+                    },
+                )?;
+
+                // Create memory with different user scope
+                let user2_memory = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "User 2 memory".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec!["test".to_string()],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: MemoryScope::user("user-2"),
+                        defer_embedding: true,
+                    },
+                )?;
+
+                // Create memory with session scope
+                let session_memory = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Session memory".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec!["test".to_string()],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: MemoryScope::session("session-abc"),
+                        defer_embedding: true,
+                    },
+                )?;
+
+                // Create memory with global scope
+                let global_memory = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Global memory".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec!["test".to_string()],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: MemoryScope::Global,
+                        defer_embedding: true,
+                    },
+                )?;
+
+                // Test: List all memories (no scope filter) should return all 4
+                let all_results = list_memories(conn, &ListOptions::default())?;
+                assert_eq!(all_results.len(), 4);
+
+                // Test: Filter by user-1 scope should return only user-1's memory
+                let user1_results = list_memories(
+                    conn,
+                    &ListOptions {
+                        scope: Some(MemoryScope::user("user-1")),
+                        ..Default::default()
+                    },
+                )?;
+                assert_eq!(user1_results.len(), 1);
+                assert_eq!(user1_results[0].id, user1_memory.id);
+                assert_eq!(user1_results[0].scope, MemoryScope::user("user-1"));
+
+                // Test: Filter by user-2 scope should return only user-2's memory
+                let user2_results = list_memories(
+                    conn,
+                    &ListOptions {
+                        scope: Some(MemoryScope::user("user-2")),
+                        ..Default::default()
+                    },
+                )?;
+                assert_eq!(user2_results.len(), 1);
+                assert_eq!(user2_results[0].id, user2_memory.id);
+
+                // Test: Filter by session scope should return only session memory
+                let session_results = list_memories(
+                    conn,
+                    &ListOptions {
+                        scope: Some(MemoryScope::session("session-abc")),
+                        ..Default::default()
+                    },
+                )?;
+                assert_eq!(session_results.len(), 1);
+                assert_eq!(session_results[0].id, session_memory.id);
+
+                // Test: Filter by global scope should return only global memory
+                let global_results = list_memories(
+                    conn,
+                    &ListOptions {
+                        scope: Some(MemoryScope::Global),
+                        ..Default::default()
+                    },
+                )?;
+                assert_eq!(global_results.len(), 1);
+                assert_eq!(global_results[0].id, global_memory.id);
+
+                // Test: Verify scope is correctly stored and retrieved
+                let retrieved = get_memory(conn, user1_memory.id)?;
+                assert_eq!(retrieved.scope, MemoryScope::user("user-1"));
+
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_memory_scope_can_access() {
+        use crate::types::MemoryScope;
+
+        // Global can access everything
+        assert!(MemoryScope::Global.can_access(&MemoryScope::user("user-1")));
+        assert!(MemoryScope::Global.can_access(&MemoryScope::session("session-1")));
+        assert!(MemoryScope::Global.can_access(&MemoryScope::agent("agent-1")));
+        assert!(MemoryScope::Global.can_access(&MemoryScope::Global));
+
+        // Same scope can access
+        assert!(MemoryScope::user("user-1").can_access(&MemoryScope::user("user-1")));
+        assert!(MemoryScope::session("s1").can_access(&MemoryScope::session("s1")));
+        assert!(MemoryScope::agent("a1").can_access(&MemoryScope::agent("a1")));
+
+        // Different scope IDs cannot access each other
+        assert!(!MemoryScope::user("user-1").can_access(&MemoryScope::user("user-2")));
+        assert!(!MemoryScope::session("s1").can_access(&MemoryScope::session("s2")));
+        assert!(!MemoryScope::agent("a1").can_access(&MemoryScope::agent("a2")));
+
+        // Different scope types cannot access each other
+        assert!(!MemoryScope::user("user-1").can_access(&MemoryScope::session("s1")));
+        assert!(!MemoryScope::session("s1").can_access(&MemoryScope::agent("a1")));
+
+        // Anyone can access global memories
+        assert!(MemoryScope::user("user-1").can_access(&MemoryScope::Global));
+        assert!(MemoryScope::session("s1").can_access(&MemoryScope::Global));
+        assert!(MemoryScope::agent("a1").can_access(&MemoryScope::Global));
     }
 }

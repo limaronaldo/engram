@@ -1,6 +1,6 @@
 # Engram
 
-**Memory infrastructure for AI agents.** Hybrid search, knowledge graphs, cloud sync — in a single Rust binary.
+**The memory layer for production LLM apps.** Hybrid search, knowledge graphs, cloud sync — in a single Rust binary.
 
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -13,27 +13,7 @@
 <tr>
 <td width="50%" valign="top">
 
-### For Coding Agents
-
-Your agent remembers the code, context, and team decisions.
-
-```bash
-# Scan project context
-engram-cli scan .
-
-# Search decisions
-engram-cli search "why did we choose postgres"
-```
-
-**Key features:**
-- Project Context Discovery (CLAUDE.md, .cursorrules, etc.)
-- Decision trails with metadata + tags
-- Local-first, sync optional
-
-</td>
-<td width="50%" valign="top">
-
-### For LLM Apps
+### For LLM Apps (Primary)
 
 Persistent memory that works in production.
 
@@ -50,6 +30,26 @@ curl localhost:8080/v1/search?q=user+preferences
 - Hybrid search (BM25 + vectors + fuzzy)
 - MCP / REST / WebSocket / CLI
 - Predictable latency, no reindexing
+
+</td>
+<td width="50%" valign="top">
+
+### Bonus: Dev Workflow
+
+Helps engineers building LLM apps by capturing project context and decisions.
+
+```bash
+# Scan project context
+engram-cli scan .
+
+# Search decisions
+engram-cli search "why did we choose postgres"
+```
+
+**Key features:**
+- Project Context Discovery (CLAUDE.md, .cursorrules, etc.)
+- Decision trails with metadata + tags
+- Local-first, sync optional
 
 </td>
 </tr>
@@ -83,9 +83,9 @@ AI agents forget everything between sessions. Context windows overflow. Knowledg
 |---------|-----------------|
 | Vector search misses keywords | **Hybrid search**: BM25 + vectors + fuzzy in one call |
 | Context lost between sessions | **Persistent memory** with SQLite + WAL |
-| No project awareness | **Project Context Discovery** (CLAUDE.md, AGENTS.md, etc.) |
 | Cloud-only options | **Local-first** with optional S3/R2 sync |
 | Python runtime required | **Single Rust binary**, no dependencies |
+| No project awareness | **Project Context Discovery** (CLAUDE.md, AGENTS.md, etc.) |
 
 ---
 
@@ -118,6 +118,12 @@ engram-cli search "asynch awiat rust"
 engram-cli related 42 --depth 2
 ```
 
+### Multiple Interfaces
+- **MCP**: Native Model Context Protocol for Claude Code, Cursor
+- **REST**: Standard HTTP API for any client
+- **WebSocket**: Real-time updates
+- **CLI**: Developer-friendly commands
+
 ### Project Context Discovery
 ```bash
 # Ingest AI instruction files into searchable memory
@@ -126,12 +132,6 @@ engram-cli scan . --extract-sections
 # Supported: CLAUDE.md, AGENTS.md, .cursorrules, 
 # .github/copilot-instructions.md, .aider.conf.yml, etc.
 ```
-
-### Multiple Interfaces
-- **MCP**: Native Model Context Protocol for Claude Code, Cursor
-- **REST**: Standard HTTP API for any client
-- **WebSocket**: Real-time updates
-- **CLI**: Developer-friendly commands
 
 ---
 

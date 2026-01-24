@@ -2,11 +2,11 @@
 //!
 //! Uses SQLite FTS5 with BM25 ranking for high-quality keyword search.
 
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 
 use crate::error::Result;
 use crate::storage::queries::{load_tags, memory_from_row};
-use crate::types::{MatchInfo, Memory, SearchStrategy};
+use crate::types::{MatchInfo, Memory, MemoryScope, SearchStrategy};
 
 /// BM25 search result with score
 #[derive(Debug)]
@@ -24,28 +24,59 @@ pub fn bm25_search(
     limit: i64,
     explain: bool,
 ) -> Result<Vec<Bm25Result>> {
+    bm25_search_with_options(conn, query, limit, explain, None)
+}
+
+/// Perform BM25 search with optional scope filtering
+pub fn bm25_search_with_options(
+    conn: &Connection,
+    query: &str,
+    limit: i64,
+    explain: bool,
+    scope: Option<&MemoryScope>,
+) -> Result<Vec<Bm25Result>> {
     // Escape special FTS5 characters
     let escaped_query = escape_fts5_query(query);
 
     // Note: snippet() is not available with external content FTS5 tables
     // We generate highlights manually from the content instead
-    let sql = r#"
+    let mut sql = String::from(
+        r#"
         SELECT
             m.id, m.content, m.memory_type, m.importance, m.access_count,
             m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
             m.visibility, m.version, m.has_embedding, m.metadata,
+            m.scope_type, m.scope_id,
             bm25(memories_fts) as score
         FROM memories_fts fts
         JOIN memories m ON fts.rowid = m.id
         WHERE memories_fts MATCH ? AND m.valid_to IS NULL
-        ORDER BY bm25(memories_fts)
-        LIMIT ?
-    "#;
+    "#,
+    );
 
-    let mut stmt = conn.prepare(sql)?;
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(escaped_query)];
+
+    // Add scope filter
+    if let Some(scope) = scope {
+        sql.push_str(" AND m.scope_type = ?");
+        params.push(Box::new(scope.scope_type().to_string()));
+        if let Some(scope_id) = scope.scope_id() {
+            sql.push_str(" AND m.scope_id = ?");
+            params.push(Box::new(scope_id.to_string()));
+        } else {
+            sql.push_str(" AND m.scope_id IS NULL");
+        }
+    }
+
+    sql.push_str(" ORDER BY bm25(memories_fts) LIMIT ?");
+    params.push(Box::new(limit));
+
+    let mut stmt = conn.prepare(&sql)?;
     let mut results = Vec::new();
 
-    let rows = stmt.query_map(params![escaped_query, limit], |row| {
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+
+    let rows = stmt.query_map(param_refs.as_slice(), |row| {
         let memory = memory_from_row(row)?;
         let score: f32 = row.get("score")?;
         Ok((memory, score))

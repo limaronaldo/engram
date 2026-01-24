@@ -339,6 +339,7 @@ impl EngramHandler {
             tags,
             metadata,
             importance: Some(importance),
+            scope: Default::default(),
             defer_embedding: false,
         };
 
@@ -389,6 +390,7 @@ impl EngramHandler {
             tags,
             metadata,
             importance: Some(importance),
+            scope: Default::default(),
             defer_embedding: false,
         };
 
@@ -540,6 +542,7 @@ impl EngramHandler {
                             tags: Some(memory.tags),
                             metadata: Some(metadata),
                             importance: Some(memory.importance),
+                            scope: None,
                         };
 
                         match self.storage.with_transaction(|conn| {
@@ -578,6 +581,7 @@ impl EngramHandler {
                         tags: memory.tags,
                         metadata,
                         importance: Some(memory.importance),
+                        scope: Default::default(),
                         defer_embedding: false,
                     };
 
@@ -680,6 +684,7 @@ impl EngramHandler {
                             tags: Some(section_memory.tags),
                             metadata: Some(metadata),
                             importance: Some(section_memory.importance),
+                            scope: None,
                         };
 
                         match self.storage.with_transaction(|conn| {
@@ -712,6 +717,7 @@ impl EngramHandler {
                             tags: section_memory.tags,
                             metadata,
                             importance: Some(section_memory.importance),
+                            scope: Default::default(),
                             defer_embedding: false,
                         };
 

@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use crate::error::Result;
-use crate::types::{Memory, MemoryType, Visibility};
+use crate::types::{Memory, MemoryScope, MemoryType, Visibility};
 
 // =============================================================================
 // Configuration
@@ -561,6 +561,7 @@ impl ProjectContextEngine {
             last_accessed_at: None,
             owner_id: None,
             visibility: self.config.default_visibility,
+            scope: MemoryScope::Global,
             version: 1,
             has_embedding: false,
         }
@@ -624,6 +625,7 @@ impl ProjectContextEngine {
             last_accessed_at: None,
             owner_id: None,
             visibility: self.config.default_visibility,
+            scope: MemoryScope::Global,
             version: 1,
             has_embedding: false,
         }

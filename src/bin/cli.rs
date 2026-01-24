@@ -149,6 +149,7 @@ fn main() -> Result<()> {
                 tags,
                 metadata: Default::default(),
                 importance,
+                scope: Default::default(),
                 defer_embedding: true,
             };
 
@@ -370,6 +371,7 @@ fn main() -> Result<()> {
                             tags: vec![],
                             metadata: Default::default(),
                             importance: None,
+                            scope: Default::default(),
                             defer_embedding: true,
                         };
                         match storage.with_transaction(|conn| create_memory(conn, &input)) {

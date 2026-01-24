@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 1;
+pub const SCHEMA_VERSION: i32 = 2;
 
 /// Run all migrations
 pub fn run_migrations(conn: &Connection) -> Result<()> {
@@ -26,8 +26,12 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         )
         .unwrap_or(0);
 
-    if current_version < SCHEMA_VERSION {
+    if current_version < 1 {
         migrate_v1(conn)?;
+    }
+
+    if current_version < 2 {
+        migrate_v2(conn)?;
     }
 
     Ok(())
@@ -208,6 +212,32 @@ fn migrate_v1(conn: &Connection) -> Result<()> {
 
         -- Record migration
         INSERT INTO schema_version (version) VALUES (1);
+        "#,
+    )?;
+
+    Ok(())
+}
+
+/// Memory scoping migration (v2) - RML-924
+/// Adds scope_type and scope_id columns for user/session/agent/global isolation
+fn migrate_v2(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        -- Add scope columns to memories table
+        -- scope_type: 'user', 'session', 'agent', 'global'
+        -- scope_id: the actual ID (user_id, session_id, agent_id) or NULL for global
+        ALTER TABLE memories ADD COLUMN scope_type TEXT NOT NULL DEFAULT 'global';
+        ALTER TABLE memories ADD COLUMN scope_id TEXT;
+
+        -- Index for efficient scope filtering
+        CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope_type, scope_id);
+
+        -- Composite index for common query patterns (scope + type + created)
+        CREATE INDEX IF NOT EXISTS idx_memories_scope_type_created
+            ON memories(scope_type, scope_id, memory_type, created_at DESC);
+
+        -- Record migration
+        INSERT INTO schema_version (version) VALUES (2);
         "#,
     )?;
 

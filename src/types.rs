@@ -40,6 +40,9 @@ pub struct Memory {
     /// Visibility level
     #[serde(default)]
     pub visibility: Visibility,
+    /// Memory scope for isolation (user/session/agent/global)
+    #[serde(default)]
+    pub scope: MemoryScope,
     /// Current version number
     #[serde(default = "default_version")]
     pub version: i32,
@@ -115,6 +118,89 @@ pub enum Visibility {
     Private,
     Shared,
     Public,
+}
+
+/// Memory scope for isolating memories by user, session, agent, or global
+///
+/// This enables multi-tenant memory management where:
+/// - `User`: Memories belong to a specific user across all sessions
+/// - `Session`: Memories are temporary and bound to a conversation session
+/// - `Agent`: Memories belong to a specific AI agent instance
+/// - `Global`: Memories are shared across all scopes (system-wide)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryScope {
+    /// User-scoped memory, persists across sessions
+    User { user_id: String },
+    /// Session-scoped memory, temporary for one conversation
+    Session { session_id: String },
+    /// Agent-scoped memory, belongs to a specific agent instance
+    Agent { agent_id: String },
+    /// Global scope, accessible by all (default for backward compatibility)
+    #[default]
+    Global,
+}
+
+impl MemoryScope {
+    /// Create a user-scoped memory scope
+    pub fn user(user_id: impl Into<String>) -> Self {
+        MemoryScope::User {
+            user_id: user_id.into(),
+        }
+    }
+
+    /// Create a session-scoped memory scope
+    pub fn session(session_id: impl Into<String>) -> Self {
+        MemoryScope::Session {
+            session_id: session_id.into(),
+        }
+    }
+
+    /// Create an agent-scoped memory scope
+    pub fn agent(agent_id: impl Into<String>) -> Self {
+        MemoryScope::Agent {
+            agent_id: agent_id.into(),
+        }
+    }
+
+    /// Get the scope type as a string
+    pub fn scope_type(&self) -> &'static str {
+        match self {
+            MemoryScope::User { .. } => "user",
+            MemoryScope::Session { .. } => "session",
+            MemoryScope::Agent { .. } => "agent",
+            MemoryScope::Global => "global",
+        }
+    }
+
+    /// Get the scope ID (user_id, session_id, agent_id, or None for global)
+    pub fn scope_id(&self) -> Option<&str> {
+        match self {
+            MemoryScope::User { user_id } => Some(user_id.as_str()),
+            MemoryScope::Session { session_id } => Some(session_id.as_str()),
+            MemoryScope::Agent { agent_id } => Some(agent_id.as_str()),
+            MemoryScope::Global => None,
+        }
+    }
+
+    /// Check if this scope matches or is accessible from another scope
+    /// Global scope can access everything, specific scopes can only access their own
+    pub fn can_access(&self, other: &MemoryScope) -> bool {
+        match (self, other) {
+            // Global can access everything
+            (MemoryScope::Global, _) => true,
+            // Same scope type and ID
+            (MemoryScope::User { user_id: a }, MemoryScope::User { user_id: b }) => a == b,
+            (MemoryScope::Session { session_id: a }, MemoryScope::Session { session_id: b }) => {
+                a == b
+            }
+            (MemoryScope::Agent { agent_id: a }, MemoryScope::Agent { agent_id: b }) => a == b,
+            // Anyone can access global memories
+            (_, MemoryScope::Global) => true,
+            // Different scope types cannot access each other
+            _ => false,
+        }
+    }
 }
 
 /// Cross-reference (relation) between memories
@@ -395,6 +481,9 @@ pub struct CreateMemoryInput {
     #[serde(default)]
     pub metadata: HashMap<String, serde_json::Value>,
     pub importance: Option<f32>,
+    /// Memory scope for isolation (user/session/agent/global)
+    #[serde(default)]
+    pub scope: MemoryScope,
     /// Defer embedding computation to background queue
     #[serde(default)]
     pub defer_embedding: bool,
@@ -408,6 +497,8 @@ pub struct UpdateMemoryInput {
     pub tags: Option<Vec<String>>,
     pub metadata: Option<HashMap<String, serde_json::Value>>,
     pub importance: Option<f32>,
+    /// Memory scope for isolation (user/session/agent/global)
+    pub scope: Option<MemoryScope>,
 }
 
 /// Input for creating a cross-reference
@@ -433,6 +524,8 @@ pub struct ListOptions {
     pub sort_by: Option<SortField>,
     pub sort_order: Option<SortOrder>,
     pub metadata_filter: Option<HashMap<String, serde_json::Value>>,
+    /// Filter by memory scope
+    pub scope: Option<MemoryScope>,
 }
 
 /// Fields to sort by
@@ -468,6 +561,8 @@ pub struct SearchOptions {
     /// Include match explanations
     #[serde(default)]
     pub explain: bool,
+    /// Filter by memory scope
+    pub scope: Option<MemoryScope>,
 }
 
 /// Sync status information

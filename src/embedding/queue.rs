@@ -377,6 +377,7 @@ mod tests {
                         tags: vec![],
                         metadata: std::collections::HashMap::new(),
                         importance: None,
+                        scope: Default::default(),
                         defer_embedding: true,
                     },
                 )?;

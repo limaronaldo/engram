@@ -511,6 +511,7 @@ mod tests {
             last_accessed_at: Some(Utc::now() - chrono::Duration::hours(2)),
             owner_id: None,
             visibility: Visibility::Private,
+            scope: crate::types::MemoryScope::Global,
             version: 1,
             has_embedding: false,
         }

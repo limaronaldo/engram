@@ -7,7 +7,7 @@
 //! - Time-range queries
 
 use crate::error::{EngramError, Result};
-use crate::types::{CrossReference, EdgeType, Memory, Visibility};
+use crate::types::{CrossReference, EdgeType, Memory, MemoryScope, Visibility};
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -225,6 +225,7 @@ impl<'a> TemporalQueryEngine<'a> {
                             "public" => Visibility::Public,
                             _ => Visibility::Private,
                         },
+                        scope: MemoryScope::Global, // Temporal queries default to global
                         version: row.get(10)?,
                         has_embedding: row.get(11)?,
                     })
@@ -310,6 +311,7 @@ impl<'a> TemporalQueryEngine<'a> {
                         "public" => Visibility::Public,
                         _ => Visibility::Private,
                     },
+                    scope: MemoryScope::Global,
                     version: row.get(10)?,
                     has_embedding: row.get(11)?,
                 })

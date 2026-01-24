@@ -7,12 +7,14 @@ use std::collections::HashMap;
 
 use rusqlite::Connection;
 
-use super::bm25::bm25_search;
+use super::bm25::bm25_search_with_options;
 use super::{select_search_strategy, SearchConfig};
 use crate::embedding::{cosine_similarity, get_embedding};
 use crate::error::Result;
 use crate::storage::queries::{load_tags, memory_from_row};
-use crate::types::{MatchInfo, Memory, MemoryId, SearchOptions, SearchResult, SearchStrategy};
+use crate::types::{
+    MatchInfo, Memory, MemoryId, MemoryScope, SearchOptions, SearchResult, SearchStrategy,
+};
 
 /// Apply project context boost to a memory's score if it matches the current project path
 fn apply_project_context_boost(memory: &Memory, score: f32, config: &SearchConfig) -> f32 {
@@ -44,15 +46,29 @@ pub fn hybrid_search(
     let min_score = options.min_score.unwrap_or(config.min_score);
 
     match strategy {
-        SearchStrategy::KeywordOnly => {
-            keyword_only_search(conn, query, limit, min_score, options.explain, config)
-        }
+        SearchStrategy::KeywordOnly => keyword_only_search(
+            conn,
+            query,
+            limit,
+            min_score,
+            options.explain,
+            config,
+            options.scope.as_ref(),
+        ),
         SearchStrategy::SemanticOnly => {
             if let Some(embedding) = query_embedding {
                 semantic_only_search(conn, embedding, limit, min_score, options, config)
             } else {
                 // Fallback to keyword if no embedding
-                keyword_only_search(conn, query, limit, min_score, options.explain, config)
+                keyword_only_search(
+                    conn,
+                    query,
+                    limit,
+                    min_score,
+                    options.explain,
+                    config,
+                    options.scope.as_ref(),
+                )
             }
         }
         SearchStrategy::Hybrid => {
@@ -65,9 +81,18 @@ pub fn hybrid_search(
                     min_score,
                     config,
                     options.explain,
+                    options.scope.as_ref(),
                 )
             } else {
-                keyword_only_search(conn, query, limit, min_score, options.explain, config)
+                keyword_only_search(
+                    conn,
+                    query,
+                    limit,
+                    min_score,
+                    options.explain,
+                    config,
+                    options.scope.as_ref(),
+                )
             }
         }
     }
@@ -81,8 +106,9 @@ fn keyword_only_search(
     min_score: f32,
     explain: bool,
     config: &SearchConfig,
+    scope: Option<&MemoryScope>,
 ) -> Result<Vec<SearchResult>> {
-    let bm25_results = bm25_search(conn, query, limit * 2, explain)?;
+    let bm25_results = bm25_search_with_options(conn, query, limit * 2, explain, scope)?;
 
     let mut results: Vec<SearchResult> = bm25_results
         .into_iter()
@@ -127,10 +153,13 @@ fn semantic_only_search(
     let mut sql = String::from(
         "SELECT m.id, m.content, m.memory_type, m.importance, m.access_count,
                 m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
-                m.visibility, m.version, m.has_embedding, m.metadata
+                m.visibility, m.version, m.has_embedding, m.metadata,
+                m.scope_type, m.scope_id
          FROM memories m
          WHERE m.has_embedding = 1 AND m.valid_to IS NULL",
     );
+
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
 
     // Add tag filter if specified
     if let Some(ref tags) = options.tags {
@@ -144,6 +173,9 @@ fn semantic_only_search(
             let placeholders: Vec<&str> = tags.iter().map(|_| "?").collect();
             sql.push_str(&placeholders.join(", "));
             sql.push_str("))");
+            for tag in tags {
+                params.push(Box::new(tag.clone()));
+            }
         }
     }
 
@@ -152,15 +184,21 @@ fn semantic_only_search(
         sql.push_str(&format!(" AND m.memory_type = '{}'", memory_type.as_str()));
     }
 
+    // Add scope filter
+    if let Some(ref scope) = options.scope {
+        sql.push_str(" AND m.scope_type = ?");
+        params.push(Box::new(scope.scope_type().to_string()));
+        if let Some(scope_id) = scope.scope_id() {
+            sql.push_str(" AND m.scope_id = ?");
+            params.push(Box::new(scope_id.to_string()));
+        } else {
+            sql.push_str(" AND m.scope_id IS NULL");
+        }
+    }
+
     let mut stmt = conn.prepare(&sql)?;
 
-    // Build params
-    let tag_params: Vec<String> = options.tags.as_ref().map(|t| t.clone()).unwrap_or_default();
-
-    let param_refs: Vec<&dyn rusqlite::ToSql> = tag_params
-        .iter()
-        .map(|s| s as &dyn rusqlite::ToSql)
-        .collect();
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
 
     let memories: Vec<Memory> = stmt
         .query_map(param_refs.as_slice(), memory_from_row)?
@@ -214,14 +252,16 @@ fn rrf_hybrid_search(
     min_score: f32,
     config: &SearchConfig,
     explain: bool,
+    scope: Option<&MemoryScope>,
 ) -> Result<Vec<SearchResult>> {
     // Get keyword results
-    let keyword_results = bm25_search(conn, query, limit * 2, explain)?;
+    let keyword_results = bm25_search_with_options(conn, query, limit * 2, explain, scope)?;
 
     // Get semantic results (without boost - we'll apply it to the final RRF score)
     let semantic_options = SearchOptions {
         limit: Some(limit * 2),
         min_score: Some(0.0), // We'll filter after fusion
+        scope: scope.cloned(),
         ..Default::default()
     };
     // Create a config without project boost for sub-search (we'll apply boost to final RRF)
