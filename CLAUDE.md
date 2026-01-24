@@ -160,11 +160,14 @@ AWS_PROFILE=memora
 
 | Feature | Module | Status |
 |---------|--------|--------|
-| Memory Scoping (RML-924) | `src/types.rs`, `src/storage/` | Complete |
-| Entity Extraction (RML-925) | `src/intelligence/entities.rs` | Complete |
-| Multi-hop Graph (RML-926) | `src/storage/graph_queries.rs` | Complete |
-| Search Reranking (RML-927) | `src/search/rerank.rs` | Complete |
-| Document Ingestion (RML-928) | `src/intelligence/project_context.rs` | Complete |
+| Memory Scoping (RML-924) | `src/types.rs`, `src/storage/` | ✅ Complete |
+| Entity Extraction (RML-925) | `src/intelligence/entities.rs` | ✅ Complete |
+| Multi-hop Graph (RML-926) | `src/storage/graph_queries.rs` | ✅ Complete |
+| Search Reranking (RML-927) | `src/search/rerank.rs` | ✅ Complete |
+| Project Context Scanning | `src/intelligence/project_context.rs` | ✅ Complete |
+| Document Ingestion (PDF/MD) | - | ❌ Not implemented |
+
+**Note:** Project Context Scanning ingests AI instruction files (CLAUDE.md, .cursorrules, etc.) via `memory_scan_project`. Full document ingestion (PDF parsing, chunking) is a gap - see `docs/FEATURE_GAP_ANALYSIS.md`.
 
 ## Key Files Reference
 

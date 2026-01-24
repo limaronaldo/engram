@@ -138,16 +138,19 @@ Engram is a high-performance AI memory infrastructure written in Rust. It provid
 
 | Feature | Module | Status |
 |---------|--------|--------|
-| Memory Scoping | `src/types.rs`, `src/storage/` | ✅ Complete |
-| Entity Extraction (NER) | `src/intelligence/entities.rs` | ✅ Complete |
-| Multi-hop Graph Queries | `src/storage/graph_queries.rs` | ✅ Complete |
-| Search Reranking | `src/search/rerank.rs` | ✅ Complete |
-| Document Ingestion | `src/intelligence/project_context.rs` | ✅ Complete |
+| Memory Scoping (RML-924) | `src/types.rs`, `src/storage/` | ✅ Complete |
+| Entity Extraction (RML-925) | `src/intelligence/entities.rs` | ✅ Complete |
+| Multi-hop Graph Queries (RML-926) | `src/storage/graph_queries.rs` | ✅ Complete |
+| Search Reranking (RML-927) | `src/search/rerank.rs` | ✅ Complete |
+| Project Context Scanning | `src/intelligence/project_context.rs` | ✅ Complete |
 | Hybrid Search | `src/search/hybrid.rs` | ✅ Complete |
 | Fuzzy Search | `src/search/fuzzy.rs` | ✅ Complete |
 | Cloud Sync | `src/sync/` | ✅ Complete |
 | Auto-capture | `src/intelligence/auto_capture.rs` | ✅ Complete |
 | Quality Scoring | `src/intelligence/quality.rs` | ✅ Complete |
+| Document Ingestion (PDF/MD) | - | ❌ Not implemented |
+
+**Note:** Project Context Scanning (`memory_scan_project`) ingests AI instruction files (CLAUDE.md, .cursorrules, etc.). Full document ingestion with PDF parsing, chunking strategies, and source tracking is not yet implemented - see `docs/FEATURE_GAP_ANALYSIS.md` for details.
 
 ## Database Schema (v4)
 
