@@ -714,6 +714,23 @@ Content for section 2.
     }
 
     #[test]
+    fn test_invalid_overlap() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("doc.md");
+        fs::write(&file_path, "Hello").unwrap();
+
+        let storage = Storage::open_in_memory().unwrap();
+        let ingestor = DocumentIngestor::new(&storage);
+
+        let mut config = IngestConfig::default();
+        config.chunk_size = 200;
+        config.overlap = 200;
+
+        let err = ingestor.ingest_file(&file_path, config).unwrap_err();
+        assert!(err.to_string().contains("overlap"));
+    }
+
+    #[test]
     fn test_pdf_empty_is_error() {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("empty.pdf");
