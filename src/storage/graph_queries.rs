@@ -113,8 +113,8 @@ pub struct TraversalResult {
     pub start_id: MemoryId,
     /// All nodes found during traversal
     pub nodes: Vec<TraversalNode>,
-    /// All edges traversed
-    pub edges: Vec<CrossReference>,
+    /// Edges that led to newly discovered nodes
+    pub discovery_edges: Vec<CrossReference>,
     /// Statistics about the traversal
     pub stats: TraversalStats,
 }
@@ -139,7 +139,7 @@ pub fn get_related_multi_hop(
 ) -> Result<TraversalResult> {
     let mut visited: HashSet<MemoryId> = HashSet::new();
     let mut nodes: Vec<TraversalNode> = Vec::new();
-    let mut edges: Vec<CrossReference> = Vec::new();
+    let mut discovery_edges: Vec<CrossReference> = Vec::new();
     let mut stats = TraversalStats::default();
 
     // Queue: (memory_id, depth, path, edge_path, cumulative_score)
@@ -214,7 +214,7 @@ pub fn get_related_multi_hop(
                 connection_type: ConnectionType::CrossReference,
             });
 
-            edges.push(crossref);
+            discovery_edges.push(crossref);
 
             *stats.nodes_per_depth.entry(new_depth).or_insert(0) += 1;
             *stats
@@ -282,7 +282,7 @@ pub fn get_related_multi_hop(
     Ok(TraversalResult {
         start_id,
         nodes,
-        edges,
+        discovery_edges,
         stats,
     })
 }
@@ -567,8 +567,8 @@ mod tests {
                     suggested_relation: EntityRelation::Mentions,
                 };
                 let entity_id = upsert_entity(conn, &entity)?;
-                link_entity_to_memory(conn, id_a, entity_id, EntityRelation::Mentions, 0.9, None)?;
-                link_entity_to_memory(conn, id_b, entity_id, EntityRelation::Mentions, 0.8, None)?;
+                let _ = link_entity_to_memory(conn, id_a, entity_id, EntityRelation::Mentions, 0.9, None)?;
+                let _ = link_entity_to_memory(conn, id_b, entity_id, EntityRelation::Mentions, 0.8, None)?;
 
                 // Traverse from A with entities enabled
                 let options = TraversalOptions {

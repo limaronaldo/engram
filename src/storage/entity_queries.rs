@@ -60,17 +60,17 @@ pub fn upsert_entity(conn: &Connection, extracted: &ExtractedEntity) -> Result<i
         .ok();
 
     if let Some(id) = existing {
-        // Update existing entity
+        // Update timestamp only; mention_count is incremented when a new link is created
         conn.execute(
-            "UPDATE entities SET mention_count = mention_count + 1, updated_at = ? WHERE id = ?",
+            "UPDATE entities SET updated_at = ? WHERE id = ?",
             params![now, id],
         )?;
         Ok(id)
     } else {
-        // Insert new entity
+        // Insert new entity with zero mentions; links drive mention_count
         conn.execute(
-            "INSERT INTO entities (name, normalized_name, entity_type, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO entities (name, normalized_name, entity_type, created_at, updated_at, mention_count)
+             VALUES (?, ?, ?, ?, ?, 0)",
             params![
                 extracted.text,
                 extracted.normalized,
@@ -91,11 +91,11 @@ pub fn link_entity_to_memory(
     relation: EntityRelation,
     confidence: f32,
     offset: Option<usize>,
-) -> Result<()> {
+) -> Result<bool> {
     let now = Utc::now().to_rfc3339();
 
-    conn.execute(
-        "INSERT OR REPLACE INTO memory_entities (memory_id, entity_id, relation, confidence, char_offset, created_at)
+    let inserted = conn.execute(
+        "INSERT OR IGNORE INTO memory_entities (memory_id, entity_id, relation, confidence, char_offset, created_at)
          VALUES (?, ?, ?, ?, ?, ?)",
         params![
             memory_id,
@@ -105,9 +105,16 @@ pub fn link_entity_to_memory(
             offset.map(|o| o as i64),
             now,
         ],
-    )?;
+    )? > 0;
 
-    Ok(())
+    if inserted {
+        conn.execute(
+            "UPDATE entities SET mention_count = mention_count + 1, updated_at = ? WHERE id = ?",
+            params![now, entity_id],
+        )?;
+    }
+
+    Ok(inserted)
 }
 
 /// Get an entity by ID
@@ -382,9 +389,9 @@ mod tests {
                 let id2 = upsert_entity(conn, &extracted)?;
                 assert_eq!(id1, id2);
 
-                // Verify mention count increased
+                // Verify mention count unchanged (links drive mention_count)
                 let entity = get_entity(conn, id1)?;
-                assert_eq!(entity.mention_count, 2);
+                assert_eq!(entity.mention_count, 0);
                 assert_eq!(entity.name, "Anthropic");
 
                 // Find by name
@@ -433,7 +440,7 @@ mod tests {
                 let entity_id = upsert_entity(conn, &extracted)?;
 
                 // Link them
-                link_entity_to_memory(
+                let inserted = link_entity_to_memory(
                     conn,
                     memory.id,
                     entity_id,
@@ -441,12 +448,28 @@ mod tests {
                     0.9,
                     Some(8),
                 )?;
+                assert!(inserted);
 
                 // Verify link
                 let entities = get_entities_for_memory(conn, memory.id)?;
                 assert_eq!(entities.len(), 1);
                 assert_eq!(entities[0].0.name, "Anthropic");
                 assert_eq!(entities[0].1, EntityRelation::Mentions);
+                assert_eq!(entities[0].0.mention_count, 1);
+
+                // Duplicate link should be ignored and not inflate mention_count
+                let inserted_again = link_entity_to_memory(
+                    conn,
+                    memory.id,
+                    entity_id,
+                    EntityRelation::Mentions,
+                    0.9,
+                    Some(8),
+                )?;
+                assert!(!inserted_again);
+
+                let entity = get_entity(conn, entity_id)?;
+                assert_eq!(entity.mention_count, 1);
 
                 // Verify reverse lookup
                 let memories = get_memories_for_entity(conn, entity_id)?;

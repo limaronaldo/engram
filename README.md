@@ -39,15 +39,12 @@ curl localhost:8080/v1/search?q=user+preferences
 Helps engineers building LLM apps by capturing project context and decisions.
 
 ```bash
-# Scan project context
-engram-cli scan .
-
 # Search decisions
 engram-cli search "why did we choose postgres"
 ```
 
 **Key features:**
-- Project Context Discovery (CLAUDE.md, .cursorrules, etc.)
+- Project Context Discovery (CLAUDE.md, .cursorrules, etc.) via MCP tools
 - Decision trails with metadata + tags
 - Local-first, sync optional
 
@@ -114,9 +111,11 @@ engram-cli search "asynch awiat rust"
 
 ### Knowledge Graph
 ```bash
-# Cross-references with confidence decay
-engram-cli related 42 --depth 2
+# Export the graph (CLI)
+engram-cli graph --format json --output graph.json
 ```
+Entity extraction (`memory_extract_entities`) links memories via shared entities. Multi-hop traversal and shortest-path are available via MCP tools `memory_traverse` and `memory_find_path`.
+Note: `memory_related` returns a simple cross-reference list when `depth=1` and `include_entities=false`; otherwise it returns a traversal result (`nodes`, `discovery_edges`, `stats`).
 
 ### Multiple Interfaces
 - **MCP**: Native Model Context Protocol for Claude Code, Cursor
@@ -125,13 +124,8 @@ engram-cli related 42 --depth 2
 - **CLI**: Developer-friendly commands
 
 ### Project Context Discovery
-```bash
-# Ingest AI instruction files into searchable memory
-engram-cli scan . --extract-sections
-
-# Supported: CLAUDE.md, AGENTS.md, .cursorrules, 
-# .github/copilot-instructions.md, .aider.conf.yml, etc.
-```
+Use MCP tools `memory_scan_project` and `memory_get_project_context` to ingest and query instruction files.
+Supported: CLAUDE.md, AGENTS.md, .cursorrules, .github/copilot-instructions.md, .aider.conf.yml, etc.
 
 ---
 
@@ -181,6 +175,13 @@ Add to your MCP config (`~/.config/claude/mcp.json` or similar):
 | `memory_list` | List with filters |
 | `memory_related` | Find cross-references |
 | `memory_scan_project` | Ingest project context files |
+| `memory_get_project_context` | Retrieve project context memories |
+| `memory_extract_entities` | Extract named entities from a memory |
+| `memory_get_entities` | List entities for a memory |
+| `memory_search_entities` | Search entities by name |
+| `memory_entity_stats` | Entity statistics |
+| `memory_traverse` | Multi-hop graph traversal |
+| `memory_find_path` | Shortest path between memories |
 | `memory_stats` | Usage statistics |
 
 ---

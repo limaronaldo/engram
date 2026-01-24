@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 4;
 
 /// Run all migrations
 pub fn run_migrations(conn: &Connection) -> Result<()> {
@@ -36,6 +36,10 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
 
     if current_version < 3 {
         migrate_v3(conn)?;
+    }
+
+    if current_version < 4 {
+        migrate_v4(conn)?;
     }
 
     Ok(())
@@ -291,6 +295,26 @@ fn migrate_v3(conn: &Connection) -> Result<()> {
 
         -- Record migration
         INSERT INTO schema_version (version) VALUES (3);
+        "#,
+    )?;
+
+    Ok(())
+}
+
+/// Recompute entity mention counts (v4)
+fn migrate_v4(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        -- Recalculate mention_count from existing links
+        UPDATE entities
+        SET mention_count = (
+            SELECT COUNT(DISTINCT memory_id)
+            FROM memory_entities
+            WHERE memory_entities.entity_id = entities.id
+        );
+
+        -- Record migration
+        INSERT INTO schema_version (version) VALUES (4);
         "#,
     )?;
 

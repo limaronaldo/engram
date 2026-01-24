@@ -152,13 +152,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
     ),
     (
         "memory_related",
-        "Get memories related to a given memory with optional multi-hop traversal",
+        "Get memories related to a given memory (depth>1 or include_entities returns traversal result)",
         r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Starting memory ID"},
                 "depth": {"type": "integer", "default": 1, "description": "Traversal depth (1 = direct relations only)"},
-                "include_entities": {"type": "boolean", "default": true, "description": "Include connections through shared entities"},
+                "include_entities": {"type": "boolean", "default": false, "description": "Include connections through shared entities"},
                 "edge_type": {"type": "string", "description": "Filter by edge type"},
                 "include_decayed": {"type": "boolean", "default": false}
             },

@@ -1001,7 +1001,7 @@ impl EngramHandler {
                 let mut stored_entities = Vec::new();
                 for extracted in &result.entities {
                     let entity_id = upsert_entity(conn, extracted)?;
-                    link_entity_to_memory(
+                    let _inserted = link_entity_to_memory(
                         conn,
                         memory_id,
                         entity_id,

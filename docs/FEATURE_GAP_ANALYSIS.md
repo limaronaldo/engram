@@ -4,7 +4,7 @@
 
 This document analyzes features from Mem0, Letta, Cognee, and Zep/Graphiti to identify what Engram should incorporate to be competitive or superior.
 
-**Key Finding:** Engram has strong foundations (Rust, hybrid search, MCP-native) but lacks several production-critical features that competitors offer.
+**Key Finding:** Engram’s foundations are strong, and recent updates added memory scoping plus entity extraction + multi-hop traversal. Remaining gaps are mostly around lifecycle (TTL/dedup), temporal reasoning, and self-editing workflows.
 
 ---
 
@@ -14,24 +14,15 @@ This document analyzes features from Mem0, Letta, Cognee, and Zep/Graphiti to id
 
 | Feature | Mem0 | Letta | Cognee | Zep | Engram | Priority |
 |---------|------|-------|--------|-----|--------|----------|
-| User Memory | Yes | Yes | Yes | Yes | Partial | **P1** |
-| Session Memory | Yes | Yes | No | Yes | No | **P1** |
-| Agent Memory | Yes | Yes | No | No | No | **P2** |
+| User Memory | Yes | Yes | Yes | Yes | **Yes** | - |
+| Session Memory | Yes | Yes | No | Yes | **Yes** | - |
+| Agent Memory | Yes | Yes | No | No | **Yes** | - |
 | Core Memory (always in context) | No | Yes | No | No | No | **P2** |
 | Archival Memory (cold storage) | Yes | Yes | Yes | Yes | Partial | P3 |
 
-**Gap:** Engram has no explicit memory scoping (user/session/agent). All memories are flat.
+**Status:** Implemented. Engram now stores `scope_type` + `scope_id` (user/session/agent/global) and exposes scope filtering in queries.
 
-**Recommendation:** Add `scope` field with values: `user`, `session`, `agent`, `global`
-
-```rust
-pub enum MemoryScope {
-    User(String),      // user_id
-    Session(String),   // session_id
-    Agent(String),     // agent_id
-    Global,
-}
-```
+**Remaining gaps:** Core/pinned memory tiers and explicit archival/cold storage policies.
 
 ---
 
@@ -64,19 +55,19 @@ pub enum MemoryScope {
 | Feature | Mem0 | Letta | Cognee | Zep/Graphiti | Engram | Priority |
 |---------|------|-------|--------|--------------|--------|----------|
 | Cross-references | Yes | No | Yes | Yes | Yes | - |
-| Entity extraction | Yes | No | Yes | Yes | No | **P1** |
+| Entity extraction | Yes | No | Yes | Yes | **Yes** | - |
 | Relationship types | Basic | No | Rich | Rich | Basic | **P2** |
-| Multi-hop queries | Yes | No | Yes | Yes | No | **P1** |
+| Multi-hop queries | Yes | No | Yes | Yes | **Yes** | - |
 | Temporal edges | No | No | No | **Yes** | No | **P2** |
 | Graph traversal | Basic | No | Yes | Yes | Basic | P3 |
 | Community detection | No | No | Yes | Yes | No | P3 |
 
-**Gap:** No automatic entity extraction or multi-hop queries.
+**Status:** Entity extraction + multi-hop traversal are implemented (RML-925/926) via MCP tools.
 
-**Recommendation:**
-1. Add entity extraction on memory create (NER via LLM or spaCy)
-2. Store entities in separate table with links to memories
-3. Add `memory_search` with `depth` parameter for multi-hop
+**Remaining gaps:**
+1. Optional auto-extraction on memory create (currently explicit tool call)
+2. Richer relationship typing (beyond core edge types)
+3. Temporal edges + point-in-time queries
 
 ```sql
 CREATE TABLE entities (
@@ -225,15 +216,18 @@ pub struct Webhook {
 
 ## Priority Feature List
 
+### Recently Implemented (✅)
+
+- Memory scoping (user/session/agent)
+- Entity extraction + entity tools
+- Multi-hop graph traversal + pathfinding
+
 ### P1 - Must Have (Competitive Parity)
 
 | Feature | Effort | Impact |
 |---------|--------|--------|
-| Memory scoping (user/session/agent) | Medium | High |
 | Memory expiration (TTL) | Low | Medium |
 | Memory deduplication | Medium | High |
-| Entity extraction | High | High |
-| Multi-hop graph queries | Medium | High |
 | Reranking in search | Medium | High |
 | Agent self-editing tools | Medium | High |
 | Document ingestion (PDF, MD) | High | High |
@@ -269,21 +263,11 @@ pub struct Webhook {
 
 ### Phase 1: Core Competitive Features (4-6 weeks)
 
-1. **Memory Scoping**
-   - Add `scope` enum: user, session, agent, global
-   - Update all queries to filter by scope
-   - Add scope to MCP tools
-
-2. **Entity Extraction**
-   - Extract entities on memory create
-   - Store in entities table
-   - Link to memories
-
-3. **Reranking**
+1. **Reranking**
    - Add optional reranker step after hybrid search
    - Support local cross-encoder or API (Cohere)
 
-4. **Document Ingestion**
+2. **Document Ingestion**
    - Add `memory_ingest_document` tool
    - Support PDF, Markdown, HTML
    - Chunking with overlap
@@ -299,11 +283,7 @@ pub struct Webhook {
    - Add `event_time`, `valid_from`, `valid_to`
    - Point-in-time query syntax
 
-3. **Multi-hop Queries**
-   - Graph traversal with depth limit
-   - Relationship-aware search
-
-4. **Production Hardening**
+3. **Production Hardening**
    - Webhooks
    - Audit logging
    - TTL cleanup job
@@ -325,13 +305,11 @@ While adding features, maintain these differentiators:
 
 ## Conclusion
 
-To compete with Mem0/Letta/Cognee/Zep, Engram needs:
+To compete with Mem0/Letta/Cognee/Zep, Engram still needs:
 
-1. **Memory scoping** (user/session/agent) - table stakes
-2. **Entity extraction** - enables graph queries
-3. **Reranking** - improves search quality
-4. **Document ingestion** - expands use cases
-5. **Self-editing tools** - enables agentic memory management
+1. **Reranking** - improves search quality
+2. **Document ingestion** - expands use cases
+3. **Self-editing tools** - enables agentic memory management
 
 With these additions, Engram can claim:
 - "Mem0's features + Rust performance + MCP-native"
