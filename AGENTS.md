@@ -203,15 +203,53 @@ cargo build --release
 # - engram-cli (command-line interface)
 ```
 
-## Environment Variables
+## Environment Configuration
+
+### Configuration Files
+
+| File | Purpose |
+|------|---------|
+| `.env.local` | Local secrets and credentials (not committed) |
+| `.env.example` | Template with all available options |
+
+### Core Settings
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `ENGRAM_DB_PATH` | SQLite database path | `~/.engram/memories.db` |
+| `ENGRAM_DB_PATH` | SQLite database path | `~/.local/share/engram/memories.db` |
 | `ENGRAM_STORAGE_MODE` | `local` or `cloud-safe` | `local` |
 | `ENGRAM_CLOUD_URI` | S3 URI for sync | - |
 | `ENGRAM_CLOUD_ENCRYPT` | Enable AES-256 encryption | `false` |
 | `ENGRAM_LOG_LEVEL` | Logging level | `info` |
+| `ENGRAM_HTTP_PORT` | HTTP server port | `8080` |
+| `ENGRAM_WS_PORT` | WebSocket server port | `8081` |
+
+### Cloud Storage (Cloudflare R2)
+
+| Variable | Description |
+|----------|-------------|
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID |
+| `R2_ACCESS_KEY_ID` | R2 API access key |
+| `R2_SECRET_ACCESS_KEY` | R2 API secret key |
+| `R2_ENDPOINT_URL` | R2 endpoint (`https://<account>.r2.cloudflarestorage.com`) |
+| `AWS_PROFILE` | AWS CLI profile for S3 operations |
+| `AWS_ENDPOINT_URL` | Custom S3 endpoint (for R2/MinIO) |
+
+### External Services
+
+| Variable | Description |
+|----------|-------------|
+| `DATABASE_URL` | PostgreSQL connection string (future use) |
+| `NEON_DATABASE_URL` | Neon PostgreSQL connection |
+| `LINEAR_API_KEY` | Linear API for project management |
+| `OPENAI_API_KEY` | OpenAI API for embeddings (if using openai model) |
+
+### Embedding Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ENGRAM_EMBEDDING_MODEL` | `tfidf` or `openai` | `tfidf` |
+| `OPENAI_API_KEY` | Required if using openai embeddings | - |
 
 ## Performance Targets
 
