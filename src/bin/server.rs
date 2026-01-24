@@ -102,6 +102,11 @@ impl EngramHandler {
             "memory_sync_status" => self.tool_sync_status(params),
             "memory_scan_project" => self.tool_scan_project(params),
             "memory_get_project_context" => self.tool_get_project_context(params),
+            // Entity tools (RML-925)
+            "memory_extract_entities" => self.tool_extract_entities(params),
+            "memory_get_entities" => self.tool_get_entities(params),
+            "memory_search_entities" => self.tool_search_entities(params),
+            "memory_entity_stats" => self.tool_entity_stats(params),
             _ => json!({"error": format!("Unknown tool: {}", name)}),
         }
     }
@@ -845,6 +850,164 @@ impl EngramHandler {
                     "count": filtered.len(),
                     "memories": filtered
                 }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // =========================================================================
+    // Entity Tools (RML-925)
+    // =========================================================================
+
+    /// Extract entities from a memory's content and store them
+    fn tool_extract_entities(&self, params: Value) -> Value {
+        use engram::intelligence::{EntityExtractionConfig, EntityExtractor};
+        use engram::storage::{link_entity_to_memory, upsert_entity};
+
+        let memory_id = match params.get("memory_id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "memory_id is required"}),
+        };
+
+        // Optional: custom confidence threshold
+        let min_confidence = params
+            .get("min_confidence")
+            .and_then(|v| v.as_f64())
+            .map(|f| f as f32)
+            .unwrap_or(0.5);
+
+        self.storage
+            .with_transaction(|conn| {
+                // Get the memory
+                let memory = get_memory(conn, memory_id)?;
+
+                // Configure and run extraction
+                let config = EntityExtractionConfig {
+                    min_confidence,
+                    ..Default::default()
+                };
+                let extractor = EntityExtractor::new(config);
+                let result = extractor.extract(&memory.content);
+
+                // Store entities and link them
+                let mut stored_entities = Vec::new();
+                for extracted in &result.entities {
+                    let entity_id = upsert_entity(conn, extracted)?;
+                    link_entity_to_memory(
+                        conn,
+                        memory_id,
+                        entity_id,
+                        extracted.suggested_relation,
+                        extracted.confidence,
+                        Some(extracted.offset),
+                    )?;
+
+                    stored_entities.push(json!({
+                        "entity_id": entity_id,
+                        "text": extracted.text,
+                        "type": extracted.entity_type.as_str(),
+                        "confidence": extracted.confidence,
+                        "relation": extracted.suggested_relation.as_str(),
+                    }));
+                }
+
+                Ok(json!({
+                    "memory_id": memory_id,
+                    "entities_found": result.entities.len(),
+                    "extraction_time_ms": result.extraction_time_ms,
+                    "entities": stored_entities
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    /// Get entities linked to a memory
+    fn tool_get_entities(&self, params: Value) -> Value {
+        use engram::storage::get_entities_for_memory;
+
+        let memory_id = match params.get("memory_id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "memory_id is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let entities = get_entities_for_memory(conn, memory_id)?;
+
+                let result: Vec<_> = entities
+                    .into_iter()
+                    .map(|(entity, relation, confidence)| {
+                        json!({
+                            "id": entity.id,
+                            "name": entity.name,
+                            "type": entity.entity_type.as_str(),
+                            "mention_count": entity.mention_count,
+                            "relation": relation.as_str(),
+                            "confidence": confidence,
+                        })
+                    })
+                    .collect();
+
+                Ok(json!({
+                    "memory_id": memory_id,
+                    "count": result.len(),
+                    "entities": result
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    /// Search for entities by name
+    fn tool_search_entities(&self, params: Value) -> Value {
+        use engram::intelligence::EntityType;
+        use engram::storage::search_entities;
+
+        let query = match params.get("query").and_then(|v| v.as_str()) {
+            Some(q) => q,
+            None => return json!({"error": "query is required"}),
+        };
+
+        let entity_type: Option<EntityType> = params
+            .get("type")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse().ok());
+
+        let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(20);
+
+        self.storage
+            .with_connection(|conn| {
+                let entities = search_entities(conn, query, entity_type, limit)?;
+
+                let result: Vec<_> = entities
+                    .into_iter()
+                    .map(|entity| {
+                        json!({
+                            "id": entity.id,
+                            "name": entity.name,
+                            "normalized_name": entity.normalized_name,
+                            "type": entity.entity_type.as_str(),
+                            "mention_count": entity.mention_count,
+                            "created_at": entity.created_at.to_rfc3339(),
+                        })
+                    })
+                    .collect();
+
+                Ok(json!({
+                    "query": query,
+                    "count": result.len(),
+                    "entities": result
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    /// Get entity statistics
+    fn tool_entity_stats(&self, _params: Value) -> Value {
+        use engram::storage::get_entity_stats;
+
+        self.storage
+            .with_connection(|conn| {
+                let stats = get_entity_stats(conn)?;
+                Ok(json!(stats))
             })
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }

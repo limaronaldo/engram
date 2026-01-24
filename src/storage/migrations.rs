@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 2;
+pub const SCHEMA_VERSION: i32 = 3;
 
 /// Run all migrations
 pub fn run_migrations(conn: &Connection) -> Result<()> {
@@ -32,6 +32,10 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
 
     if current_version < 2 {
         migrate_v2(conn)?;
+    }
+
+    if current_version < 3 {
+        migrate_v3(conn)?;
     }
 
     Ok(())
@@ -238,6 +242,55 @@ fn migrate_v2(conn: &Connection) -> Result<()> {
 
         -- Record migration
         INSERT INTO schema_version (version) VALUES (2);
+        "#,
+    )?;
+
+    Ok(())
+}
+
+/// Entity extraction migration (v3) - RML-925
+/// Adds tables for storing extracted entities and their relationships to memories
+fn migrate_v3(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        -- Entities table for storing extracted named entities
+        CREATE TABLE IF NOT EXISTS entities (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            normalized_name TEXT NOT NULL,
+            entity_type TEXT NOT NULL,  -- person, organization, project, concept, location, datetime, reference, other
+            aliases TEXT NOT NULL DEFAULT '[]',  -- JSON array of alternative names
+            metadata TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            mention_count INTEGER NOT NULL DEFAULT 1,
+            UNIQUE(normalized_name, entity_type)
+        );
+
+        -- Memory-entity relationships
+        CREATE TABLE IF NOT EXISTS memory_entities (
+            memory_id INTEGER NOT NULL,
+            entity_id INTEGER NOT NULL,
+            relation TEXT NOT NULL DEFAULT 'mentions',  -- mentions, defines, references, about, created_by
+            confidence REAL NOT NULL DEFAULT 1.0,
+            char_offset INTEGER,  -- position in memory content
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (memory_id, entity_id, relation),
+            FOREIGN KEY (memory_id) REFERENCES memories(id) ON DELETE CASCADE,
+            FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
+        );
+
+        -- Indexes for entity queries
+        CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(entity_type);
+        CREATE INDEX IF NOT EXISTS idx_entities_normalized ON entities(normalized_name);
+        CREATE INDEX IF NOT EXISTS idx_entities_mention_count ON entities(mention_count DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_entities_memory ON memory_entities(memory_id);
+        CREATE INDEX IF NOT EXISTS idx_memory_entities_entity ON memory_entities(entity_id);
+        CREATE INDEX IF NOT EXISTS idx_memory_entities_relation ON memory_entities(relation);
+
+        -- Record migration
+        INSERT INTO schema_version (version) VALUES (3);
         "#,
     )?;
 
