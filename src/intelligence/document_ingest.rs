@@ -18,7 +18,7 @@
 //! println!("Ingested {} chunks", result.chunks_created);
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::time::Instant;
@@ -219,16 +219,16 @@ impl<'a> DocumentIngestor<'a> {
                 let text = String::from_utf8_lossy(&content);
                 extract_markdown_sections(&text)
             }
-            DocumentFormat::Pdf => match extract_pdf_sections(&content) {
-                Ok(sections) => sections,
-                Err(e) => {
-                    warnings.push(format!("PDF extraction warning: {}", e));
-                    vec![]
-                }
-            },
+            DocumentFormat::Pdf => extract_pdf_sections(&content)
+                .map_err(|e| EngramError::InvalidInput(format!("PDF extraction failed: {}", e)))?,
         };
 
         if sections.is_empty() {
+            if matches!(format, DocumentFormat::Pdf) {
+                return Err(EngramError::InvalidInput(
+                    "No text extracted from PDF".to_string(),
+                ));
+            }
             warnings.push("No content extracted from document".to_string());
         }
 
@@ -237,14 +237,12 @@ impl<'a> DocumentIngestor<'a> {
         let chunks = create_chunks(sections, &source_path, &doc_id, &config);
 
         // Ingest chunks
+        let existing_hashes = self.existing_chunk_hashes(&doc_id)?;
         let mut chunks_created = 0;
         let mut chunks_skipped = 0;
 
         for chunk in &chunks {
-            // Check for existing chunk by doc_id + chunk_hash
-            let existing = self.find_existing_chunk(&chunk.doc_id, &chunk.chunk_hash)?;
-
-            if existing {
+            if existing_hashes.contains(&chunk.chunk_hash) {
                 chunks_skipped += 1;
                 continue;
             }
@@ -266,27 +264,47 @@ impl<'a> DocumentIngestor<'a> {
         })
     }
 
-    /// Check if a chunk already exists
-    fn find_existing_chunk(&self, doc_id: &str, chunk_hash: &str) -> Result<bool> {
-        // Search for existing memory with matching doc_id and chunk_hash in metadata
+    /// Fetch existing chunk hashes for a document in a single pass
+    fn existing_chunk_hashes(&self, doc_id: &str) -> Result<HashSet<String>> {
+        const PAGE_SIZE: i64 = 500;
         self.storage.with_connection(|conn| {
-            let mut filter = HashMap::new();
-            filter.insert("doc_id".to_string(), serde_json::json!(doc_id));
-            filter.insert("chunk_hash".to_string(), serde_json::json!(chunk_hash));
+            let mut hashes = HashSet::new();
+            let mut offset = 0;
 
-            let options = ListOptions {
-                limit: Some(1),
-                offset: None,
-                tags: Some(vec!["document-chunk".to_string()]),
-                memory_type: None,
-                sort_by: None,
-                sort_order: None,
-                scope: None,
-                metadata_filter: Some(filter),
-            };
+            loop {
+                let mut filter = HashMap::new();
+                filter.insert("doc_id".to_string(), serde_json::json!(doc_id));
 
-            let results = list_memories(conn, &options)?;
-            Ok(!results.is_empty())
+                let options = ListOptions {
+                    limit: Some(PAGE_SIZE),
+                    offset: Some(offset),
+                    tags: Some(vec!["document-chunk".to_string()]),
+                    memory_type: None,
+                    sort_by: None,
+                    sort_order: None,
+                    scope: None,
+                    metadata_filter: Some(filter),
+                };
+
+                let results = list_memories(conn, &options)?;
+                for memory in &results {
+                    if let Some(hash) = memory
+                        .metadata
+                        .get("chunk_hash")
+                        .and_then(|v| v.as_str())
+                    {
+                        hashes.insert(hash.to_string());
+                    }
+                }
+
+                if results.len() < PAGE_SIZE as usize {
+                    break;
+                }
+
+                offset += PAGE_SIZE;
+            }
+
+            Ok(hashes)
         })
     }
 
@@ -693,5 +711,21 @@ Content for section 2.
 
         let err = ingestor.ingest_file(&file_path, config).unwrap_err();
         assert!(err.to_string().contains("chunk_size"));
+    }
+
+    #[test]
+    fn test_pdf_empty_is_error() {
+        let dir = tempdir().unwrap();
+        let file_path = dir.path().join("empty.pdf");
+        fs::write(&file_path, b"").unwrap();
+
+        let storage = Storage::open_in_memory().unwrap();
+        let ingestor = DocumentIngestor::new(&storage);
+
+        let mut config = IngestConfig::default();
+        config.format = Some(DocumentFormat::Pdf);
+
+        let err = ingestor.ingest_file(&file_path, config).unwrap_err();
+        assert!(err.to_string().contains("PDF"));
     }
 }
