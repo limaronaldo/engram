@@ -79,7 +79,7 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
     // Search
     (
         "memory_search",
-        "Search memories using hybrid search (keyword + semantic). Automatically selects optimal strategy.",
+        "Search memories using hybrid search (keyword + semantic). Automatically selects optimal strategy with optional reranking.",
         r#"{
             "type": "object",
             "properties": {
@@ -89,7 +89,9 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "tags": {"type": "array", "items": {"type": "string"}},
                 "type": {"type": "string"},
                 "strategy": {"type": "string", "enum": ["keyword", "semantic", "hybrid"], "description": "Force specific strategy"},
-                "explain": {"type": "boolean", "default": false, "description": "Include match explanations"}
+                "explain": {"type": "boolean", "default": false, "description": "Include match explanations"},
+                "rerank": {"type": "boolean", "default": true, "description": "Apply reranking to improve result quality"},
+                "rerank_strategy": {"type": "string", "enum": ["none", "heuristic", "multi_signal"], "default": "heuristic", "description": "Reranking strategy to use"}
             },
             "required": ["query"]
         }"#,

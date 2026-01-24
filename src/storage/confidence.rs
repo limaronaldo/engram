@@ -143,7 +143,7 @@ pub fn get_related_with_decay(
 }
 
 /// Cross-reference with calculated decayed confidence
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DecayedCrossRef {
     pub from_id: MemoryId,
     pub to_id: MemoryId,

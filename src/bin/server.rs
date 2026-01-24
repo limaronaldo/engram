@@ -182,8 +182,21 @@ impl EngramHandler {
     }
 
     fn tool_memory_search(&self, params: Value) -> Value {
+        use engram::search::{RerankConfig, RerankStrategy, Reranker};
+
         let query = params.get("query").and_then(|v| v.as_str()).unwrap_or("");
         let options: SearchOptions = serde_json::from_value(params.clone()).unwrap_or_default();
+
+        // Reranking options
+        let rerank_enabled = params
+            .get("rerank")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let rerank_strategy = match params.get("rerank_strategy").and_then(|v| v.as_str()) {
+            Some("none") => RerankStrategy::None,
+            Some("multi_signal") => RerankStrategy::MultiSignal,
+            _ => RerankStrategy::Heuristic,
+        };
 
         // Generate query embedding
         let query_embedding = self.embedder.embed(query).ok();
@@ -200,7 +213,47 @@ impl EngramHandler {
         self.storage
             .with_connection(|conn| {
                 let results = hybrid_search(conn, query, embedding_ref, &options, &search_config)?;
-                Ok(json!(results))
+
+                // Apply reranking if enabled
+                if rerank_enabled && rerank_strategy != RerankStrategy::None {
+                    let config = RerankConfig {
+                        enabled: true,
+                        strategy: rerank_strategy,
+                        ..Default::default()
+                    };
+                    let reranker = Reranker::with_config(config);
+                    let reranked = reranker.rerank(results, query, None);
+
+                    // Return reranked results with info if explain is enabled
+                    if options.explain {
+                        Ok(json!({
+                            "results": reranked.iter().map(|r| {
+                                json!({
+                                    "memory": r.result.memory,
+                                    "score": r.rerank_info.final_score,
+                                    "match_info": r.result.match_info,
+                                    "rerank_info": r.rerank_info
+                                })
+                            }).collect::<Vec<_>>(),
+                            "reranked": true,
+                            "strategy": format!("{:?}", rerank_strategy)
+                        }))
+                    } else {
+                        // Return simplified results
+                        Ok(json!(reranked
+                            .iter()
+                            .map(|r| {
+                                json!({
+                                    "memory": r.result.memory,
+                                    "score": r.rerank_info.final_score,
+                                    "match_info": r.result.match_info
+                                })
+                            })
+                            .collect::<Vec<_>>()))
+                    }
+                } else {
+                    Ok(json!(results))
+                }
             })
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }
@@ -244,14 +297,25 @@ impl EngramHandler {
         let include_entities = params
             .get("include_entities")
             .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+            .unwrap_or(false);
+        let include_decayed = params
+            .get("include_decayed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let edge_type = params
+            .get("edge_type")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<EdgeType>().ok());
 
         // For backward compatibility, depth=1 uses the simple get_related
-        if depth <= 1 && !include_entities {
+        if depth <= 1 && !include_entities && !include_decayed {
             return self
                 .storage
                 .with_connection(|conn| {
-                    let related = get_related(conn, id)?;
+                    let mut related = get_related(conn, id)?;
+                    if let Some(edge_type) = edge_type {
+                        related.retain(|r| r.edge_type == edge_type);
+                    }
                     Ok(json!(related))
                 })
                 .unwrap_or_else(|e| json!({"error": e.to_string()}));
@@ -260,14 +324,27 @@ impl EngramHandler {
         // Use multi-hop traversal for depth > 1 or when entities are included
         let options = TraversalOptions {
             depth,
+            edge_types: edge_type.map(|t| vec![t]).unwrap_or_default(),
             include_entities,
             ..Default::default()
         };
 
         self.storage
             .with_connection(|conn| {
-                let result = get_related_multi_hop(conn, id, &options)?;
-                Ok(json!(result))
+                if include_decayed && depth <= 1 && !include_entities {
+                    use engram::storage::{get_related_with_decay, DEFAULT_HALF_LIFE_DAYS};
+
+                    let mut results =
+                        get_related_with_decay(conn, id, DEFAULT_HALF_LIFE_DAYS, 0.0)?;
+                    if let Some(edge_type) = edge_type {
+                        let edge_type = edge_type.as_str();
+                        results.retain(|r| r.edge_type == edge_type);
+                    }
+                    Ok(json!(results))
+                } else {
+                    let result = get_related_multi_hop(conn, id, &options)?;
+                    Ok(json!(result))
+                }
             })
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }
@@ -891,9 +968,13 @@ impl EngramHandler {
         use engram::intelligence::{EntityExtractionConfig, EntityExtractor};
         use engram::storage::{link_entity_to_memory, upsert_entity};
 
-        let memory_id = match params.get("memory_id").and_then(|v| v.as_i64()) {
+        let memory_id = match params
+            .get("memory_id")
+            .or_else(|| params.get("id"))
+            .and_then(|v| v.as_i64())
+        {
             Some(id) => id,
-            None => return json!({"error": "memory_id is required"}),
+            None => return json!({"error": "memory_id (or id) is required"}),
         };
 
         // Optional: custom confidence threshold
@@ -952,9 +1033,13 @@ impl EngramHandler {
     fn tool_get_entities(&self, params: Value) -> Value {
         use engram::storage::get_entities_for_memory;
 
-        let memory_id = match params.get("memory_id").and_then(|v| v.as_i64()) {
+        let memory_id = match params
+            .get("memory_id")
+            .or_else(|| params.get("id"))
+            .and_then(|v| v.as_i64())
+        {
             Some(id) => id,
-            None => return json!({"error": "memory_id is required"}),
+            None => return json!({"error": "memory_id (or id) is required"}),
         };
 
         self.storage
@@ -995,7 +1080,8 @@ impl EngramHandler {
         };
 
         let entity_type: Option<EntityType> = params
-            .get("type")
+            .get("entity_type")
+            .or_else(|| params.get("type"))
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse().ok());
 

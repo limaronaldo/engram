@@ -7,18 +7,21 @@
 //! - Adaptive search strategy (RML-898)
 //! - Hybrid search with RRF
 //! - Aggregation queries (RML-880)
+//! - Search result reranking (RML-927)
 
 mod aggregation;
 mod bm25;
 mod fuzzy;
 mod hybrid;
 mod metadata;
+mod rerank;
 
 pub use aggregation::*;
 pub use bm25::*;
 pub use fuzzy::*;
 pub use hybrid::*;
 pub use metadata::*;
+pub use rerank::*;
 
 use crate::types::SearchStrategy;
 
