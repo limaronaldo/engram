@@ -68,8 +68,6 @@ engram-server --mcp
 engram-server --http --port 8080
 ```
 
-**Cloud (early access):** [Request access](https://github.com/limaronaldo/engram/issues/new?title=Cloud%20Early%20Access&labels=cloud)
-
 ---
 
 ## Why Engram
@@ -115,7 +113,6 @@ engram-cli search "asynch awiat rust"
 engram-cli graph --format json --output graph.json
 ```
 Entity extraction (`memory_extract_entities`) links memories via shared entities. Multi-hop traversal and shortest-path are available via MCP tools `memory_traverse` and `memory_find_path`.
-Note: `memory_related` returns a simple cross-reference list when `depth=1` and `include_entities=false`; otherwise it returns a traversal result (`nodes`, `discovery_edges`, `stats`).
 
 ### Multiple Interfaces
 - **MCP**: Native Model Context Protocol for Claude Code, Cursor
@@ -126,22 +123,6 @@ Note: `memory_related` returns a simple cross-reference list when `depth=1` and 
 ### Project Context Discovery
 Use MCP tools `memory_scan_project` and `memory_get_project_context` to ingest and query instruction files.
 Supported: CLAUDE.md, AGENTS.md, .cursorrules, .github/copilot-instructions.md, .aider.conf.yml, etc.
-
----
-
-## Editions
-
-| | Community | Cloud | Enterprise |
-|--|-----------|-------|------------|
-| **Price** | Free | $29/mo | Contact us |
-| **Deploy** | Self-host | Managed | Self-host |
-| **Tenancy** | Single | Multi | Multi |
-| **Search** | Hybrid | Hybrid | Hybrid |
-| **Project Context** | Yes | Yes | Yes |
-| **Team Workspaces** | - | Yes | Yes |
-| **SSO/SAML** | - | - | Yes |
-| **Audit Logs** | - | - | Yes |
-| **SLA** | - | 99.9% | Custom |
 
 ---
 
@@ -215,16 +196,6 @@ Add to your MCP config (`~/.config/claude/mcp.json` or similar):
 │  • SQLite + WAL  • Connection pooling  • Optional S3/R2 sync   │
 └─────────────────────────────────────────────────────────────────┘
 ```
-
----
-
-## Roadmap
-
-See [docs/CLOUD_ARCHITECTURE.md](docs/CLOUD_ARCHITECTURE.md) for the full Cloud roadmap.
-
-**Current focus:**
-- M1: Gateway & Auth (API gateway, tenant isolation, MCP-over-HTTP)
-- Core: Project Context Discovery (file parsing, MCP tools, search boost)
 
 ---
 

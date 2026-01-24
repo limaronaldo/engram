@@ -150,7 +150,7 @@ Engram is a high-performance AI memory infrastructure written in Rust. It provid
 | Quality Scoring | `src/intelligence/quality.rs` | ✅ Complete |
 | Document Ingestion (PDF/MD) | - | ❌ Not implemented |
 
-**Note:** Project Context Scanning (`memory_scan_project`) ingests AI instruction files (CLAUDE.md, .cursorrules, etc.). Full document ingestion with PDF parsing, chunking strategies, and source tracking is not yet implemented - see `docs/FEATURE_GAP_ANALYSIS.md` for details.
+**Note:** Project Context Scanning (`memory_scan_project`) ingests AI instruction files (CLAUDE.md, .cursorrules, etc.). Full document ingestion with PDF parsing, chunking strategies, and source tracking is planned for a future release.
 
 ## Database Schema (v4)
 

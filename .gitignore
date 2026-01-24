@@ -155,3 +155,6 @@ vendor/
 .cache/
 .parcel-cache/
 .turbo/
+
+# Private docs (do not commit)
+/docs/private/

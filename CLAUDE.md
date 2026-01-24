@@ -167,7 +167,7 @@ AWS_PROFILE=memora
 | Project Context Scanning | `src/intelligence/project_context.rs` | ✅ Complete |
 | Document Ingestion (PDF/MD) | - | ❌ Not implemented |
 
-**Note:** Project Context Scanning ingests AI instruction files (CLAUDE.md, .cursorrules, etc.) via `memory_scan_project`. Full document ingestion (PDF parsing, chunking) is a gap - see `docs/FEATURE_GAP_ANALYSIS.md`.
+**Note:** Project Context Scanning ingests AI instruction files (CLAUDE.md, .cursorrules, etc.) via `memory_scan_project`. Full document ingestion (PDF parsing, chunking) is planned for a future release.
 
 ## Key Files Reference
 
