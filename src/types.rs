@@ -51,6 +51,8 @@ pub struct Memory {
     pub has_embedding: bool,
     /// When the memory expires (None = never)
     pub expires_at: Option<DateTime<Utc>>,
+    /// Content hash for deduplication (SHA256 of normalized content)
+    pub content_hash: Option<String>,
 }
 
 fn default_importance() -> f32 {
@@ -472,6 +474,21 @@ impl Default for EmbeddingConfig {
     }
 }
 
+/// Deduplication mode when creating memories
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DedupMode {
+    /// Return error if duplicate found
+    Reject,
+    /// Merge with existing memory (update metadata, tags)
+    Merge,
+    /// Silently skip creation, return existing memory
+    Skip,
+    /// Allow duplicate creation (default, current behavior)
+    #[default]
+    Allow,
+}
+
 /// Input for creating a new memory
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateMemoryInput {
@@ -491,6 +508,11 @@ pub struct CreateMemoryInput {
     pub defer_embedding: bool,
     /// Time-to-live in seconds (None = never expires)
     pub ttl_seconds: Option<i64>,
+    /// Deduplication mode (default: allow)
+    #[serde(default)]
+    pub dedup_mode: DedupMode,
+    /// Similarity threshold for semantic deduplication (0.0-1.0, default: 0.95)
+    pub dedup_threshold: Option<f32>,
 }
 
 /// Input for updating a memory

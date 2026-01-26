@@ -237,6 +237,7 @@ impl CaptureCandidate {
             version: 1,
             has_embedding: false,
             expires_at: None,
+            content_hash: None, // Will be computed on storage
         }
     }
 }

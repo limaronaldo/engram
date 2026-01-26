@@ -119,6 +119,8 @@ impl EngramHandler {
             // TTL / Expiration tools (RML-930)
             "memory_set_expiration" => self.tool_set_expiration(params),
             "memory_cleanup_expired" => self.tool_cleanup_expired(params),
+            // Deduplication tools (RML-931)
+            "memory_find_duplicates" => self.tool_find_duplicates(params),
             _ => json!({"error": format!("Unknown tool: {}", name)}),
         }
     }
@@ -461,6 +463,8 @@ impl EngramHandler {
             scope: Default::default(),
             defer_embedding: false,
             ttl_seconds: None,
+            dedup_mode: Default::default(),
+            dedup_threshold: None,
         };
 
         self.tool_memory_create(json!(input))
@@ -513,6 +517,8 @@ impl EngramHandler {
             scope: Default::default(),
             defer_embedding: false,
             ttl_seconds: None,
+            dedup_mode: Default::default(),
+            dedup_threshold: None,
         };
 
         self.tool_memory_create(json!(input))
@@ -706,6 +712,8 @@ impl EngramHandler {
                         scope: Default::default(),
                         defer_embedding: false,
                         ttl_seconds: None,
+                        dedup_mode: Default::default(),
+                        dedup_threshold: None,
                     };
 
                     match self
@@ -844,6 +852,8 @@ impl EngramHandler {
                             scope: Default::default(),
                             defer_embedding: false,
                             ttl_seconds: None,
+                            dedup_mode: Default::default(),
+                            dedup_threshold: None,
                         };
 
                         match self
@@ -1326,6 +1336,26 @@ impl EngramHandler {
                     "success": true,
                     "deleted": deleted,
                     "message": format!("Cleaned up {} expired memories", deleted)
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_find_duplicates(&self, params: Value) -> Value {
+        use engram::storage::queries::find_duplicates;
+
+        let threshold = params
+            .get("threshold")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.9);
+
+        self.storage
+            .with_connection(|conn| {
+                let duplicates = find_duplicates(conn, threshold)?;
+                Ok(json!({
+                    "count": duplicates.len(),
+                    "threshold": threshold,
+                    "duplicates": duplicates
                 }))
             })
             .unwrap_or_else(|e| json!({"error": e.to_string()}))

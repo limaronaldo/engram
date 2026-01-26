@@ -355,6 +355,8 @@ impl<'a> DocumentIngestor<'a> {
             scope: crate::types::MemoryScope::Global,
             defer_embedding: false,
             ttl_seconds: None,
+            dedup_mode: Default::default(),
+            dedup_threshold: None,
         };
 
         self.storage.with_connection(|conn| {

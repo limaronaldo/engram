@@ -474,6 +474,8 @@ mod tests {
             scope: Default::default(),
             defer_embedding: false,
             ttl_seconds: None,
+            dedup_mode: Default::default(),
+            dedup_threshold: None,
         };
         create_memory(conn, &input).unwrap().id
     }

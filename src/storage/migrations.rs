@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 5;
+pub const SCHEMA_VERSION: i32 = 6;
 
 /// Run all migrations
 pub fn run_migrations(conn: &Connection) -> Result<()> {
@@ -42,8 +42,12 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         migrate_v4(conn)?;
     }
 
-    if current_version < SCHEMA_VERSION {
+    if current_version < 5 {
         migrate_v5(conn)?;
+    }
+
+    if current_version < SCHEMA_VERSION {
+        migrate_v6(conn)?;
     }
 
     Ok(())
@@ -340,6 +344,28 @@ fn migrate_v5(conn: &Connection) -> Result<()> {
 
         -- Record migration
         INSERT INTO schema_version (version) VALUES (5);
+        "#,
+    )?;
+
+    Ok(())
+}
+
+/// Memory deduplication migration (v6) - RML-931
+/// Adds content_hash column for duplicate detection
+fn migrate_v6(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        -- Add content_hash column to memories table for deduplication
+        -- SHA256 hash of normalized content
+        ALTER TABLE memories ADD COLUMN content_hash TEXT;
+
+        -- Unique index for fast exact duplicate detection
+        -- Note: Not UNIQUE constraint because we want to allow duplicates with 'allow' mode
+        CREATE INDEX IF NOT EXISTS idx_memories_content_hash ON memories(content_hash)
+            WHERE content_hash IS NOT NULL;
+
+        -- Record migration
+        INSERT INTO schema_version (version) VALUES (6);
         "#,
     )?;
 
