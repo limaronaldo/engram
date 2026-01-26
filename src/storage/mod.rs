@@ -6,6 +6,7 @@ mod audit;
 mod confidence;
 mod connection;
 pub mod entity_queries;
+pub mod filter;
 pub mod graph_queries;
 mod migrations;
 pub mod queries;
