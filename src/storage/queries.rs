@@ -718,6 +718,27 @@ pub fn cleanup_expired_memories(conn: &Connection) -> Result<i64> {
             params![now, now, now],
         )?;
 
+        // Remove memory_entities links for expired memories
+        // This ensures expired memories don't appear in entity-based queries
+        conn.execute(
+            "DELETE FROM memory_entities
+             WHERE memory_id IN (
+                 SELECT id FROM memories
+                 WHERE valid_to IS NOT NULL AND expires_at IS NOT NULL AND expires_at <= ?
+             )",
+            params![now],
+        )?;
+
+        // Remove memory_tags links for expired memories
+        conn.execute(
+            "DELETE FROM memory_tags
+             WHERE memory_id IN (
+                 SELECT id FROM memories
+                 WHERE valid_to IS NOT NULL AND expires_at IS NOT NULL AND expires_at <= ?
+             )",
+            params![now],
+        )?;
+
         // Update sync state
         conn.execute(
             "UPDATE sync_state SET pending_changes = pending_changes + ? WHERE id = 1",
