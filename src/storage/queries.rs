@@ -349,10 +349,11 @@ pub fn find_duplicates(conn: &Connection, threshold: f64) -> Result<Vec<Duplicat
             .collect();
 
         // Create pairs from all IDs with same hash
+        // Use get_memory_internal with track_access=false to avoid inflating access stats
         for i in 0..ids.len() {
             for j in (i + 1)..ids.len() {
-                let memory_a = get_memory(conn, ids[i])?;
-                let memory_b = get_memory(conn, ids[j])?;
+                let memory_a = get_memory_internal(conn, ids[i], false)?;
+                let memory_b = get_memory_internal(conn, ids[j], false)?;
                 duplicates.push(DuplicatePair {
                     memory_a,
                     memory_b,
@@ -398,8 +399,9 @@ pub fn find_duplicates(conn: &Connection, threshold: f64) -> Result<Vec<Duplicat
         });
 
         if !already_found {
-            let memory_a = get_memory(conn, from_id)?;
-            let memory_b = get_memory(conn, to_id)?;
+            // Use get_memory_internal with track_access=false to avoid inflating access stats
+            let memory_a = get_memory_internal(conn, from_id, false)?;
+            let memory_b = get_memory_internal(conn, to_id, false)?;
             duplicates.push(DuplicatePair {
                 memory_a,
                 memory_b,
@@ -474,9 +476,12 @@ pub fn create_memory(conn: &Connection, input: &CreateMemoryInput) -> Result<Mem
     let scope_type = input.scope.scope_type();
     let scope_id = input.scope.scope_id().map(|s| s.to_string());
 
-    // Calculate expires_at from ttl_seconds
+    // Validate and calculate expires_at from ttl_seconds
+    // ttl_seconds <= 0 is treated as "no expiration" (same as None)
+    // This prevents creating memories that expire immediately
     let expires_at = input
         .ttl_seconds
+        .filter(|&ttl| ttl > 0)
         .map(|ttl| (now + chrono::Duration::seconds(ttl)).to_rfc3339());
 
     conn.execute(
