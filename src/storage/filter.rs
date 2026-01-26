@@ -393,8 +393,46 @@ impl Default for SqlBuilder {
     }
 }
 
+/// Validate that a JSON object doesn't mix AND/OR with field conditions.
+/// This prevents silent data loss from serde's untagged enum parsing.
+fn validate_no_mixed_keys(obj: &serde_json::Map<String, Value>) -> Result<()> {
+    let has_and = obj.contains_key("AND");
+    let has_or = obj.contains_key("OR");
+    let has_other_keys = obj.keys().any(|k| k != "AND" && k != "OR");
+
+    if (has_and || has_or) && has_other_keys {
+        let logical_key = if has_and { "AND" } else { "OR" };
+        let other_keys: Vec<_> = obj.keys().filter(|k| *k != "AND" && *k != "OR").collect();
+        return Err(EngramError::InvalidInput(format!(
+            "Filter object cannot mix '{}' with field conditions {:?}. \
+             Use nested AND/OR to combine logical and field conditions.",
+            logical_key, other_keys
+        )));
+    }
+
+    // Recursively validate nested structures
+    for (key, value) in obj {
+        if key == "AND" || key == "OR" {
+            if let Some(arr) = value.as_array() {
+                for item in arr {
+                    if let Some(nested_obj) = item.as_object() {
+                        validate_no_mixed_keys(nested_obj)?;
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Parse a filter expression from JSON
 pub fn parse_filter(json: &Value) -> Result<FilterExpr> {
+    // Validate no mixed AND/OR with field conditions before parsing
+    if let Some(obj) = json.as_object() {
+        validate_no_mixed_keys(obj)?;
+    }
+
     serde_json::from_value(json.clone())
         .map_err(|e| EngramError::InvalidInput(format!("Invalid filter syntax: {}", e)))
 }
@@ -725,5 +763,95 @@ mod tests {
                 .to_string()
                 .contains("not supported for tags"));
         }
+    }
+
+    // Mixed AND/OR with field conditions tests (P2 fix)
+    #[test]
+    fn test_mixed_and_with_field_rejected() {
+        // {"AND": [...], "metadata.project": {...}} should be rejected
+        let json = json!({
+            "AND": [{"metadata.status": {"eq": "active"}}],
+            "metadata.project": {"eq": "engram"}
+        });
+        let result = parse_filter(&json);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("cannot mix"));
+        assert!(err.contains("AND"));
+    }
+
+    #[test]
+    fn test_mixed_or_with_field_rejected() {
+        // {"OR": [...], "tags": "rust"} should be rejected
+        let json = json!({
+            "OR": [{"metadata.status": {"eq": "active"}}],
+            "tags": "rust"
+        });
+        let result = parse_filter(&json);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("cannot mix"));
+        assert!(err.contains("OR"));
+    }
+
+    #[test]
+    fn test_mixed_nested_rejected() {
+        // Nested mixed should also be rejected
+        let json = json!({
+            "AND": [
+                {
+                    "OR": [{"tags": "rust"}],
+                    "metadata.project": {"eq": "engram"}
+                }
+            ]
+        });
+        let result = parse_filter(&json);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("cannot mix"));
+    }
+
+    #[test]
+    fn test_pure_and_accepted() {
+        // Pure AND without extra keys should work
+        let json = json!({
+            "AND": [
+                {"metadata.project": {"eq": "engram"}},
+                {"tags": "rust"}
+            ]
+        });
+        let result = parse_filter(&json);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_pure_or_accepted() {
+        // Pure OR without extra keys should work
+        let json = json!({
+            "OR": [
+                {"metadata.project": {"eq": "engram"}},
+                {"tags": "rust"}
+            ]
+        });
+        let result = parse_filter(&json);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_nested_and_or_accepted() {
+        // Proper nesting should work
+        let json = json!({
+            "AND": [
+                {"metadata.project": {"eq": "engram"}},
+                {
+                    "OR": [
+                        {"tags": "rust"},
+                        {"tags": "performance"}
+                    ]
+                }
+            ]
+        });
+        let result = parse_filter(&json);
+        assert!(result.is_ok());
     }
 }

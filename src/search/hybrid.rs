@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use rusqlite::Connection;
 
-use super::bm25::bm25_search_with_options;
+use super::bm25::bm25_search_with_filter;
 use super::{select_search_strategy, SearchConfig};
 use crate::embedding::{cosine_similarity, get_embedding};
 use crate::error::Result;
@@ -55,6 +55,7 @@ pub fn hybrid_search(
             options.explain,
             config,
             options.scope.as_ref(),
+            options.filter.as_ref(),
         ),
         SearchStrategy::SemanticOnly => {
             if let Some(embedding) = query_embedding {
@@ -69,6 +70,7 @@ pub fn hybrid_search(
                     options.explain,
                     config,
                     options.scope.as_ref(),
+                    options.filter.as_ref(),
                 )
             }
         }
@@ -83,6 +85,7 @@ pub fn hybrid_search(
                     config,
                     options.explain,
                     options.scope.as_ref(),
+                    options.filter.as_ref(),
                 )
             } else {
                 keyword_only_search(
@@ -93,6 +96,7 @@ pub fn hybrid_search(
                     options.explain,
                     config,
                     options.scope.as_ref(),
+                    options.filter.as_ref(),
                 )
             }
         }
@@ -108,8 +112,9 @@ fn keyword_only_search(
     explain: bool,
     config: &SearchConfig,
     scope: Option<&MemoryScope>,
+    filter: Option<&serde_json::Value>,
 ) -> Result<Vec<SearchResult>> {
-    let bm25_results = bm25_search_with_options(conn, query, limit * 2, explain, scope)?;
+    let bm25_results = bm25_search_with_filter(conn, query, limit * 2, explain, scope, filter)?;
 
     let mut results: Vec<SearchResult> = bm25_results
         .into_iter()
@@ -267,15 +272,17 @@ fn rrf_hybrid_search(
     config: &SearchConfig,
     explain: bool,
     scope: Option<&MemoryScope>,
+    filter: Option<&serde_json::Value>,
 ) -> Result<Vec<SearchResult>> {
-    // Get keyword results
-    let keyword_results = bm25_search_with_options(conn, query, limit * 2, explain, scope)?;
+    // Get keyword results (with filter applied)
+    let keyword_results = bm25_search_with_filter(conn, query, limit * 2, explain, scope, filter)?;
 
     // Get semantic results (without boost - we'll apply it to the final RRF score)
     let semantic_options = SearchOptions {
         limit: Some(limit * 2),
         min_score: Some(0.0), // We'll filter after fusion
         scope: scope.cloned(),
+        filter: filter.cloned(),
         ..Default::default()
     };
     // Create a config without project boost for sub-search (we'll apply boost to final RRF)
