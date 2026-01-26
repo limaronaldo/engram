@@ -188,9 +188,20 @@ pub fn compute_content_hash(content: &str) -> String {
     format!("sha256:{}", hex::encode(hasher.finalize()))
 }
 
-/// Find a memory by content hash (exact duplicate detection)
-pub fn find_by_content_hash(conn: &Connection, content_hash: &str) -> Result<Option<Memory>> {
+/// Find a memory by content hash within the same scope (exact duplicate detection)
+///
+/// Deduplication respects scope isolation:
+/// - User-scoped memories only dedupe against other memories with same user_id
+/// - Session-scoped memories only dedupe against other memories with same session_id
+/// - Global memories only dedupe against other global memories
+pub fn find_by_content_hash(
+    conn: &Connection,
+    content_hash: &str,
+    scope: &MemoryScope,
+) -> Result<Option<Memory>> {
     let now = Utc::now().to_rfc3339();
+    let scope_type = scope.scope_type();
+    let scope_id = scope.scope_id().map(|s| s.to_string());
 
     let mut stmt = conn.prepare_cached(
         "SELECT id, content, memory_type, importance, access_count,
@@ -200,11 +211,16 @@ pub fn find_by_content_hash(conn: &Connection, content_hash: &str) -> Result<Opt
          FROM memories
          WHERE content_hash = ? AND valid_to IS NULL
            AND (expires_at IS NULL OR expires_at > ?)
+           AND scope_type = ?
+           AND (scope_id = ? OR (scope_id IS NULL AND ? IS NULL))
          LIMIT 1",
     )?;
 
     let result = stmt
-        .query_row(params![content_hash, now], memory_from_row)
+        .query_row(
+            params![content_hash, now, scope_type, scope_id, scope_id],
+            memory_from_row,
+        )
         .ok();
 
     if let Some(mut memory) = result {
@@ -237,25 +253,28 @@ pub enum DuplicateMatchType {
 /// Find all potential duplicate memory pairs
 ///
 /// Returns pairs of memories that are either:
-/// 1. Exact duplicates (same content hash)
-/// 2. High similarity (crossref score >= threshold)
+/// 1. Exact duplicates (same content hash within same scope)
+/// 2. High similarity (crossref score >= threshold within same scope)
+///
+/// Duplicates are scoped - memories in different scopes are not considered duplicates.
 pub fn find_duplicates(conn: &Connection, threshold: f64) -> Result<Vec<DuplicatePair>> {
     let now = Utc::now().to_rfc3339();
     let mut duplicates = Vec::new();
 
-    // First, find exact hash duplicates (same content_hash)
+    // First, find exact hash duplicates (same content_hash within same scope)
     let mut hash_stmt = conn.prepare_cached(
-        "SELECT content_hash, GROUP_CONCAT(id) as ids
+        "SELECT content_hash, scope_type, scope_id, GROUP_CONCAT(id) as ids
          FROM memories
          WHERE content_hash IS NOT NULL
            AND valid_to IS NULL
            AND (expires_at IS NULL OR expires_at > ?)
-         GROUP BY content_hash
+         GROUP BY content_hash, scope_type, scope_id
          HAVING COUNT(*) > 1",
     )?;
 
     let hash_rows = hash_stmt.query_map(params![&now], |row| {
-        let ids_str: String = row.get(1)?;
+        // Column 3 is now the ids after adding scope_type and scope_id
+        let ids_str: String = row.get(3)?;
         Ok(ids_str)
     })?;
 
@@ -281,7 +300,7 @@ pub fn find_duplicates(conn: &Connection, threshold: f64) -> Result<Vec<Duplicat
         }
     }
 
-    // Second, find high-similarity pairs from crossrefs
+    // Second, find high-similarity pairs from crossrefs (within same scope)
     let mut sim_stmt = conn.prepare_cached(
         "SELECT DISTINCT c.from_id, c.to_id, c.score
          FROM crossrefs c
@@ -293,6 +312,8 @@ pub fn find_duplicates(conn: &Connection, threshold: f64) -> Result<Vec<Duplicat
            AND (m1.expires_at IS NULL OR m1.expires_at > ?)
            AND (m2.expires_at IS NULL OR m2.expires_at > ?)
            AND c.from_id < c.to_id  -- Avoid duplicate pairs
+           AND m1.scope_type = m2.scope_type  -- Same scope type
+           AND (m1.scope_id = m2.scope_id OR (m1.scope_id IS NULL AND m2.scope_id IS NULL))  -- Same scope id
          ORDER BY c.score DESC",
     )?;
 
@@ -338,9 +359,9 @@ pub fn create_memory(conn: &Connection, input: &CreateMemoryInput) -> Result<Mem
     // Compute content hash for deduplication
     let content_hash = compute_content_hash(&input.content);
 
-    // Check for duplicates based on dedup_mode
+    // Check for duplicates based on dedup_mode (scoped to same scope)
     if input.dedup_mode != DedupMode::Allow {
-        if let Some(existing) = find_by_content_hash(conn, &content_hash)? {
+        if let Some(existing) = find_by_content_hash(conn, &content_hash, &input.scope)? {
             match input.dedup_mode {
                 DedupMode::Reject => {
                     return Err(EngramError::Duplicate {
@@ -480,6 +501,10 @@ pub fn update_memory(conn: &Connection, id: i64, input: &UpdateMemoryInput) -> R
     if let Some(ref content) = input.content {
         updates.push("content = ?".to_string());
         values.push(Box::new(content.clone()));
+        // Recalculate content_hash when content changes
+        let new_hash = compute_content_hash(content);
+        updates.push("content_hash = ?".to_string());
+        values.push(Box::new(new_hash));
     }
 
     if let Some(ref memory_type) = input.memory_type {
@@ -1946,6 +1971,139 @@ mod tests {
                 // Fetch from DB and verify hash is persisted
                 let fetched = get_memory(conn, memory.id)?;
                 assert_eq!(fetched.content_hash, memory.content_hash);
+
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_update_memory_recalculates_hash() {
+        let storage = Storage::open_in_memory().unwrap();
+
+        storage
+            .with_transaction(|conn| {
+                // Create a memory
+                let memory = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Original content".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec![],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: Default::default(),
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: Default::default(),
+                        dedup_threshold: None,
+                    },
+                )?;
+
+                let original_hash = memory.content_hash.clone();
+
+                // Update the content
+                let updated = update_memory(
+                    conn,
+                    memory.id,
+                    &UpdateMemoryInput {
+                        content: Some("Updated content".to_string()),
+                        memory_type: None,
+                        tags: None,
+                        metadata: None,
+                        importance: None,
+                        scope: None,
+                        ttl_seconds: None,
+                    },
+                )?;
+
+                // Hash should be different
+                assert_ne!(updated.content_hash, original_hash);
+                assert!(updated.content_hash.is_some());
+
+                // Verify against expected hash
+                let expected_hash = compute_content_hash("Updated content");
+                assert_eq!(updated.content_hash.as_ref().unwrap(), &expected_hash);
+
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_dedup_scope_isolation() {
+        use crate::types::{DedupMode, MemoryScope};
+
+        let storage = Storage::open_in_memory().unwrap();
+
+        storage
+            .with_transaction(|conn| {
+                // Create memory in user-1 scope
+                let _user1_memory = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Shared content".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec!["user1".to_string()],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: MemoryScope::user("user-1"),
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Allow,
+                        dedup_threshold: None,
+                    },
+                )?;
+
+                // Create same content in user-2 scope with Reject mode
+                // Should succeed because scopes are different
+                let user2_result = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Shared content".to_string(), // Same content!
+                        memory_type: MemoryType::Note,
+                        tags: vec!["user2".to_string()],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: MemoryScope::user("user-2"), // Different scope
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Reject, // Should not reject - different scope
+                        dedup_threshold: None,
+                    },
+                );
+
+                // Should succeed - different scopes are not considered duplicates
+                assert!(user2_result.is_ok());
+                let user2_memory = user2_result.unwrap();
+
+                // Now try to create duplicate in same scope (user-2)
+                let duplicate_result = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Shared content".to_string(), // Same content
+                        memory_type: MemoryType::Note,
+                        tags: vec![],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: MemoryScope::user("user-2"), // Same scope as user2_memory
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Reject, // Should reject - same scope
+                        dedup_threshold: None,
+                    },
+                );
+
+                // Should fail - same scope with same content
+                assert!(duplicate_result.is_err());
+                assert!(matches!(
+                    duplicate_result.unwrap_err(),
+                    crate::error::EngramError::Duplicate { .. }
+                ));
+
+                // Verify we have exactly 2 memories (one per user)
+                let all = list_memories(conn, &ListOptions::default())?;
+                assert_eq!(all.len(), 2);
 
                 Ok(())
             })

@@ -351,23 +351,52 @@ fn migrate_v5(conn: &Connection) -> Result<()> {
 }
 
 /// Memory deduplication migration (v6) - RML-931
-/// Adds content_hash column for duplicate detection
+/// Adds content_hash column for duplicate detection and backfills existing memories
 fn migrate_v6(conn: &Connection) -> Result<()> {
+    use sha2::{Digest, Sha256};
+
+    // Step 1: Add the column and index
     conn.execute_batch(
         r#"
         -- Add content_hash column to memories table for deduplication
         -- SHA256 hash of normalized content
         ALTER TABLE memories ADD COLUMN content_hash TEXT;
 
-        -- Unique index for fast exact duplicate detection
-        -- Note: Not UNIQUE constraint because we want to allow duplicates with 'allow' mode
-        CREATE INDEX IF NOT EXISTS idx_memories_content_hash ON memories(content_hash)
+        -- Index for fast exact duplicate detection (scoped)
+        -- Not UNIQUE because we want to allow duplicates with 'allow' mode
+        CREATE INDEX IF NOT EXISTS idx_memories_content_hash ON memories(content_hash, scope_type, scope_id)
             WHERE content_hash IS NOT NULL;
 
         -- Record migration
         INSERT INTO schema_version (version) VALUES (6);
         "#,
     )?;
+
+    // Step 2: Backfill content_hash for existing memories
+    // We compute the hash in Rust since SQLite doesn't have SHA256 built-in
+    let mut stmt = conn.prepare("SELECT id, content FROM memories WHERE content_hash IS NULL")?;
+    let rows: Vec<(i64, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let mut update_stmt = conn.prepare("UPDATE memories SET content_hash = ? WHERE id = ?")?;
+
+    for (id, content) in rows {
+        // Normalize: lowercase + collapse whitespace
+        let normalized = content
+            .to_lowercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut hasher = Sha256::new();
+        hasher.update(normalized.as_bytes());
+        let hash = format!("sha256:{}", hex::encode(hasher.finalize()));
+
+        update_stmt.execute(rusqlite::params![hash, id])?;
+    }
+
+    tracing::info!("Migration v6: Backfilled content_hash for existing memories");
 
     Ok(())
 }
