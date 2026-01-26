@@ -126,10 +126,80 @@ impl EngramHandler {
     }
 
     fn tool_memory_create(&self, params: Value) -> Value {
+        use engram::storage::queries::find_similar_by_embedding;
+
         let input: CreateMemoryInput = match serde_json::from_value(params) {
             Ok(i) => i,
             Err(e) => return json!({"error": e.to_string()}),
         };
+
+        // Semantic deduplication: if threshold is set and mode is not Allow,
+        // check for similar memories using embeddings before creating
+        if input.dedup_mode != DedupMode::Allow {
+            if let Some(threshold) = input.dedup_threshold {
+                // Generate embedding for new content
+                if let Ok(query_embedding) = self.embedder.embed(&input.content) {
+                    // Check for similar memories
+                    let similar_result = self.storage.with_connection(|conn| {
+                        find_similar_by_embedding(conn, &query_embedding, &input.scope, threshold)
+                    });
+
+                    if let Ok(Some((existing, similarity))) = similar_result {
+                        // Found a similar memory - handle based on dedup_mode
+                        match input.dedup_mode {
+                            DedupMode::Reject => {
+                                return json!({
+                                    "error": format!(
+                                        "Similar memory detected (id={}, similarity={:.3}). Use dedup_mode='allow' to create anyway.",
+                                        existing.id, similarity
+                                    ),
+                                    "existing_id": existing.id,
+                                    "similarity": similarity
+                                });
+                            }
+                            DedupMode::Skip => {
+                                // Return existing memory without modification
+                                return json!(existing);
+                            }
+                            DedupMode::Merge => {
+                                // Merge: update existing memory with new tags and metadata
+                                let merge_result = self.storage.with_transaction(|conn| {
+                                    let mut merged_tags = existing.tags.clone();
+                                    for tag in &input.tags {
+                                        if !merged_tags.contains(tag) {
+                                            merged_tags.push(tag.clone());
+                                        }
+                                    }
+
+                                    let mut merged_metadata = existing.metadata.clone();
+                                    for (key, value) in &input.metadata {
+                                        merged_metadata.insert(key.clone(), value.clone());
+                                    }
+
+                                    let update_input = UpdateMemoryInput {
+                                        content: None,
+                                        memory_type: None,
+                                        tags: Some(merged_tags),
+                                        metadata: Some(merged_metadata),
+                                        importance: input.importance,
+                                        scope: None,
+                                        ttl_seconds: input.ttl_seconds,
+                                    };
+
+                                    update_memory(conn, existing.id, &update_input)
+                                });
+
+                                return match merge_result {
+                                    Ok(memory) => json!(memory),
+                                    Err(e) => json!({"error": e.to_string()}),
+                                };
+                            }
+                            DedupMode::Allow => {} // Continue to create_memory
+                        }
+                    }
+                }
+            }
+        }
 
         self.storage
             .with_transaction(|conn| {

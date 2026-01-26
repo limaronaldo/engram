@@ -21,7 +21,7 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "defer_embedding": {"type": "boolean", "default": false, "description": "Defer embedding to background queue"},
                 "ttl_seconds": {"type": "integer", "description": "Time-to-live in seconds. Memory will auto-expire after this duration. Omit for permanent storage."},
                 "dedup_mode": {"type": "string", "enum": ["reject", "merge", "skip", "allow"], "default": "allow", "description": "How to handle duplicate content: reject (error if exact match), merge (combine tags/metadata with existing), skip (return existing unchanged), allow (create duplicate)"},
-                "dedup_threshold": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.95, "description": "Reserved for future similarity-based dedup. Currently only exact content hash matching is used."}
+                "dedup_threshold": {"type": "number", "minimum": 0, "maximum": 1, "description": "Similarity threshold for semantic deduplication (0.0-1.0). When set with dedup_mode != 'allow', memories with cosine similarity >= threshold are treated as duplicates. Requires embeddings. If not set, only exact content hash matching is used."}
             },
             "required": ["content"]
         }"#,
