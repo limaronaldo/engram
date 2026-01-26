@@ -18,7 +18,8 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
                 "metadata": {"type": "object", "description": "Additional metadata as key-value pairs"},
                 "importance": {"type": "number", "minimum": 0, "maximum": 1, "description": "Importance score (0-1)"},
-                "defer_embedding": {"type": "boolean", "default": false, "description": "Defer embedding to background queue"}
+                "defer_embedding": {"type": "boolean", "default": false, "description": "Defer embedding to background queue"},
+                "ttl_seconds": {"type": "integer", "description": "Time-to-live in seconds. Memory will auto-expire after this duration. Omit for permanent storage."}
             },
             "required": ["content"]
         }"#,
@@ -45,7 +46,8 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "type": {"type": "string", "enum": ["note", "todo", "issue", "decision", "preference", "learning", "context", "credential"]},
                 "tags": {"type": "array", "items": {"type": "string"}},
                 "metadata": {"type": "object"},
-                "importance": {"type": "number", "minimum": 0, "maximum": 1}
+                "importance": {"type": "number", "minimum": 0, "maximum": 1},
+                "ttl_seconds": {"type": "integer", "description": "Time-to-live in seconds (0 = remove expiration, positive = set new expiration)"}
             },
             "required": ["id"]
         }"#,
@@ -227,6 +229,27 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "id": {"type": "integer"}
             },
             "required": ["id"]
+        }"#,
+    ),
+    // Memory TTL / Expiration (RML-930)
+    (
+        "memory_set_expiration",
+        "Set or update the expiration time for a memory",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID"},
+                "ttl_seconds": {"type": "integer", "description": "Time-to-live in seconds from now. Use 0 to remove expiration (make permanent)."}
+            },
+            "required": ["id", "ttl_seconds"]
+        }"#,
+    ),
+    (
+        "memory_cleanup_expired",
+        "Delete all expired memories. Typically called by a background job, but can be invoked manually.",
+        r#"{
+            "type": "object",
+            "properties": {}
         }"#,
     ),
     // Sync

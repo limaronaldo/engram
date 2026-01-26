@@ -62,6 +62,11 @@ struct Args {
     /// Confidence decay half-life in days
     #[arg(long, env = "ENGRAM_CONFIDENCE_HALF_LIFE", default_value = "30")]
     half_life_days: f32,
+
+    /// Memory cleanup interval in seconds (0 = disabled)
+    /// When enabled, expired memories are automatically cleaned up at this interval
+    #[arg(long, env = "ENGRAM_CLEANUP_INTERVAL", default_value = "3600")]
+    cleanup_interval_seconds: u64,
 }
 
 /// MCP request handler
@@ -111,6 +116,9 @@ impl EngramHandler {
             // Graph traversal tools (RML-926)
             "memory_traverse" => self.tool_memory_traverse(params),
             "memory_find_path" => self.tool_find_path(params),
+            // TTL / Expiration tools (RML-930)
+            "memory_set_expiration" => self.tool_set_expiration(params),
+            "memory_cleanup_expired" => self.tool_cleanup_expired(params),
             _ => json!({"error": format!("Unknown tool: {}", name)}),
         }
     }
@@ -452,6 +460,7 @@ impl EngramHandler {
             importance: Some(importance),
             scope: Default::default(),
             defer_embedding: false,
+            ttl_seconds: None,
         };
 
         self.tool_memory_create(json!(input))
@@ -503,6 +512,7 @@ impl EngramHandler {
             importance: Some(importance),
             scope: Default::default(),
             defer_embedding: false,
+            ttl_seconds: None,
         };
 
         self.tool_memory_create(json!(input))
@@ -654,6 +664,7 @@ impl EngramHandler {
                             metadata: Some(metadata),
                             importance: Some(memory.importance),
                             scope: None,
+                            ttl_seconds: None,
                         };
 
                         match self.storage.with_transaction(|conn| {
@@ -694,6 +705,7 @@ impl EngramHandler {
                         importance: Some(memory.importance),
                         scope: Default::default(),
                         defer_embedding: false,
+                        ttl_seconds: None,
                     };
 
                     match self
@@ -796,6 +808,7 @@ impl EngramHandler {
                             metadata: Some(metadata),
                             importance: Some(section_memory.importance),
                             scope: None,
+                            ttl_seconds: None,
                         };
 
                         match self.storage.with_transaction(|conn| {
@@ -830,6 +843,7 @@ impl EngramHandler {
                             importance: Some(section_memory.importance),
                             scope: Default::default(),
                             defer_embedding: false,
+                            ttl_seconds: None,
                         };
 
                         match self
@@ -1266,6 +1280,56 @@ impl EngramHandler {
             })
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }
+
+    // TTL / Expiration Tools (RML-930)
+
+    fn tool_set_expiration(&self, params: Value) -> Value {
+        use engram::storage::queries::set_memory_expiration;
+
+        let id = params.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+        let ttl_seconds = params.get("ttl_seconds").and_then(|v| v.as_i64());
+
+        if ttl_seconds.is_none() {
+            return json!({"error": "ttl_seconds is required"});
+        }
+
+        self.storage
+            .with_transaction(|conn| {
+                let memory = set_memory_expiration(conn, id, ttl_seconds)?;
+                Ok(json!({
+                    "success": true,
+                    "memory": memory,
+                    "message": if ttl_seconds == Some(0) {
+                        "Expiration removed".to_string()
+                    } else {
+                        format!("Expiration set to {} seconds from now", ttl_seconds.unwrap())
+                    }
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_cleanup_expired(&self, params: Value) -> Value {
+        use engram::storage::queries::{cleanup_expired_memories, count_expired_memories};
+
+        let _ = params; // unused
+
+        self.storage
+            .with_transaction(|conn| {
+                // First count how many will be cleaned
+                let _count_before = count_expired_memories(conn)?;
+
+                // Perform cleanup
+                let deleted = cleanup_expired_memories(conn)?;
+
+                Ok(json!({
+                    "success": true,
+                    "deleted": deleted,
+                    "message": format!("Cleaned up {} expired memories", deleted)
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
 }
 
 impl McpHandler for EngramHandler {
@@ -1359,8 +1423,38 @@ fn main() -> Result<()> {
     let embedder = create_embedder(&embedding_config)?;
 
     // Create handler and server
-    let handler = EngramHandler::new(storage, embedder);
+    let handler = EngramHandler::new(storage.clone(), embedder);
     let server = McpServer::new(handler);
+
+    // Start background cleanup thread if enabled
+    if args.cleanup_interval_seconds > 0 {
+        let cleanup_storage = storage.clone();
+        let interval = std::time::Duration::from_secs(args.cleanup_interval_seconds);
+
+        std::thread::spawn(move || {
+            tracing::info!(
+                "Memory cleanup thread started (interval: {}s)",
+                interval.as_secs()
+            );
+
+            loop {
+                std::thread::sleep(interval);
+
+                match cleanup_storage.with_transaction(|conn| {
+                    engram::storage::queries::cleanup_expired_memories(conn)
+                }) {
+                    Ok(deleted) => {
+                        if deleted > 0 {
+                            tracing::info!("Cleaned up {} expired memories", deleted);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Error cleaning up expired memories: {}", e);
+                    }
+                }
+            }
+        });
+    }
 
     tracing::info!("Engram MCP server starting...");
     server.run()?;

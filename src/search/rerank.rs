@@ -501,6 +501,7 @@ mod tests {
             has_embedding: false,
             metadata: HashMap::new(),
             scope: MemoryScope::Global,
+            expires_at: None,
         }
     }
 

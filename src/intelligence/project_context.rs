@@ -564,6 +564,7 @@ impl ProjectContextEngine {
             scope: MemoryScope::Global,
             version: 1,
             has_embedding: false,
+            expires_at: None,
         }
     }
 
@@ -628,6 +629,7 @@ impl ProjectContextEngine {
             scope: MemoryScope::Global,
             version: 1,
             has_embedding: false,
+            expires_at: None,
         }
     }
 

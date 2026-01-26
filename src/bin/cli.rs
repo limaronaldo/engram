@@ -151,6 +151,7 @@ fn main() -> Result<()> {
                 importance,
                 scope: Default::default(),
                 defer_embedding: true,
+                ttl_seconds: None,
             };
 
             let memory = storage.with_transaction(|conn| create_memory(conn, &input))?;
@@ -373,6 +374,7 @@ fn main() -> Result<()> {
                             importance: None,
                             scope: Default::default(),
                             defer_embedding: true,
+                            ttl_seconds: None,
                         };
                         match storage.with_transaction(|conn| create_memory(conn, &input)) {
                             Ok(memory) => println!("Created #{}", memory.id),

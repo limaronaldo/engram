@@ -49,6 +49,8 @@ pub struct Memory {
     /// Whether embedding is computed
     #[serde(default)]
     pub has_embedding: bool,
+    /// When the memory expires (None = never)
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 fn default_importance() -> f32 {
@@ -487,6 +489,8 @@ pub struct CreateMemoryInput {
     /// Defer embedding computation to background queue
     #[serde(default)]
     pub defer_embedding: bool,
+    /// Time-to-live in seconds (None = never expires)
+    pub ttl_seconds: Option<i64>,
 }
 
 /// Input for updating a memory
@@ -499,6 +503,8 @@ pub struct UpdateMemoryInput {
     pub importance: Option<f32>,
     /// Memory scope for isolation (user/session/agent/global)
     pub scope: Option<MemoryScope>,
+    /// Time-to-live in seconds (None = no change, Some(0) = remove expiration, Some(n) = set to n seconds from now)
+    pub ttl_seconds: Option<i64>,
 }
 
 /// Input for creating a cross-reference

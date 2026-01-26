@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use chrono::Utc;
 use rusqlite::Connection;
 
 use super::bm25::bm25_search_with_options;
@@ -149,17 +150,20 @@ fn semantic_only_search(
     options: &SearchOptions,
     config: &SearchConfig,
 ) -> Result<Vec<SearchResult>> {
-    // Get all memories with embeddings
+    let now = Utc::now().to_rfc3339();
+
+    // Get all memories with embeddings (excluding expired)
     let mut sql = String::from(
         "SELECT m.id, m.content, m.memory_type, m.importance, m.access_count,
                 m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
                 m.visibility, m.version, m.has_embedding, m.metadata,
-                m.scope_type, m.scope_id
+                m.scope_type, m.scope_id, m.expires_at
          FROM memories m
-         WHERE m.has_embedding = 1 AND m.valid_to IS NULL",
+         WHERE m.has_embedding = 1 AND m.valid_to IS NULL
+           AND (m.expires_at IS NULL OR m.expires_at > ?)",
     );
 
-    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
 
     // Add tag filter if specified
     if let Some(ref tags) = options.tags {

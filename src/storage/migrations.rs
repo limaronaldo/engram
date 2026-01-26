@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 4;
+pub const SCHEMA_VERSION: i32 = 5;
 
 /// Run all migrations
 pub fn run_migrations(conn: &Connection) -> Result<()> {
@@ -38,8 +38,12 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         migrate_v3(conn)?;
     }
 
-    if current_version < SCHEMA_VERSION {
+    if current_version < 4 {
         migrate_v4(conn)?;
+    }
+
+    if current_version < SCHEMA_VERSION {
+        migrate_v5(conn)?;
     }
 
     Ok(())
@@ -315,6 +319,27 @@ fn migrate_v4(conn: &Connection) -> Result<()> {
 
         -- Record migration
         INSERT INTO schema_version (version) VALUES (4);
+        "#,
+    )?;
+
+    Ok(())
+}
+
+/// Memory expiration (TTL) migration (v5) - RML-930
+/// Adds expires_at column for automatic memory expiration
+fn migrate_v5(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        -- Add expires_at column to memories table
+        -- NULL = never expires (default)
+        ALTER TABLE memories ADD COLUMN expires_at TEXT;
+
+        -- Index for efficient expired memory queries and cleanup
+        CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories(expires_at)
+            WHERE expires_at IS NOT NULL;
+
+        -- Record migration
+        INSERT INTO schema_version (version) VALUES (5);
         "#,
     )?;
 

@@ -229,6 +229,7 @@ mod tests {
             scope: crate::types::MemoryScope::Global,
             version: 1,
             has_embedding: false,
+            expires_at: None,
         }
     }
 
