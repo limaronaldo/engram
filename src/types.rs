@@ -568,6 +568,9 @@ pub struct SearchOptions {
     pub explain: bool,
     /// Filter by memory scope
     pub scope: Option<MemoryScope>,
+    /// Advanced filter expression with AND/OR/comparison operators (RML-932)
+    /// Takes precedence over `tags` and `memory_type` if specified
+    pub filter: Option<serde_json::Value>,
 }
 
 /// Sync status information

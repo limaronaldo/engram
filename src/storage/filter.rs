@@ -97,6 +97,44 @@ pub enum FieldPath {
     Metadata(String),
 }
 
+/// Validate that a metadata JSON path contains only safe characters.
+/// Allows alphanumeric, underscore, dot (for nested paths), and hyphen.
+/// Rejects any characters that could be used for SQL injection (quotes, brackets, etc).
+fn validate_json_path(path: &str) -> Result<()> {
+    if path.is_empty() {
+        return Err(EngramError::InvalidInput(
+            "Metadata path cannot be empty".to_string(),
+        ));
+    }
+
+    // Only allow safe characters: alphanumeric, underscore, dot, hyphen
+    // This prevents SQL injection via malicious paths like: foo'); DROP TABLE memories; --
+    for ch in path.chars() {
+        if !ch.is_alphanumeric() && ch != '_' && ch != '.' && ch != '-' {
+            return Err(EngramError::InvalidInput(format!(
+                "Invalid character '{}' in metadata path '{}'. Only alphanumeric, underscore, dot, and hyphen are allowed.",
+                ch, path
+            )));
+        }
+    }
+
+    // Prevent path traversal patterns
+    if path.contains("..") {
+        return Err(EngramError::InvalidInput(
+            "Metadata path cannot contain '..'".to_string(),
+        ));
+    }
+
+    // Path shouldn't start or end with a dot
+    if path.starts_with('.') || path.ends_with('.') {
+        return Err(EngramError::InvalidInput(
+            "Metadata path cannot start or end with '.'".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
 impl FieldPath {
     /// Parse a field path string into a FieldPath enum
     pub fn parse(path: &str) -> Result<Self> {
@@ -111,6 +149,8 @@ impl FieldPath {
             "scope_id" | "scopeId" => Ok(FieldPath::ScopeId),
             s if s.starts_with("metadata.") => {
                 let json_path = s.strip_prefix("metadata.").unwrap();
+                // Validate the JSON path to prevent SQL injection
+                validate_json_path(json_path)?;
                 Ok(FieldPath::Metadata(json_path.to_string()))
             }
             _ => Err(EngramError::InvalidInput(format!(
@@ -134,6 +174,7 @@ impl FieldPath {
             FieldPath::Metadata(path) => {
                 // Convert dot notation to SQLite JSON path
                 // e.g., "project.name" -> "$.project.name"
+                // Note: path has been validated in parse() to contain only safe characters
                 format!("json_extract(m.metadata, '$.{}')", path)
             }
         }
@@ -174,6 +215,14 @@ impl SqlBuilder {
     }
 
     fn build_field_condition(&mut self, condition: &FieldCondition) -> Result<String> {
+        // Validate: empty conditions are not allowed
+        if condition.inner.is_empty() {
+            return Err(EngramError::InvalidInput(
+                "Empty filter condition. Each condition must specify at least one field."
+                    .to_string(),
+            ));
+        }
+
         let mut parts = Vec::new();
 
         for (field_path, op) in &condition.inner {
@@ -194,24 +243,52 @@ impl SqlBuilder {
 
         match (field, op) {
             // Special handling for tags (array field stored in separate table)
-            (FieldPath::Tags, FilterOp::Contains(value)) => {
-                let tag = value.as_str().ok_or_else(|| {
-                    EngramError::InvalidInput("tags.contains requires a string value".to_string())
-                })?;
-                self.params.push(Box::new(tag.to_string()));
-                Ok(format!(
-                    "EXISTS (SELECT 1 FROM memory_tags mt JOIN tags t ON mt.tag_id = t.id WHERE mt.memory_id = m.id AND t.name = ?)"
-                ))
-            }
-            (FieldPath::Tags, FilterOp::NotContains(value)) => {
+            // All tag operations must use EXISTS subqueries
+            (FieldPath::Tags, FilterOp::Contains(value))
+            | (FieldPath::Tags, FilterOp::Eq(value))
+            | (FieldPath::Tags, FilterOp::Direct(value)) => {
+                // For tags, eq/direct/contains all mean "has this tag"
                 let tag = value.as_str().ok_or_else(|| {
                     EngramError::InvalidInput(
-                        "tags.not_contains requires a string value".to_string(),
+                        "tags filter requires a string value".to_string(),
                     )
                 })?;
                 self.params.push(Box::new(tag.to_string()));
-                Ok(format!(
-                    "NOT EXISTS (SELECT 1 FROM memory_tags mt JOIN tags t ON mt.tag_id = t.id WHERE mt.memory_id = m.id AND t.name = ?)"
+                Ok(
+                    "EXISTS (SELECT 1 FROM memory_tags mt JOIN tags t ON mt.tag_id = t.id WHERE mt.memory_id = m.id AND t.name = ?)".to_string()
+                )
+            }
+            (FieldPath::Tags, FilterOp::NotContains(value))
+            | (FieldPath::Tags, FilterOp::Neq(value)) => {
+                // For tags, neq/not_contains mean "does not have this tag"
+                let tag = value.as_str().ok_or_else(|| {
+                    EngramError::InvalidInput(
+                        "tags filter requires a string value".to_string(),
+                    )
+                })?;
+                self.params.push(Box::new(tag.to_string()));
+                Ok(
+                    "NOT EXISTS (SELECT 1 FROM memory_tags mt JOIN tags t ON mt.tag_id = t.id WHERE mt.memory_id = m.id AND t.name = ?)".to_string()
+                )
+            }
+            (FieldPath::Tags, FilterOp::Exists(exists)) => {
+                // Check if memory has any tags at all
+                if *exists {
+                    Ok(
+                        "EXISTS (SELECT 1 FROM memory_tags mt WHERE mt.memory_id = m.id)".to_string()
+                    )
+                } else {
+                    Ok(
+                        "NOT EXISTS (SELECT 1 FROM memory_tags mt WHERE mt.memory_id = m.id)".to_string()
+                    )
+                }
+            }
+            (FieldPath::Tags, FilterOp::Gt(_))
+            | (FieldPath::Tags, FilterOp::Gte(_))
+            | (FieldPath::Tags, FilterOp::Lt(_))
+            | (FieldPath::Tags, FilterOp::Lte(_)) => {
+                Err(EngramError::InvalidInput(
+                    "Comparison operators (gt, gte, lt, lte) are not supported for tags. Use contains, eq, neq, or exists.".to_string(),
                 ))
             }
             // Regular field operations
@@ -485,5 +562,168 @@ mod tests {
             Ok(FieldPath::Metadata(ref s)) if s == "config.timeout"
         ));
         assert!(FieldPath::parse("invalid_field").is_err());
+    }
+
+    // Security tests for SQL injection prevention
+    #[test]
+    fn test_sql_injection_prevention_quotes() {
+        // Attempt to break out of JSON path with quotes
+        let result = FieldPath::parse("metadata.foo'); DROP TABLE memories; --");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Invalid character"));
+    }
+
+    #[test]
+    fn test_sql_injection_prevention_brackets() {
+        // Attempt injection with brackets
+        let result = FieldPath::parse("metadata.foo[0]");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sql_injection_prevention_semicolon() {
+        let result = FieldPath::parse("metadata.foo; DELETE FROM memories");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_sql_injection_prevention_backslash() {
+        let result = FieldPath::parse("metadata.foo\\bar");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_metadata_path_valid_characters() {
+        // Valid paths should work
+        assert!(FieldPath::parse("metadata.project_name").is_ok());
+        assert!(FieldPath::parse("metadata.config-key").is_ok());
+        assert!(FieldPath::parse("metadata.nested.path.here").is_ok());
+        assert!(FieldPath::parse("metadata.CamelCase123").is_ok());
+    }
+
+    #[test]
+    fn test_metadata_path_empty() {
+        // Empty path after metadata. should fail
+        let result = FieldPath::parse("metadata.");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_metadata_path_double_dot() {
+        // Path traversal attempt should fail
+        let result = FieldPath::parse("metadata.foo..bar");
+        assert!(result.is_err());
+    }
+
+    // Empty condition validation tests
+    #[test]
+    fn test_empty_condition_rejected() {
+        let json = json!({});
+        let filter = parse_filter(&json).unwrap();
+        let mut builder = SqlBuilder::new();
+        let result = builder.build_filter(&filter);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Empty filter condition"));
+    }
+
+    #[test]
+    fn test_empty_and_array_produces_true() {
+        // Empty AND should be always true (identity for AND)
+        let json = json!({"AND": []});
+        let filter = parse_filter(&json).unwrap();
+        let mut builder = SqlBuilder::new();
+        let sql = builder.build_filter(&filter).unwrap();
+        assert_eq!(sql, "1=1");
+    }
+
+    #[test]
+    fn test_empty_or_array_produces_false() {
+        // Empty OR should be always false (identity for OR)
+        let json = json!({"OR": []});
+        let filter = parse_filter(&json).unwrap();
+        let mut builder = SqlBuilder::new();
+        let sql = builder.build_filter(&filter).unwrap();
+        assert_eq!(sql, "1=0");
+    }
+
+    // Tag filter semantics tests
+    #[test]
+    fn test_tags_eq_uses_exists() {
+        // {"tags": {"eq": "rust"}} should use EXISTS subquery
+        let json = json!({"tags": {"eq": "rust"}});
+        let filter = parse_filter(&json).unwrap();
+        let mut builder = SqlBuilder::new();
+        let sql = builder.build_filter(&filter).unwrap();
+        assert!(sql.contains("EXISTS"));
+        assert!(sql.contains("memory_tags"));
+    }
+
+    #[test]
+    fn test_tags_direct_value_uses_exists() {
+        // {"tags": "rust"} should use EXISTS subquery
+        let json = json!({"tags": "rust"});
+        let filter = parse_filter(&json).unwrap();
+        let mut builder = SqlBuilder::new();
+        let sql = builder.build_filter(&filter).unwrap();
+        assert!(sql.contains("EXISTS"));
+    }
+
+    #[test]
+    fn test_tags_neq_uses_not_exists() {
+        // {"tags": {"neq": "deprecated"}} should use NOT EXISTS
+        let json = json!({"tags": {"neq": "deprecated"}});
+        let filter = parse_filter(&json).unwrap();
+        let mut builder = SqlBuilder::new();
+        let sql = builder.build_filter(&filter).unwrap();
+        assert!(sql.contains("NOT EXISTS"));
+    }
+
+    #[test]
+    fn test_tags_exists_true() {
+        // {"tags": {"exists": true}} should check if memory has any tags
+        let json = json!({"tags": {"exists": true}});
+        let filter = parse_filter(&json).unwrap();
+        let mut builder = SqlBuilder::new();
+        let sql = builder.build_filter(&filter).unwrap();
+        assert!(sql.contains("EXISTS"));
+        assert!(sql.contains("memory_tags"));
+        // Should NOT join with tags table (just check memory_tags)
+        assert!(!sql.contains("t.name"));
+    }
+
+    #[test]
+    fn test_tags_exists_false() {
+        // {"tags": {"exists": false}} should check if memory has no tags
+        let json = json!({"tags": {"exists": false}});
+        let filter = parse_filter(&json).unwrap();
+        let mut builder = SqlBuilder::new();
+        let sql = builder.build_filter(&filter).unwrap();
+        assert!(sql.contains("NOT EXISTS"));
+    }
+
+    #[test]
+    fn test_tags_comparison_operators_rejected() {
+        // Comparison operators don't make sense for tags
+        let cases = vec![
+            json!({"tags": {"gt": "rust"}}),
+            json!({"tags": {"gte": "rust"}}),
+            json!({"tags": {"lt": "rust"}}),
+            json!({"tags": {"lte": "rust"}}),
+        ];
+
+        for json in cases {
+            let filter = parse_filter(&json).unwrap();
+            let mut builder = SqlBuilder::new();
+            let result = builder.build_filter(&filter);
+            assert!(result.is_err(), "Expected error for: {:?}", json);
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("not supported for tags"));
+        }
     }
 }
