@@ -35,10 +35,34 @@ impl TfIdfEmbedder {
         (hasher.finish() as usize) % dimensions
     }
 
+    /// Hash a bigram (token1 + "_" + token2) directly to a dimension index
+    fn hash_bigram(token1: &str, token2: &str, dimensions: usize) -> usize {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        token1.hash(&mut hasher);
+        "_".hash(&mut hasher);
+        token2.hash(&mut hasher);
+        (hasher.finish() as usize) % dimensions
+    }
+
     /// Get sign for feature hashing (reduces collision impact)
     fn hash_sign(token: &str) -> f32 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        format!("{}_sign", token).hash(&mut hasher);
+        token.hash(&mut hasher);
+        "_sign".hash(&mut hasher);
+        if hasher.finish().is_multiple_of(2) {
+            1.0
+        } else {
+            -1.0
+        }
+    }
+
+    /// Get sign for bigram feature hashing
+    fn hash_bigram_sign(token1: &str, token2: &str) -> f32 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        token1.hash(&mut hasher);
+        "_".hash(&mut hasher);
+        token2.hash(&mut hasher);
+        "_sign".hash(&mut hasher);
         if hasher.finish().is_multiple_of(2) {
             1.0
         } else {
@@ -56,14 +80,24 @@ impl Embedder for TfIdfEmbedder {
             return Ok(embedding);
         }
 
+        let doc_len = tokens.len() as f32;
+
+        // Also add bigrams for better semantic capture
+        // Process bigrams first using references to avoid cloning/moving strings yet
+        for window in tokens.windows(2) {
+            let idx = Self::hash_bigram(&window[0], &window[1], self.dimensions);
+            let sign = Self::hash_bigram_sign(&window[0], &window[1]);
+            embedding[idx] += 0.5 * sign; // Bigrams weighted less
+        }
+
         // Count term frequencies
+        // Consume tokens to avoid cloning strings when inserting into HashMap
         let mut tf: HashMap<String, f32> = HashMap::new();
-        for token in &tokens {
-            *tf.entry(token.clone()).or_insert(0.0) += 1.0;
+        for token in tokens {
+            *tf.entry(token).or_insert(0.0) += 1.0;
         }
 
         // Apply TF-IDF-like weighting with feature hashing
-        let doc_len = tokens.len() as f32;
         for (token, count) in tf {
             // TF: log(1 + count/doc_len)
             let tf_score = (1.0 + count / doc_len).ln();
@@ -76,14 +110,6 @@ impl Embedder for TfIdfEmbedder {
             let sign = Self::hash_sign(&token);
 
             embedding[idx] += weight * sign;
-        }
-
-        // Also add bigrams for better semantic capture
-        for window in tokens.windows(2) {
-            let bigram = format!("{}_{}", window[0], window[1]);
-            let idx = Self::hash_token(&bigram, self.dimensions);
-            let sign = Self::hash_sign(&bigram);
-            embedding[idx] += 0.5 * sign; // Bigrams weighted less
         }
 
         // L2 normalize
