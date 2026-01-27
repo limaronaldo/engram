@@ -4,7 +4,7 @@
 //! at various depths, with support for filtering by edge type and combining
 //! with entity-based connections.
 
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -163,116 +163,155 @@ pub fn get_related_multi_hop(
         .entry("origin".to_string())
         .or_insert(0) += 1;
 
-    // BFS traversal
-    while let Some((current_id, current_depth, current_path, current_edge_path, current_score)) =
-        queue.pop_front()
-    {
+    // Level-based BFS traversal
+    while !queue.is_empty() {
+        let level_size = queue.len();
+        let mut current_batch = Vec::with_capacity(level_size);
+        for _ in 0..level_size {
+            if let Some(item) = queue.pop_front() {
+                current_batch.push(item);
+            }
+        }
+
+        if current_batch.is_empty() {
+            break;
+        }
+
+        // All nodes in this batch should be at the same depth
+        let current_depth = current_batch[0].1;
+
         if current_depth >= options.depth {
             continue;
         }
 
-        // Get cross-reference edges
-        let crossrefs = get_edges_for_traversal(
+        let node_ids: Vec<MemoryId> = current_batch.iter().map(|(id, _, _, _, _)| *id).collect();
+
+        // Batch fetch cross-reference edges
+        let crossrefs_map = get_edges_for_traversal_batch(
             conn,
-            current_id,
+            &node_ids,
             &options.edge_types,
             options.min_score,
             options.min_confidence,
-            options.limit_per_hop,
             options.direction,
         )?;
 
-        for crossref in crossrefs {
-            // Determine the neighbor ID based on direction
-            let neighbor_id = if crossref.from_id == current_id {
-                crossref.to_id
-            } else {
-                crossref.from_id
-            };
+        // Batch fetch entity-based connections if enabled
+        let entity_connections_map = if options.include_entities {
+            get_entity_connections_batch(conn, &node_ids, options.limit_per_hop)?
+        } else {
+            HashMap::new()
+        };
 
-            if visited.contains(&neighbor_id) {
-                continue;
+        // Process each node in the batch
+        for (current_id, _current_depth, current_path, current_edge_path, current_score) in
+            current_batch
+        {
+            // Process cross-references
+            if let Some(crossrefs) = crossrefs_map.get(&current_id) {
+                for crossref in crossrefs.iter().take(options.limit_per_hop) {
+                    // Determine the neighbor ID based on direction
+                    let neighbor_id = if crossref.from_id == current_id {
+                        crossref.to_id
+                    } else {
+                        crossref.from_id
+                    };
+
+                    if visited.contains(&neighbor_id) {
+                        continue;
+                    }
+
+                    visited.insert(neighbor_id);
+
+                    let mut new_path = current_path.clone();
+                    new_path.push(neighbor_id);
+
+                    let mut new_edge_path = current_edge_path.clone();
+                    new_edge_path.push(crossref.edge_type.as_str().to_string());
+
+                    let new_score = current_score * crossref.score * crossref.confidence;
+                    let new_depth = current_depth + 1;
+
+                    nodes.push(TraversalNode {
+                        memory_id: neighbor_id,
+                        depth: new_depth,
+                        path: new_path.clone(),
+                        edge_path: new_edge_path.clone(),
+                        cumulative_score: new_score,
+                        connection_type: ConnectionType::CrossReference,
+                    });
+
+                    discovery_edges.push(crossref.clone());
+
+                    *stats.nodes_per_depth.entry(new_depth).or_insert(0) += 1;
+                    *stats
+                        .connection_type_counts
+                        .entry("cross_reference".to_string())
+                        .or_insert(0) += 1;
+
+                    if new_depth < options.depth {
+                        queue.push_back((
+                            neighbor_id,
+                            new_depth,
+                            new_path,
+                            new_edge_path,
+                            new_score,
+                        ));
+                    }
+
+                    stats.max_depth_reached = stats.max_depth_reached.max(new_depth);
+                }
             }
 
-            visited.insert(neighbor_id);
+            // Process entity connections
+            if let Some(entity_connections) = entity_connections_map.get(&current_id) {
+                for (neighbor_id, entity_name) in entity_connections.iter().take(options.limit_per_hop) {
+                    let neighbor_id = *neighbor_id;
+                    if visited.contains(&neighbor_id) {
+                        continue;
+                    }
 
-            let mut new_path = current_path.clone();
-            new_path.push(neighbor_id);
+                    visited.insert(neighbor_id);
 
-            let mut new_edge_path = current_edge_path.clone();
-            new_edge_path.push(crossref.edge_type.as_str().to_string());
+                    let mut new_path = current_path.clone();
+                    new_path.push(neighbor_id);
 
-            let new_score = current_score * crossref.score * crossref.confidence;
-            let new_depth = current_depth + 1;
+                    let mut new_edge_path = current_edge_path.clone();
+                    new_edge_path.push(format!("entity:{}", entity_name));
 
-            nodes.push(TraversalNode {
-                memory_id: neighbor_id,
-                depth: new_depth,
-                path: new_path.clone(),
-                edge_path: new_edge_path.clone(),
-                cumulative_score: new_score,
-                connection_type: ConnectionType::CrossReference,
-            });
+                    let new_depth = current_depth + 1;
+                    // Entity connections get a base score of 0.5
+                    let new_score = current_score * 0.5;
 
-            discovery_edges.push(crossref);
+                    nodes.push(TraversalNode {
+                        memory_id: neighbor_id,
+                        depth: new_depth,
+                        path: new_path.clone(),
+                        edge_path: new_edge_path.clone(),
+                        cumulative_score: new_score,
+                        connection_type: ConnectionType::SharedEntity {
+                            entity_name: entity_name.clone(),
+                        },
+                    });
 
-            *stats.nodes_per_depth.entry(new_depth).or_insert(0) += 1;
-            *stats
-                .connection_type_counts
-                .entry("cross_reference".to_string())
-                .or_insert(0) += 1;
+                    *stats.nodes_per_depth.entry(new_depth).or_insert(0) += 1;
+                    *stats
+                        .connection_type_counts
+                        .entry("shared_entity".to_string())
+                        .or_insert(0) += 1;
 
-            if new_depth < options.depth {
-                queue.push_back((neighbor_id, new_depth, new_path, new_edge_path, new_score));
-            }
+                    if new_depth < options.depth {
+                        queue.push_back((
+                            neighbor_id,
+                            new_depth,
+                            new_path,
+                            new_edge_path,
+                            new_score,
+                        ));
+                    }
 
-            stats.max_depth_reached = stats.max_depth_reached.max(new_depth);
-        }
-
-        // Get entity-based connections if enabled
-        if options.include_entities {
-            let entity_connections =
-                get_entity_connections(conn, current_id, options.limit_per_hop)?;
-
-            for (neighbor_id, entity_name) in entity_connections {
-                if visited.contains(&neighbor_id) {
-                    continue;
+                    stats.max_depth_reached = stats.max_depth_reached.max(new_depth);
                 }
-
-                visited.insert(neighbor_id);
-
-                let mut new_path = current_path.clone();
-                new_path.push(neighbor_id);
-
-                let mut new_edge_path = current_edge_path.clone();
-                new_edge_path.push(format!("entity:{}", entity_name));
-
-                let new_depth = current_depth + 1;
-                // Entity connections get a base score of 0.5
-                let new_score = current_score * 0.5;
-
-                nodes.push(TraversalNode {
-                    memory_id: neighbor_id,
-                    depth: new_depth,
-                    path: new_path.clone(),
-                    edge_path: new_edge_path.clone(),
-                    cumulative_score: new_score,
-                    connection_type: ConnectionType::SharedEntity {
-                        entity_name: entity_name.clone(),
-                    },
-                });
-
-                *stats.nodes_per_depth.entry(new_depth).or_insert(0) += 1;
-                *stats
-                    .connection_type_counts
-                    .entry("shared_entity".to_string())
-                    .or_insert(0) += 1;
-
-                if new_depth < options.depth {
-                    queue.push_back((neighbor_id, new_depth, new_path, new_edge_path, new_score));
-                }
-
-                stats.max_depth_reached = stats.max_depth_reached.max(new_depth);
             }
         }
     }
@@ -287,98 +326,159 @@ pub fn get_related_multi_hop(
     })
 }
 
-/// Get edges for a single hop based on traversal options
-fn get_edges_for_traversal(
+/// Get edges for multiple memory IDs
+fn get_edges_for_traversal_batch(
     conn: &Connection,
-    memory_id: MemoryId,
+    memory_ids: &[MemoryId],
     edge_types: &[EdgeType],
     min_score: f32,
     min_confidence: f32,
-    limit: usize,
     direction: TraversalDirection,
-) -> Result<Vec<CrossReference>> {
-    let direction_clause = match direction {
-        TraversalDirection::Outgoing => "from_id = ?",
-        TraversalDirection::Incoming => "to_id = ?",
-        TraversalDirection::Both => "(from_id = ? OR to_id = ?)",
-    };
+) -> Result<HashMap<MemoryId, Vec<CrossReference>>> {
+    if memory_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
 
-    let edge_type_clause = if edge_types.is_empty() {
-        String::new()
-    } else {
-        let types: Vec<String> = edge_types
-            .iter()
-            .map(|e| format!("'{}'", e.as_str()))
-            .collect();
-        format!(" AND edge_type IN ({})", types.join(", "))
-    };
+    // SQLite limit safety: chunk the IDs if necessary
+    // For now assuming reasonable batch sizes, but let's be safe with a chunk size of 100
+    let mut result: HashMap<MemoryId, Vec<CrossReference>> = HashMap::new();
+    let id_set: HashSet<MemoryId> = memory_ids.iter().cloned().collect();
 
-    let query = format!(
-        "SELECT from_id, to_id, edge_type, score, confidence, strength, source,
-                source_context, created_at, valid_from, valid_to, pinned, metadata
-         FROM crossrefs
-         WHERE {} AND valid_to IS NULL
-           AND score >= ? AND confidence >= ?
-         {}
-         ORDER BY score * confidence DESC
-         LIMIT ?",
-        direction_clause, edge_type_clause
-    );
+    for chunk in memory_ids.chunks(100) {
+        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
 
-    let mut stmt = conn.prepare(&query)?;
+        let direction_clause = match direction {
+            TraversalDirection::Outgoing => format!("from_id IN ({})", placeholders),
+            TraversalDirection::Incoming => format!("to_id IN ({})", placeholders),
+            TraversalDirection::Both => format!("(from_id IN ({0}) OR to_id IN ({0}))", placeholders),
+        };
 
-    let params: Vec<Box<dyn rusqlite::ToSql>> = match direction {
-        TraversalDirection::Both => vec![
-            Box::new(memory_id),
-            Box::new(memory_id),
-            Box::new(min_score),
-            Box::new(min_confidence),
-            Box::new(limit as i64),
-        ],
-        _ => vec![
-            Box::new(memory_id),
-            Box::new(min_score),
-            Box::new(min_confidence),
-            Box::new(limit as i64),
-        ],
-    };
+        let edge_type_clause = if edge_types.is_empty() {
+            String::new()
+        } else {
+            let types: Vec<String> = edge_types
+                .iter()
+                .map(|e| format!("'{}'", e.as_str()))
+                .collect();
+            format!(" AND edge_type IN ({})", types.join(", "))
+        };
 
-    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let query = format!(
+            "SELECT from_id, to_id, edge_type, score, confidence, strength, source,
+                    source_context, created_at, valid_from, valid_to, pinned, metadata
+             FROM crossrefs
+             WHERE {} AND valid_to IS NULL
+               AND score >= ? AND confidence >= ?
+             {}
+             ORDER BY score * confidence DESC",
+            direction_clause, edge_type_clause
+        );
 
-    let crossrefs = stmt
-        .query_map(param_refs.as_slice(), crossref_from_row)?
-        .filter_map(|r| r.ok())
-        .collect();
+        let mut stmt = conn.prepare(&query)?;
 
-    Ok(crossrefs)
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        for id in chunk {
+            params.push(Box::new(*id));
+        }
+        if direction == TraversalDirection::Both {
+            for id in chunk {
+                params.push(Box::new(*id));
+            }
+        }
+        params.push(Box::new(min_score));
+        params.push(Box::new(min_confidence));
+
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+        let crossrefs = stmt
+            .query_map(param_refs.as_slice(), crossref_from_row)?
+            .filter_map(|r| r.ok());
+
+        for crossref in crossrefs {
+            match direction {
+                TraversalDirection::Outgoing => {
+                    if id_set.contains(&crossref.from_id) {
+                         result.entry(crossref.from_id).or_default().push(crossref);
+                    }
+                }
+                TraversalDirection::Incoming => {
+                    if id_set.contains(&crossref.to_id) {
+                         result.entry(crossref.to_id).or_default().push(crossref);
+                    }
+                }
+                TraversalDirection::Both => {
+                    if id_set.contains(&crossref.from_id) {
+                         result.entry(crossref.from_id).or_default().push(crossref.clone());
+                    }
+                    if id_set.contains(&crossref.to_id) && crossref.from_id != crossref.to_id {
+                         result.entry(crossref.to_id).or_default().push(crossref);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(result)
 }
 
-/// Get memories connected through shared entities
-fn get_entity_connections(
+/// Get memories connected through shared entities for multiple memory IDs
+fn get_entity_connections_batch(
     conn: &Connection,
-    memory_id: MemoryId,
-    limit: usize,
-) -> Result<Vec<(MemoryId, String)>> {
-    // Find other memories that share entities with this memory
-    let query = r#"
-        SELECT DISTINCT me2.memory_id, e.name
-        FROM memory_entities me1
-        JOIN memory_entities me2 ON me1.entity_id = me2.entity_id
-        JOIN entities e ON me1.entity_id = e.id
-        WHERE me1.memory_id = ? AND me2.memory_id != ?
-        ORDER BY e.mention_count DESC
-        LIMIT ?
-    "#;
+    memory_ids: &[MemoryId],
+    _limit: usize,
+) -> Result<HashMap<MemoryId, Vec<(MemoryId, String)>>> {
+    if memory_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
 
-    let mut stmt = conn.prepare(query)?;
-    let connections: Vec<(MemoryId, String)> = stmt
-        .query_map(params![memory_id, memory_id, limit as i64], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-        })?
-        .filter_map(|r| r.ok())
-        .collect();
+    let mut result: HashMap<MemoryId, Vec<(MemoryId, String)>> = HashMap::new();
+    let id_set: HashSet<MemoryId> = memory_ids.iter().cloned().collect();
 
-    Ok(connections)
+    for chunk in memory_ids.chunks(100) {
+        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+
+        let query = format!(
+            r#"
+            SELECT DISTINCT me1.memory_id, me2.memory_id, e.name
+            FROM memory_entities me1
+            JOIN memory_entities me2 ON me1.entity_id = me2.entity_id
+            JOIN entities e ON me1.entity_id = e.id
+            WHERE me1.memory_id IN ({}) AND me2.memory_id != me1.memory_id
+            ORDER BY e.mention_count DESC
+            "#,
+            placeholders
+        );
+
+        let mut stmt = conn.prepare(&query)?;
+
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        for id in chunk {
+            params.push(Box::new(*id));
+        }
+
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+        let rows = stmt
+            .query_map(param_refs.as_slice(), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .filter_map(|r| r.ok());
+
+        for (source_id, target_id, entity_name) in rows {
+            if id_set.contains(&source_id) {
+                result
+                    .entry(source_id)
+                    .or_default()
+                    .push((target_id, entity_name));
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 /// Helper to parse CrossReference from row
