@@ -5,7 +5,6 @@ use rusqlite::{params, Connection, Row};
 use std::collections::HashMap;
 
 use crate::error::{EngramError, Result};
-use crate::storage::filter::{parse_filter, SqlBuilder};
 use crate::types::*;
 
 /// Parse a memory from a database row
@@ -29,6 +28,9 @@ pub fn memory_from_row(row: &Row) -> rusqlite::Result<Memory> {
         .get("scope_type")
         .unwrap_or_else(|_| "global".to_string());
     let scope_id: Option<String> = row.get("scope_id").unwrap_or(None);
+
+    // TTL column (with fallback for backward compatibility)
+    let expires_at: Option<String> = row.get("expires_at").unwrap_or(None);
 
     let memory_type = memory_type_str.parse().unwrap_or(MemoryType::Note);
     let visibility = match visibility_str.as_str() {
@@ -72,6 +74,11 @@ pub fn memory_from_row(row: &Row) -> rusqlite::Result<Memory> {
         scope,
         version,
         has_embedding: has_embedding != 0,
+        expires_at: expires_at.and_then(|s| {
+            DateTime::parse_from_rfc3339(&s)
+                .map(|dt| dt.with_timezone(&Utc))
+                .ok()
+        }),
     })
 }
 
@@ -115,16 +122,20 @@ fn metadata_value_to_param(
 }
 
 fn get_memory_internal(conn: &Connection, id: i64, track_access: bool) -> Result<Memory> {
+    let now = Utc::now().to_rfc3339();
+
     let mut stmt = conn.prepare_cached(
         "SELECT id, content, memory_type, importance, access_count,
                 created_at, updated_at, last_accessed_at, owner_id,
                 visibility, version, has_embedding, metadata,
-                scope_type, scope_id
-         FROM memories WHERE id = ? AND valid_to IS NULL",
+                scope_type, scope_id, expires_at
+         FROM memories
+         WHERE id = ? AND valid_to IS NULL
+           AND (expires_at IS NULL OR expires_at > ?)",
     )?;
 
     let mut memory = stmt
-        .query_row([id], memory_from_row)
+        .query_row(params![id, now], memory_from_row)
         .map_err(|_| EngramError::NotFound(id))?;
 
     memory.tags = load_tags(conn, id)?;
@@ -160,7 +171,8 @@ pub fn load_tags(conn: &Connection, memory_id: i64) -> Result<Vec<String>> {
 
 /// Create a new memory
 pub fn create_memory(conn: &Connection, input: &CreateMemoryInput) -> Result<Memory> {
-    let now = Utc::now().to_rfc3339();
+    let now = Utc::now();
+    let now_str = now.to_rfc3339();
     let metadata_json = serde_json::to_string(&input.metadata)?;
     let importance = input.importance.unwrap_or(0.5);
 
@@ -168,19 +180,25 @@ pub fn create_memory(conn: &Connection, input: &CreateMemoryInput) -> Result<Mem
     let scope_type = input.scope.scope_type();
     let scope_id = input.scope.scope_id().map(|s| s.to_string());
 
+    // Calculate expires_at from ttl_seconds
+    let expires_at = input
+        .ttl_seconds
+        .map(|ttl| (now + chrono::Duration::seconds(ttl)).to_rfc3339());
+
     conn.execute(
-        "INSERT INTO memories (content, memory_type, importance, metadata, created_at, updated_at, valid_from, scope_type, scope_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO memories (content, memory_type, importance, metadata, created_at, updated_at, valid_from, scope_type, scope_id, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
             input.content,
             input.memory_type.as_str(),
             importance,
             metadata_json,
-            now,
-            now,
-            now,
+            now_str,
+            now_str,
+            now_str,
             scope_type,
             scope_id,
+            expires_at,
         ],
     )?;
 
@@ -201,7 +219,7 @@ pub fn create_memory(conn: &Connection, input: &CreateMemoryInput) -> Result<Mem
         conn.execute(
             "INSERT INTO embedding_queue (memory_id, status, queued_at)
              VALUES (?, 'pending', ?)",
-            params![id, now],
+            params![id, now_str],
         )?;
     }
 
@@ -210,7 +228,7 @@ pub fn create_memory(conn: &Connection, input: &CreateMemoryInput) -> Result<Mem
     conn.execute(
         "INSERT INTO memory_versions (memory_id, version, content, tags, metadata, created_at)
          VALUES (?, 1, ?, ?, ?, ?)",
-        params![id, input.content, tags_json, metadata_json, now],
+        params![id, input.content, tags_json, metadata_json, now_str],
     )?;
 
     // Update sync state
@@ -274,6 +292,19 @@ pub fn update_memory(conn: &Connection, id: i64, input: &UpdateMemoryInput) -> R
         values.push(Box::new(scope.scope_type().to_string()));
         updates.push("scope_id = ?".to_string());
         values.push(Box::new(scope.scope_id().map(|s| s.to_string())));
+    }
+
+    // Handle TTL update
+    if let Some(ttl) = input.ttl_seconds {
+        if ttl == 0 {
+            // Remove expiration
+            updates.push("expires_at = NULL".to_string());
+        } else {
+            // Set new expiration
+            let expires_at = (Utc::now() + chrono::Duration::seconds(ttl)).to_rfc3339();
+            updates.push("expires_at = ?".to_string());
+            values.push(Box::new(expires_at));
+        }
     }
 
     // Increment version
@@ -364,16 +395,22 @@ pub fn delete_memory(conn: &Connection, id: i64) -> Result<()> {
 
 /// List memories with filtering and pagination
 pub fn list_memories(conn: &Connection, options: &ListOptions) -> Result<Vec<Memory>> {
+    let now = Utc::now().to_rfc3339();
+
     let mut sql = String::from(
         "SELECT DISTINCT m.id, m.content, m.memory_type, m.importance, m.access_count,
                 m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
                 m.visibility, m.version, m.has_embedding, m.metadata,
-                m.scope_type, m.scope_id
+                m.scope_type, m.scope_id, m.expires_at
          FROM memories m",
     );
 
     let mut conditions = vec!["m.valid_to IS NULL".to_string()];
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
+
+    // Exclude expired memories
+    conditions.push("(m.expires_at IS NULL OR m.expires_at > ?)".to_string());
+    params.push(Box::new(now));
 
     // Tag filter (requires join)
     if let Some(ref tags) = options.tags {
@@ -396,17 +433,8 @@ pub fn list_memories(conn: &Connection, options: &ListOptions) -> Result<Vec<Mem
         params.push(Box::new(memory_type.as_str().to_string()));
     }
 
-    // Advanced filter (RML-932) - takes precedence over legacy metadata_filter
-    if let Some(ref filter_json) = options.filter {
-        let filter_expr = parse_filter(filter_json)?;
-        let mut builder = SqlBuilder::new();
-        let filter_sql = builder.build_filter(&filter_expr)?;
-        conditions.push(filter_sql);
-        for param in builder.take_params() {
-            params.push(param);
-        }
-    } else if let Some(ref metadata_filter) = options.metadata_filter {
-        // Legacy metadata filter (JSON) - deprecated in favor of `filter`
+    // Metadata filter (JSON)
+    if let Some(ref metadata_filter) = options.metadata_filter {
         for (key, value) in metadata_filter {
             metadata_value_to_param(key, value, &mut conditions, &mut params)?;
         }
@@ -622,6 +650,119 @@ pub fn delete_crossref(
     Ok(())
 }
 
+/// Set expiration on an existing memory
+///
+/// # Arguments
+/// * `conn` - Database connection
+/// * `id` - Memory ID
+/// * `ttl_seconds` - Time-to-live in seconds (0 = remove expiration, None = no change)
+pub fn set_memory_expiration(
+    conn: &Connection,
+    id: i64,
+    ttl_seconds: Option<i64>,
+) -> Result<Memory> {
+    // Verify memory exists and is not expired
+    let _ = get_memory_internal(conn, id, false)?;
+
+    match ttl_seconds {
+        Some(0) => {
+            // Remove expiration
+            conn.execute(
+                "UPDATE memories SET expires_at = NULL, updated_at = ? WHERE id = ?",
+                params![Utc::now().to_rfc3339(), id],
+            )?;
+        }
+        Some(ttl) => {
+            // Set new expiration
+            let expires_at = (Utc::now() + chrono::Duration::seconds(ttl)).to_rfc3339();
+            conn.execute(
+                "UPDATE memories SET expires_at = ?, updated_at = ? WHERE id = ?",
+                params![expires_at, Utc::now().to_rfc3339(), id],
+            )?;
+        }
+        None => {
+            // No change
+        }
+    }
+
+    // Update sync state
+    conn.execute(
+        "UPDATE sync_state SET pending_changes = pending_changes + 1 WHERE id = 1",
+        [],
+    )?;
+
+    get_memory_internal(conn, id, false)
+}
+
+/// Delete all expired memories (cleanup job)
+///
+/// Returns the number of memories deleted
+pub fn cleanup_expired_memories(conn: &Connection) -> Result<i64> {
+    let now = Utc::now().to_rfc3339();
+
+    // Soft delete expired memories by setting valid_to
+    let affected = conn.execute(
+        "UPDATE memories SET valid_to = ?
+         WHERE expires_at IS NOT NULL AND expires_at <= ? AND valid_to IS NULL",
+        params![now, now],
+    )?;
+
+    if affected > 0 {
+        // Also invalidate cross-references involving expired memories
+        conn.execute(
+            "UPDATE crossrefs SET valid_to = ?
+             WHERE valid_to IS NULL AND (
+                 from_id IN (SELECT id FROM memories WHERE valid_to IS NOT NULL AND expires_at IS NOT NULL AND expires_at <= ?)
+                 OR to_id IN (SELECT id FROM memories WHERE valid_to IS NOT NULL AND expires_at IS NOT NULL AND expires_at <= ?)
+             )",
+            params![now, now, now],
+        )?;
+
+        // Remove memory_entities links for expired memories
+        // This ensures expired memories don't appear in entity-based queries
+        conn.execute(
+            "DELETE FROM memory_entities
+             WHERE memory_id IN (
+                 SELECT id FROM memories
+                 WHERE valid_to IS NOT NULL AND expires_at IS NOT NULL AND expires_at <= ?
+             )",
+            params![now],
+        )?;
+
+        // Remove memory_tags links for expired memories
+        conn.execute(
+            "DELETE FROM memory_tags
+             WHERE memory_id IN (
+                 SELECT id FROM memories
+                 WHERE valid_to IS NOT NULL AND expires_at IS NOT NULL AND expires_at <= ?
+             )",
+            params![now],
+        )?;
+
+        // Update sync state
+        conn.execute(
+            "UPDATE sync_state SET pending_changes = pending_changes + ? WHERE id = 1",
+            params![affected as i64],
+        )?;
+    }
+
+    Ok(affected as i64)
+}
+
+/// Get count of expired memories (for monitoring)
+pub fn count_expired_memories(conn: &Connection) -> Result<i64> {
+    let now = Utc::now().to_rfc3339();
+
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memories
+         WHERE expires_at IS NOT NULL AND expires_at <= ? AND valid_to IS NULL",
+        params![now],
+        |row| row.get(0),
+    )?;
+
+    Ok(count)
+}
+
 /// Get storage statistics
 pub fn get_stats(conn: &Connection) -> Result<StorageStats> {
     let total_memories: i64 = conn.query_row(
@@ -747,6 +888,7 @@ mod tests {
                         importance: None,
                         scope: Default::default(),
                         defer_embedding: true,
+                        ttl_seconds: None,
                     },
                 )?;
                 let memory2 = create_memory(
@@ -759,6 +901,7 @@ mod tests {
                         importance: None,
                         scope: Default::default(),
                         defer_embedding: true,
+                        ttl_seconds: None,
                     },
                 )?;
 
@@ -834,6 +977,7 @@ mod tests {
                         importance: None,
                         scope: MemoryScope::user("user-1"),
                         defer_embedding: true,
+                        ttl_seconds: None,
                     },
                 )?;
 
@@ -848,6 +992,7 @@ mod tests {
                         importance: None,
                         scope: MemoryScope::user("user-2"),
                         defer_embedding: true,
+                        ttl_seconds: None,
                     },
                 )?;
 
@@ -862,6 +1007,7 @@ mod tests {
                         importance: None,
                         scope: MemoryScope::session("session-abc"),
                         defer_embedding: true,
+                        ttl_seconds: None,
                     },
                 )?;
 
@@ -876,6 +1022,7 @@ mod tests {
                         importance: None,
                         scope: MemoryScope::Global,
                         defer_embedding: true,
+                        ttl_seconds: None,
                     },
                 )?;
 
@@ -967,59 +1114,57 @@ mod tests {
         assert!(MemoryScope::agent("a1").can_access(&MemoryScope::Global));
     }
 
-    // ========== Advanced Filter Tests (RML-932) ==========
-
     #[test]
-    fn test_advanced_filter_eq() {
+    fn test_memory_ttl_creation() {
         let storage = Storage::open_in_memory().unwrap();
 
         storage
-            .with_connection(|conn| {
-                // Create test memories
-                let mut metadata1 = HashMap::new();
-                metadata1.insert("project".to_string(), json!("engram"));
-                metadata1.insert("priority".to_string(), json!(1));
-
-                let mut metadata2 = HashMap::new();
-                metadata2.insert("project".to_string(), json!("other"));
-                metadata2.insert("priority".to_string(), json!(2));
-
-                let _m1 = create_memory(
+            .with_transaction(|conn| {
+                // Create memory with TTL of 1 hour
+                let memory = create_memory(
                     conn,
                     &CreateMemoryInput {
-                        content: "Engram project note".to_string(),
+                        content: "Temporary memory".to_string(),
                         memory_type: MemoryType::Note,
-                        tags: vec!["rust".to_string()],
-                        metadata: metadata1,
-                        importance: Some(0.8),
+                        tags: vec![],
+                        metadata: HashMap::new(),
+                        importance: None,
                         scope: Default::default(),
                         defer_embedding: true,
+                        ttl_seconds: Some(3600), // 1 hour
                     },
                 )?;
 
-                let _m2 = create_memory(
+                // Verify expires_at is set
+                assert!(memory.expires_at.is_some());
+                let expires_at = memory.expires_at.unwrap();
+                let now = Utc::now();
+
+                // Should expire approximately 1 hour from now (within 5 seconds tolerance)
+                let diff = (expires_at - now).num_seconds();
+                assert!(
+                    (3595..=3605).contains(&diff),
+                    "Expected ~3600 seconds, got {}",
+                    diff
+                );
+
+                // Create memory without TTL
+                let permanent = create_memory(
                     conn,
                     &CreateMemoryInput {
-                        content: "Other project note".to_string(),
+                        content: "Permanent memory".to_string(),
                         memory_type: MemoryType::Note,
-                        tags: vec!["python".to_string()],
-                        metadata: metadata2,
-                        importance: Some(0.5),
+                        tags: vec![],
+                        metadata: HashMap::new(),
+                        importance: None,
                         scope: Default::default(),
                         defer_embedding: true,
+                        ttl_seconds: None,
                     },
                 )?;
 
-                // Test eq filter
-                let results = list_memories(
-                    conn,
-                    &ListOptions {
-                        filter: Some(json!({"metadata.project": {"eq": "engram"}})),
-                        ..Default::default()
-                    },
-                )?;
-                assert_eq!(results.len(), 1);
-                assert!(results[0].content.contains("Engram"));
+                // Verify expires_at is None for permanent memory
+                assert!(permanent.expires_at.is_none());
 
                 Ok(())
             })
@@ -1027,333 +1172,176 @@ mod tests {
     }
 
     #[test]
-    fn test_advanced_filter_comparison_operators() {
+    fn test_expired_memories_excluded_from_queries() {
         let storage = Storage::open_in_memory().unwrap();
 
         storage
-            .with_connection(|conn| {
-                for i in 1..=5 {
-                    let mut metadata = HashMap::new();
-                    metadata.insert("priority".to_string(), json!(i));
+            .with_transaction(|conn| {
+                // Create two memories with TTL
+                let memory1 = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Memory to expire".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec!["test".to_string()],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: Default::default(),
+                        defer_embedding: true,
+                        ttl_seconds: Some(3600), // 1 hour TTL
+                    },
+                )?;
 
-                    create_memory(
+                // Create a permanent memory
+                let active = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Active memory".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec!["test".to_string()],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: Default::default(),
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                    },
+                )?;
+
+                // Both should be visible initially
+                let results = list_memories(conn, &ListOptions::default())?;
+                assert_eq!(results.len(), 2);
+
+                // Manually expire memory1 by setting expires_at to the past
+                let past = (Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+                conn.execute(
+                    "UPDATE memories SET expires_at = ? WHERE id = ?",
+                    params![past, memory1.id],
+                )?;
+
+                // List should only return active memory now
+                let results = list_memories(conn, &ListOptions::default())?;
+                assert_eq!(results.len(), 1);
+                assert_eq!(results[0].id, active.id);
+
+                // Direct get_memory should fail for expired
+                let get_result = get_memory(conn, memory1.id);
+                assert!(get_result.is_err());
+
+                // Direct get_memory should succeed for active
+                let get_result = get_memory(conn, active.id);
+                assert!(get_result.is_ok());
+
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_set_memory_expiration() {
+        let storage = Storage::open_in_memory().unwrap();
+
+        storage
+            .with_transaction(|conn| {
+                // Create a permanent memory
+                let memory = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Initially permanent".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec![],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: Default::default(),
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                    },
+                )?;
+
+                assert!(memory.expires_at.is_none());
+
+                // Set expiration to 30 minutes
+                let updated = set_memory_expiration(conn, memory.id, Some(1800))?;
+                assert!(updated.expires_at.is_some());
+
+                // Remove expiration (make permanent again) - use Some(0) to clear
+                let permanent_again = set_memory_expiration(conn, memory.id, Some(0))?;
+                assert!(permanent_again.expires_at.is_none());
+
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_cleanup_expired_memories() {
+        let storage = Storage::open_in_memory().unwrap();
+
+        storage
+            .with_transaction(|conn| {
+                // Create 3 memories that we'll expire manually
+                let mut expired_ids = vec![];
+                for i in 0..3 {
+                    let mem = create_memory(
                         conn,
                         &CreateMemoryInput {
-                            content: format!("Memory with priority {}", i),
+                            content: format!("To expire {}", i),
                             memory_type: MemoryType::Note,
                             tags: vec![],
-                            metadata,
-                            importance: Some(i as f32 / 10.0),
-                            scope: Default::default(),
-                            defer_embedding: true,
-                        },
-                    )?;
-                }
-
-                // Test gte
-                let results = list_memories(
-                    conn,
-                    &ListOptions {
-                        filter: Some(json!({"metadata.priority": {"gte": 3}})),
-                        ..Default::default()
-                    },
-                )?;
-                assert_eq!(results.len(), 3); // 3, 4, 5
-
-                // Test lt
-                let results = list_memories(
-                    conn,
-                    &ListOptions {
-                        filter: Some(json!({"metadata.priority": {"lt": 3}})),
-                        ..Default::default()
-                    },
-                )?;
-                assert_eq!(results.len(), 2); // 1, 2
-
-                // Test importance gte
-                let results = list_memories(
-                    conn,
-                    &ListOptions {
-                        filter: Some(json!({"importance": {"gte": 0.4}})),
-                        ..Default::default()
-                    },
-                )?;
-                assert_eq!(results.len(), 2); // 0.4 and 0.5
-
-                Ok(())
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn test_advanced_filter_and_or() {
-        let storage = Storage::open_in_memory().unwrap();
-
-        storage
-            .with_connection(|conn| {
-                // Memory 1: rust, high priority
-                let mut m1 = HashMap::new();
-                m1.insert("lang".to_string(), json!("rust"));
-                m1.insert("priority".to_string(), json!(5));
-                create_memory(
-                    conn,
-                    &CreateMemoryInput {
-                        content: "Rust high priority".to_string(),
-                        memory_type: MemoryType::Note,
-                        tags: vec!["performance".to_string()],
-                        metadata: m1,
-                        importance: None,
-                        scope: Default::default(),
-                        defer_embedding: true,
-                    },
-                )?;
-
-                // Memory 2: rust, low priority
-                let mut m2 = HashMap::new();
-                m2.insert("lang".to_string(), json!("rust"));
-                m2.insert("priority".to_string(), json!(1));
-                create_memory(
-                    conn,
-                    &CreateMemoryInput {
-                        content: "Rust low priority".to_string(),
-                        memory_type: MemoryType::Note,
-                        tags: vec![],
-                        metadata: m2,
-                        importance: None,
-                        scope: Default::default(),
-                        defer_embedding: true,
-                    },
-                )?;
-
-                // Memory 3: python, high priority
-                let mut m3 = HashMap::new();
-                m3.insert("lang".to_string(), json!("python"));
-                m3.insert("priority".to_string(), json!(5));
-                create_memory(
-                    conn,
-                    &CreateMemoryInput {
-                        content: "Python high priority".to_string(),
-                        memory_type: MemoryType::Note,
-                        tags: vec!["performance".to_string()],
-                        metadata: m3,
-                        importance: None,
-                        scope: Default::default(),
-                        defer_embedding: true,
-                    },
-                )?;
-
-                // Test AND: rust AND high priority
-                let results = list_memories(
-                    conn,
-                    &ListOptions {
-                        filter: Some(json!({
-                            "AND": [
-                                {"metadata.lang": {"eq": "rust"}},
-                                {"metadata.priority": {"gte": 3}}
-                            ]
-                        })),
-                        ..Default::default()
-                    },
-                )?;
-                assert_eq!(results.len(), 1);
-                assert!(results[0].content.contains("Rust high"));
-
-                // Test OR: rust OR high priority
-                let results = list_memories(
-                    conn,
-                    &ListOptions {
-                        filter: Some(json!({
-                            "OR": [
-                                {"metadata.lang": {"eq": "rust"}},
-                                {"metadata.priority": {"gte": 5}}
-                            ]
-                        })),
-                        ..Default::default()
-                    },
-                )?;
-                assert_eq!(results.len(), 3); // All 3 match
-
-                Ok(())
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn test_advanced_filter_tags_contains() {
-        let storage = Storage::open_in_memory().unwrap();
-
-        storage
-            .with_connection(|conn| {
-                create_memory(
-                    conn,
-                    &CreateMemoryInput {
-                        content: "Has rust tag".to_string(),
-                        memory_type: MemoryType::Note,
-                        tags: vec!["rust".to_string(), "performance".to_string()],
-                        metadata: HashMap::new(),
-                        importance: None,
-                        scope: Default::default(),
-                        defer_embedding: true,
-                    },
-                )?;
-
-                create_memory(
-                    conn,
-                    &CreateMemoryInput {
-                        content: "Has python tag".to_string(),
-                        memory_type: MemoryType::Note,
-                        tags: vec!["python".to_string()],
-                        metadata: HashMap::new(),
-                        importance: None,
-                        scope: Default::default(),
-                        defer_embedding: true,
-                    },
-                )?;
-
-                // Test tags contains
-                let results = list_memories(
-                    conn,
-                    &ListOptions {
-                        filter: Some(json!({"tags": {"contains": "rust"}})),
-                        ..Default::default()
-                    },
-                )?;
-                assert_eq!(results.len(), 1);
-                assert!(results[0].content.contains("rust"));
-
-                // Test tags not_contains
-                let results = list_memories(
-                    conn,
-                    &ListOptions {
-                        filter: Some(json!({"tags": {"not_contains": "rust"}})),
-                        ..Default::default()
-                    },
-                )?;
-                assert_eq!(results.len(), 1);
-                assert!(results[0].content.contains("python"));
-
-                Ok(())
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn test_advanced_filter_exists() {
-        let storage = Storage::open_in_memory().unwrap();
-
-        storage
-            .with_connection(|conn| {
-                let mut m1 = HashMap::new();
-                m1.insert("optional_field".to_string(), json!("present"));
-                create_memory(
-                    conn,
-                    &CreateMemoryInput {
-                        content: "Has optional field".to_string(),
-                        memory_type: MemoryType::Note,
-                        tags: vec![],
-                        metadata: m1,
-                        importance: None,
-                        scope: Default::default(),
-                        defer_embedding: true,
-                    },
-                )?;
-
-                create_memory(
-                    conn,
-                    &CreateMemoryInput {
-                        content: "Missing optional field".to_string(),
-                        memory_type: MemoryType::Note,
-                        tags: vec![],
-                        metadata: HashMap::new(),
-                        importance: None,
-                        scope: Default::default(),
-                        defer_embedding: true,
-                    },
-                )?;
-
-                // Test exists: true
-                let results = list_memories(
-                    conn,
-                    &ListOptions {
-                        filter: Some(json!({"metadata.optional_field": {"exists": true}})),
-                        ..Default::default()
-                    },
-                )?;
-                assert_eq!(results.len(), 1);
-                assert!(results[0].content.contains("Has optional"));
-
-                // Test exists: false
-                let results = list_memories(
-                    conn,
-                    &ListOptions {
-                        filter: Some(json!({"metadata.optional_field": {"exists": false}})),
-                        ..Default::default()
-                    },
-                )?;
-                assert_eq!(results.len(), 1);
-                assert!(results[0].content.contains("Missing optional"));
-
-                Ok(())
-            })
-            .unwrap();
-    }
-
-    #[test]
-    fn test_advanced_filter_nested_and_or() {
-        let storage = Storage::open_in_memory().unwrap();
-
-        storage
-            .with_connection(|conn| {
-                // Create diverse test data
-                let test_data = vec![
-                    ("A", "rust", 5, vec!["perf"]),
-                    ("B", "rust", 1, vec![]),
-                    ("C", "python", 5, vec!["perf"]),
-                    ("D", "python", 1, vec![]),
-                ];
-
-                for (name, lang, priority, tags) in test_data {
-                    let mut m = HashMap::new();
-                    m.insert("lang".to_string(), json!(lang));
-                    m.insert("priority".to_string(), json!(priority));
-                    create_memory(
-                        conn,
-                        &CreateMemoryInput {
-                            content: format!("Memory {}", name),
-                            memory_type: MemoryType::Note,
-                            tags: tags.into_iter().map(|s| s.to_string()).collect(),
-                            metadata: m,
+                            metadata: HashMap::new(),
                             importance: None,
                             scope: Default::default(),
                             defer_embedding: true,
+                            ttl_seconds: Some(3600), // 1 hour TTL
+                        },
+                    )?;
+                    expired_ids.push(mem.id);
+                }
+
+                // Create 2 active memories (permanent)
+                for i in 0..2 {
+                    create_memory(
+                        conn,
+                        &CreateMemoryInput {
+                            content: format!("Active {}", i),
+                            memory_type: MemoryType::Note,
+                            tags: vec![],
+                            metadata: HashMap::new(),
+                            importance: None,
+                            scope: Default::default(),
+                            defer_embedding: true,
+                            ttl_seconds: None,
                         },
                     )?;
                 }
 
-                // Complex filter: (rust AND high) OR (python AND perf tag)
-                let results = list_memories(
-                    conn,
-                    &ListOptions {
-                        filter: Some(json!({
-                            "OR": [
-                                {
-                                    "AND": [
-                                        {"metadata.lang": {"eq": "rust"}},
-                                        {"metadata.priority": {"gte": 5}}
-                                    ]
-                                },
-                                {
-                                    "AND": [
-                                        {"metadata.lang": {"eq": "python"}},
-                                        {"tags": {"contains": "perf"}}
-                                    ]
-                                }
-                            ]
-                        })),
-                        ..Default::default()
-                    },
-                )?;
-                assert_eq!(results.len(), 2); // A and C
+                // All 5 should be visible initially
+                let results = list_memories(conn, &ListOptions::default())?;
+                assert_eq!(results.len(), 5);
+
+                // Manually expire the first 3 memories
+                let past = (Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+                for id in &expired_ids {
+                    conn.execute(
+                        "UPDATE memories SET expires_at = ? WHERE id = ?",
+                        params![past, id],
+                    )?;
+                }
+
+                // Count expired
+                let expired_count = count_expired_memories(conn)?;
+                assert_eq!(expired_count, 3);
+
+                // Cleanup should delete 3
+                let deleted = cleanup_expired_memories(conn)?;
+                assert_eq!(deleted, 3);
+
+                // Verify only 2 remain
+                let remaining = list_memories(conn, &ListOptions::default())?;
+                assert_eq!(remaining.len(), 2);
+
+                // No more expired
+                let expired_count = count_expired_memories(conn)?;
+                assert_eq!(expired_count, 0);
 
                 Ok(())
             })

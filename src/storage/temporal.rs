@@ -215,6 +215,7 @@ impl<'a> TemporalQueryEngine<'a> {
                         scope: MemoryScope::Global, // Temporal queries default to global
                         version: row.get(10)?,
                         has_embedding: row.get(11)?,
+                        expires_at: None, // Temporal queries don't track expiration
                     })
                 },
             )
@@ -301,6 +302,7 @@ impl<'a> TemporalQueryEngine<'a> {
                     scope: MemoryScope::Global,
                     version: row.get(10)?,
                     has_embedding: row.get(11)?,
+                    expires_at: None,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;

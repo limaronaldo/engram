@@ -379,6 +379,7 @@ mod tests {
                         importance: None,
                         scope: Default::default(),
                         defer_embedding: true,
+                        ttl_seconds: None,
                     },
                 )?;
 

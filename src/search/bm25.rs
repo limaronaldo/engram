@@ -2,6 +2,7 @@
 //!
 //! Uses SQLite FTS5 with BM25 ranking for high-quality keyword search.
 
+use chrono::Utc;
 use rusqlite::Connection;
 
 use crate::error::Result;
@@ -50,6 +51,7 @@ pub fn bm25_search_with_filter(
 ) -> Result<Vec<Bm25Result>> {
     // Escape special FTS5 characters
     let escaped_query = escape_fts5_query(query);
+    let now = Utc::now().to_rfc3339();
 
     // Note: snippet() is not available with external content FTS5 tables
     // We generate highlights manually from the content instead
@@ -59,15 +61,16 @@ pub fn bm25_search_with_filter(
             m.id, m.content, m.memory_type, m.importance, m.access_count,
             m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
             m.visibility, m.version, m.has_embedding, m.metadata,
-            m.scope_type, m.scope_id,
+            m.scope_type, m.scope_id, m.expires_at,
             bm25(memories_fts) as score
         FROM memories_fts fts
         JOIN memories m ON fts.rowid = m.id
         WHERE memories_fts MATCH ? AND m.valid_to IS NULL
+          AND (m.expires_at IS NULL OR m.expires_at > ?)
     "#,
     );
 
-    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(escaped_query)];
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(escaped_query), Box::new(now)];
 
     // Add advanced filter (RML-932)
     if let Some(filter_json) = filter {

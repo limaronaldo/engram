@@ -473,6 +473,7 @@ mod tests {
             metadata: Default::default(),
             scope: Default::default(),
             defer_embedding: false,
+            ttl_seconds: None,
         };
         create_memory(conn, &input).unwrap().id
     }
