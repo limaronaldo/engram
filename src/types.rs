@@ -529,9 +529,14 @@ pub struct ListOptions {
     pub memory_type: Option<MemoryType>,
     pub sort_by: Option<SortField>,
     pub sort_order: Option<SortOrder>,
+    /// Legacy metadata filter (simple key-value equality)
+    /// Deprecated: Use `filter` for advanced queries
     pub metadata_filter: Option<HashMap<String, serde_json::Value>>,
     /// Filter by memory scope
     pub scope: Option<MemoryScope>,
+    /// Advanced filter expression with AND/OR/comparison operators (RML-932)
+    /// Example: {"AND": [{"metadata.project": {"eq": "engram"}}, {"importance": {"gte": 0.5}}]}
+    pub filter: Option<serde_json::Value>,
 }
 
 /// Fields to sort by
@@ -569,6 +574,9 @@ pub struct SearchOptions {
     pub explain: bool,
     /// Filter by memory scope
     pub scope: Option<MemoryScope>,
+    /// Advanced filter expression with AND/OR/comparison operators (RML-932)
+    /// Takes precedence over `tags` and `memory_type` if specified
+    pub filter: Option<serde_json::Value>,
 }
 
 /// Sync status information

@@ -285,6 +285,7 @@ impl<'a> DocumentIngestor<'a> {
                     sort_order: None,
                     scope: None,
                     metadata_filter: Some(filter),
+                    filter: None,
                 };
 
                 let results = list_memories(conn, &options)?;

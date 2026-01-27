@@ -65,7 +65,7 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
     ),
     (
         "memory_list",
-        "List memories with filtering and pagination",
+        "List memories with filtering and pagination. Supports advanced filter syntax with AND/OR and comparison operators.",
         r#"{
             "type": "object",
             "properties": {
@@ -74,14 +74,22 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "tags": {"type": "array", "items": {"type": "string"}},
                 "type": {"type": "string"},
                 "sort_by": {"type": "string", "enum": ["created_at", "updated_at", "importance", "access_count"]},
-                "sort_order": {"type": "string", "enum": ["asc", "desc"], "default": "desc"}
+                "sort_order": {"type": "string", "enum": ["asc", "desc"], "default": "desc"},
+                "filter": {
+                    "type": "object",
+                    "description": "Advanced filter with AND/OR logic and comparison operators. Example: {\"AND\": [{\"metadata.project\": {\"eq\": \"engram\"}}, {\"importance\": {\"gte\": 0.5}}]}. Supported operators: eq, neq, gt, gte, lt, lte, contains, not_contains, exists. Fields: content, memory_type, importance, tags, created_at, updated_at, metadata.*"
+                },
+                "metadata_filter": {
+                    "type": "object",
+                    "description": "Legacy simple key-value filter (deprecated, use 'filter' instead)"
+                }
             }
         }"#,
     ),
     // Search
     (
         "memory_search",
-        "Search memories using hybrid search (keyword + semantic). Automatically selects optimal strategy with optional reranking.",
+        "Search memories using hybrid search (keyword + semantic). Automatically selects optimal strategy with optional reranking. Supports advanced filters.",
         r#"{
             "type": "object",
             "properties": {
@@ -93,7 +101,11 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "strategy": {"type": "string", "enum": ["keyword", "semantic", "hybrid"], "description": "Force specific strategy"},
                 "explain": {"type": "boolean", "default": false, "description": "Include match explanations"},
                 "rerank": {"type": "boolean", "default": true, "description": "Apply reranking to improve result quality"},
-                "rerank_strategy": {"type": "string", "enum": ["none", "heuristic", "multi_signal"], "default": "heuristic", "description": "Reranking strategy to use"}
+                "rerank_strategy": {"type": "string", "enum": ["none", "heuristic", "multi_signal"], "default": "heuristic", "description": "Reranking strategy to use"},
+                "filter": {
+                    "type": "object",
+                    "description": "Advanced filter with AND/OR logic. Example: {\"AND\": [{\"metadata.project\": {\"eq\": \"engram\"}}, {\"importance\": {\"gte\": 0.5}}]}"
+                }
             },
             "required": ["query"]
         }"#,

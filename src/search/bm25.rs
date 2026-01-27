@@ -6,6 +6,7 @@ use chrono::Utc;
 use rusqlite::Connection;
 
 use crate::error::Result;
+use crate::storage::filter::{parse_filter, SqlBuilder};
 use crate::storage::queries::{load_tags, memory_from_row};
 use crate::types::{MatchInfo, Memory, MemoryScope, SearchStrategy};
 
@@ -36,6 +37,18 @@ pub fn bm25_search_with_options(
     explain: bool,
     scope: Option<&MemoryScope>,
 ) -> Result<Vec<Bm25Result>> {
+    bm25_search_with_filter(conn, query, limit, explain, scope, None)
+}
+
+/// Perform BM25 search with optional scope and advanced filter
+pub fn bm25_search_with_filter(
+    conn: &Connection,
+    query: &str,
+    limit: i64,
+    explain: bool,
+    scope: Option<&MemoryScope>,
+    filter: Option<&serde_json::Value>,
+) -> Result<Vec<Bm25Result>> {
     // Escape special FTS5 characters
     let escaped_query = escape_fts5_query(query);
     let now = Utc::now().to_rfc3339();
@@ -58,6 +71,18 @@ pub fn bm25_search_with_options(
     );
 
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(escaped_query), Box::new(now)];
+
+    // Add advanced filter (RML-932)
+    if let Some(filter_json) = filter {
+        let filter_expr = parse_filter(filter_json)?;
+        let mut builder = SqlBuilder::new();
+        let filter_sql = builder.build_filter(&filter_expr)?;
+        sql.push_str(" AND ");
+        sql.push_str(&filter_sql);
+        for param in builder.take_params() {
+            params.push(param);
+        }
+    }
 
     // Add scope filter
     if let Some(scope) = scope {
