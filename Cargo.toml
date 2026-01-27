@@ -112,6 +112,10 @@ harness = false
 name = "community_detection"
 harness = false
 
+[[bench]]
+name = "entity_extraction"
+harness = false
+
 [profile.release]
 lto = true
 codegen-units = 1
