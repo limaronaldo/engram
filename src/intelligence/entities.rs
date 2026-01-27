@@ -12,6 +12,7 @@
 //! LLM-enhanced extraction for higher quality.
 
 use chrono::{DateTime, Utc};
+use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -250,147 +251,155 @@ pub struct EntityExtractor {
     known_concepts: HashSet<String>,
 }
 
+// Compiled regex patterns
+static PERSON_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?x)
+        @[\w-]+                           # @username mentions
+        |(?:Mr\.|Mrs\.|Ms\.|Dr\.|Prof\.)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?  # Title + name
+        |[A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?  # First Last (Middle)
+        ",
+    )
+    .unwrap()
+});
+
+static ORG_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?x)
+        [A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*)*\s+(?:Inc\.?|Corp\.?|LLC|Ltd\.?|Co\.?|Team|Group|Labs?)
+        |(?:The\s+)?[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*\s+(?:Company|Organization|Foundation|Institute)
+        ",
+    )
+    .unwrap()
+});
+
+static PROJECT_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?x)
+        [a-z][a-z0-9]*(?:-[a-z0-9]+)+     # kebab-case project names
+        |[a-z][a-z0-9]*(?:_[a-z0-9]+)+    # snake_case project names
+        |[A-Z][a-z]+(?:[A-Z][a-z]+)+      # PascalCase project names
+        |v?\d+\.\d+(?:\.\d+)?(?:-[a-z]+)? # version numbers
+        ",
+    )
+    .unwrap()
+});
+
+static URL_PATTERN: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"https?://[^\s<>\[\]()]+|www\.[^\s<>\[\]]+").unwrap());
+
+static PATH_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?x)
+        (?:/[\w.-]+)+                     # Unix paths
+        |[A-Z]:\\(?:[\w.-]+\\)+[\w.-]*    # Windows paths
+        |\.{1,2}/[\w.-/]+                 # Relative paths
+        ",
+    )
+    .unwrap()
+});
+
+static DATETIME_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r"(?x)
+        \d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?)?  # ISO dates
+        |\d{1,2}/\d{1,2}/\d{2,4}          # MM/DD/YYYY
+        |(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}(?:,?\s+\d{4})?
+        |Q[1-4]\s+\d{4}                   # Quarters
+        |(?:yesterday|today|tomorrow|last\s+week|next\s+month)
+        ",
+    )
+    .unwrap()
+});
+
+static MENTION_PATTERN: Lazy<Regex> = Lazy::new(|| Regex::new(r"@[\w-]+").unwrap());
+
+static KNOWN_ORGANIZATIONS: Lazy<HashSet<String>> = Lazy::new(|| {
+    [
+        "Anthropic",
+        "OpenAI",
+        "Google",
+        "Microsoft",
+        "Meta",
+        "Amazon",
+        "Apple",
+        "GitHub",
+        "GitLab",
+        "Vercel",
+        "Cloudflare",
+        "AWS",
+        "Azure",
+        "GCP",
+        "Stripe",
+        "Supabase",
+        "Neon",
+        "PlanetScale",
+        "MongoDB",
+        "Redis",
+    ]
+    .iter()
+    .map(|s| s.to_lowercase())
+    .collect()
+});
+
+static KNOWN_CONCEPTS: Lazy<HashSet<String>> = Lazy::new(|| {
+    [
+        "machine learning",
+        "deep learning",
+        "neural network",
+        "transformer",
+        "embedding",
+        "vector database",
+        "semantic search",
+        "rag",
+        "llm",
+        "api",
+        "rest",
+        "graphql",
+        "grpc",
+        "websocket",
+        "microservices",
+        "kubernetes",
+        "docker",
+        "ci/cd",
+        "devops",
+        "serverless",
+        "authentication",
+        "authorization",
+        "oauth",
+        "jwt",
+        "session",
+        "database",
+        "sql",
+        "nosql",
+        "postgresql",
+        "sqlite",
+        "redis",
+        "rust",
+        "python",
+        "typescript",
+        "javascript",
+        "go",
+        "java",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
+});
+
 impl EntityExtractor {
     pub fn new(config: EntityExtractionConfig) -> Self {
-        // Person: @mentions, "Name Name" patterns, title + name
-        let person_pattern = Regex::new(
-            r"(?x)
-            @[\w-]+                           # @username mentions
-            |(?:Mr\.|Mrs\.|Ms\.|Dr\.|Prof\.)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?  # Title + name
-            |[A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?  # First Last (Middle)
-            ",
-        )
-        .unwrap();
-
-        // Organizations: Inc, Corp, LLC, Ltd, Co, Team, etc.
-        let org_pattern = Regex::new(
-            r"(?x)
-            [A-Z][A-Za-z]*(?:\s+[A-Z][A-Za-z]*)*\s+(?:Inc\.?|Corp\.?|LLC|Ltd\.?|Co\.?|Team|Group|Labs?)
-            |(?:The\s+)?[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*\s+(?:Company|Organization|Foundation|Institute)
-            "
-        ).unwrap();
-
-        // Projects: repo names, product names with version
-        let project_pattern = Regex::new(
-            r"(?x)
-            [a-z][a-z0-9]*(?:-[a-z0-9]+)+     # kebab-case project names
-            |[a-z][a-z0-9]*(?:_[a-z0-9]+)+    # snake_case project names
-            |[A-Z][a-z]+(?:[A-Z][a-z]+)+      # PascalCase project names
-            |v?\d+\.\d+(?:\.\d+)?(?:-[a-z]+)? # version numbers
-            ",
-        )
-        .unwrap();
-
-        // URLs
-        let url_pattern = Regex::new(r"https?://[^\s<>\[\]()]+|www\.[^\s<>\[\]]+").unwrap();
-
-        // File paths
-        let path_pattern = Regex::new(
-            r"(?x)
-            (?:/[\w.-]+)+                     # Unix paths
-            |[A-Z]:\\(?:[\w.-]+\\)+[\w.-]*    # Windows paths
-            |\.{1,2}/[\w.-/]+                 # Relative paths
-            ",
-        )
-        .unwrap();
-
-        // DateTime patterns
-        let datetime_pattern = Regex::new(
-            r"(?x)
-            \d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?)?  # ISO dates
-            |\d{1,2}/\d{1,2}/\d{2,4}          # MM/DD/YYYY
-            |(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}(?:,?\s+\d{4})?
-            |Q[1-4]\s+\d{4}                   # Quarters
-            |(?:yesterday|today|tomorrow|last\s+week|next\s+month)
-            ",
-        )
-        .unwrap();
-
-        // @mentions (for quick extraction)
-        let mention_pattern = Regex::new(r"@[\w-]+").unwrap();
-
-        // Known organization names
-        let known_organizations: HashSet<String> = [
-            "Anthropic",
-            "OpenAI",
-            "Google",
-            "Microsoft",
-            "Meta",
-            "Amazon",
-            "Apple",
-            "GitHub",
-            "GitLab",
-            "Vercel",
-            "Cloudflare",
-            "AWS",
-            "Azure",
-            "GCP",
-            "Stripe",
-            "Supabase",
-            "Neon",
-            "PlanetScale",
-            "MongoDB",
-            "Redis",
-        ]
-        .iter()
-        .map(|s| s.to_lowercase())
-        .collect();
-
-        // Known technical concepts
-        let known_concepts: HashSet<String> = [
-            "machine learning",
-            "deep learning",
-            "neural network",
-            "transformer",
-            "embedding",
-            "vector database",
-            "semantic search",
-            "rag",
-            "llm",
-            "api",
-            "rest",
-            "graphql",
-            "grpc",
-            "websocket",
-            "microservices",
-            "kubernetes",
-            "docker",
-            "ci/cd",
-            "devops",
-            "serverless",
-            "authentication",
-            "authorization",
-            "oauth",
-            "jwt",
-            "session",
-            "database",
-            "sql",
-            "nosql",
-            "postgresql",
-            "sqlite",
-            "redis",
-            "rust",
-            "python",
-            "typescript",
-            "javascript",
-            "go",
-            "java",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
-
         Self {
             config,
-            person_pattern,
-            org_pattern,
-            project_pattern,
-            url_pattern,
-            path_pattern,
-            datetime_pattern,
-            mention_pattern,
-            known_organizations,
-            known_concepts,
+            person_pattern: PERSON_PATTERN.clone(),
+            org_pattern: ORG_PATTERN.clone(),
+            project_pattern: PROJECT_PATTERN.clone(),
+            url_pattern: URL_PATTERN.clone(),
+            path_pattern: PATH_PATTERN.clone(),
+            datetime_pattern: DATETIME_PATTERN.clone(),
+            mention_pattern: MENTION_PATTERN.clone(),
+            known_organizations: KNOWN_ORGANIZATIONS.clone(),
+            known_concepts: KNOWN_CONCEPTS.clone(),
         }
     }
 
