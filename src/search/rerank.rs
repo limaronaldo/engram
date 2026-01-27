@@ -502,6 +502,7 @@ mod tests {
             metadata: HashMap::new(),
             scope: MemoryScope::Global,
             expires_at: None,
+            content_hash: None,
         }
     }
 

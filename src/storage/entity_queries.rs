@@ -425,6 +425,8 @@ mod tests {
                         scope: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
+                        dedup_mode: Default::default(),
+                        dedup_threshold: None,
                     },
                 )?;
 

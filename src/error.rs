@@ -50,6 +50,9 @@ pub enum EngramError {
     #[error("Conflict: {0}")]
     Conflict(String),
 
+    #[error("Duplicate memory detected (existing_id={existing_id}): {message}")]
+    Duplicate { existing_id: i64, message: String },
+
     #[error("Authentication error: {0}")]
     Auth(String),
 
@@ -84,6 +87,7 @@ impl EngramError {
             EngramError::Unauthorized(_) => -32003,
             EngramError::RateLimited(_) => -32004,
             EngramError::Conflict(_) => -32005,
+            EngramError::Duplicate { .. } => -32006,
             _ => -32000,
         }
     }

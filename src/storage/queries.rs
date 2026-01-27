@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, Row};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 use crate::error::{EngramError, Result};
@@ -31,6 +32,9 @@ pub fn memory_from_row(row: &Row) -> rusqlite::Result<Memory> {
 
     // TTL column (with fallback for backward compatibility)
     let expires_at: Option<String> = row.get("expires_at").unwrap_or(None);
+
+    // Content hash column (with fallback for backward compatibility)
+    let content_hash: Option<String> = row.get("content_hash").unwrap_or(None);
 
     let memory_type = memory_type_str.parse().unwrap_or(MemoryType::Note);
     let visibility = match visibility_str.as_str() {
@@ -79,6 +83,7 @@ pub fn memory_from_row(row: &Row) -> rusqlite::Result<Memory> {
                 .map(|dt| dt.with_timezone(&Utc))
                 .ok()
         }),
+        content_hash,
     })
 }
 
@@ -128,7 +133,7 @@ fn get_memory_internal(conn: &Connection, id: i64, track_access: bool) -> Result
         "SELECT id, content, memory_type, importance, access_count,
                 created_at, updated_at, last_accessed_at, owner_id,
                 visibility, version, has_embedding, metadata,
-                scope_type, scope_id, expires_at
+                scope_type, scope_id, expires_at, content_hash
          FROM memories
          WHERE id = ? AND valid_to IS NULL
            AND (expires_at IS NULL OR expires_at > ?)",
@@ -169,25 +174,319 @@ pub fn load_tags(conn: &Connection, memory_id: i64) -> Result<Vec<String>> {
     Ok(tags)
 }
 
-/// Create a new memory
+/// Compute SHA256 hash of normalized content for deduplication
+pub fn compute_content_hash(content: &str) -> String {
+    // Normalize: lowercase, collapse whitespace, trim
+    let normalized = content
+        .to_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let mut hasher = Sha256::new();
+    hasher.update(normalized.as_bytes());
+    format!("sha256:{}", hex::encode(hasher.finalize()))
+}
+
+/// Find a memory by content hash within the same scope (exact duplicate detection)
+///
+/// Deduplication respects scope isolation:
+/// - User-scoped memories only dedupe against other memories with same user_id
+/// - Session-scoped memories only dedupe against other memories with same session_id
+/// - Global memories only dedupe against other global memories
+pub fn find_by_content_hash(
+    conn: &Connection,
+    content_hash: &str,
+    scope: &MemoryScope,
+) -> Result<Option<Memory>> {
+    let now = Utc::now().to_rfc3339();
+    let scope_type = scope.scope_type();
+    let scope_id = scope.scope_id().map(|s| s.to_string());
+
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, content, memory_type, importance, access_count,
+                created_at, updated_at, last_accessed_at, owner_id,
+                visibility, version, has_embedding, metadata,
+                scope_type, scope_id, expires_at, content_hash
+         FROM memories
+         WHERE content_hash = ? AND valid_to IS NULL
+           AND (expires_at IS NULL OR expires_at > ?)
+           AND scope_type = ?
+           AND (scope_id = ? OR (scope_id IS NULL AND ? IS NULL))
+         LIMIT 1",
+    )?;
+
+    let result = stmt
+        .query_row(
+            params![content_hash, now, scope_type, scope_id, scope_id],
+            memory_from_row,
+        )
+        .ok();
+
+    if let Some(mut memory) = result {
+        memory.tags = load_tags(conn, memory.id)?;
+        Ok(Some(memory))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Find the most similar memory to given embedding within the same scope (semantic duplicate detection)
+///
+/// Returns the memory with the highest similarity score if it meets the threshold.
+/// Only checks memories that have embeddings computed.
+pub fn find_similar_by_embedding(
+    conn: &Connection,
+    query_embedding: &[f32],
+    scope: &MemoryScope,
+    threshold: f32,
+) -> Result<Option<(Memory, f32)>> {
+    use crate::embedding::{cosine_similarity, get_embedding};
+
+    let now = Utc::now().to_rfc3339();
+    let scope_type = scope.scope_type();
+    let scope_id = scope.scope_id().map(|s| s.to_string());
+
+    // Get all memories with embeddings in the same scope
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, content, memory_type, importance, access_count,
+                created_at, updated_at, last_accessed_at, owner_id,
+                visibility, version, has_embedding, metadata,
+                scope_type, scope_id, expires_at, content_hash
+         FROM memories
+         WHERE has_embedding = 1 AND valid_to IS NULL
+           AND (expires_at IS NULL OR expires_at > ?)
+           AND scope_type = ?
+           AND (scope_id = ? OR (scope_id IS NULL AND ? IS NULL))",
+    )?;
+
+    let memories: Vec<Memory> = stmt
+        .query_map(
+            params![now, scope_type, scope_id, scope_id],
+            memory_from_row,
+        )?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let mut best_match: Option<(Memory, f32)> = None;
+
+    for memory in memories {
+        if let Ok(Some(embedding)) = get_embedding(conn, memory.id) {
+            let similarity = cosine_similarity(query_embedding, &embedding);
+            if similarity >= threshold {
+                match &best_match {
+                    None => best_match = Some((memory, similarity)),
+                    Some((_, best_score)) if similarity > *best_score => {
+                        best_match = Some((memory, similarity));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // Load tags for the best match
+    if let Some((mut memory, score)) = best_match {
+        memory.tags = load_tags(conn, memory.id)?;
+        Ok(Some((memory, score)))
+    } else {
+        Ok(None)
+    }
+}
+
+/// A pair of potentially duplicate memories with their similarity score
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DuplicatePair {
+    pub memory_a: Memory,
+    pub memory_b: Memory,
+    pub similarity_score: f64,
+    pub match_type: DuplicateMatchType,
+}
+
+/// How the duplicate was detected
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DuplicateMatchType {
+    /// Exact content hash match
+    ExactHash,
+    /// High similarity score from crossrefs
+    HighSimilarity,
+}
+
+/// Find all potential duplicate memory pairs
+///
+/// Returns pairs of memories that are either:
+/// 1. Exact duplicates (same content hash within same scope)
+/// 2. High similarity (crossref score >= threshold within same scope)
+///
+/// Duplicates are scoped - memories in different scopes are not considered duplicates.
+pub fn find_duplicates(conn: &Connection, threshold: f64) -> Result<Vec<DuplicatePair>> {
+    let now = Utc::now().to_rfc3339();
+    let mut duplicates = Vec::new();
+
+    // First, find exact hash duplicates (same content_hash within same scope)
+    let mut hash_stmt = conn.prepare_cached(
+        "SELECT content_hash, scope_type, scope_id, GROUP_CONCAT(id) as ids
+         FROM memories
+         WHERE content_hash IS NOT NULL
+           AND valid_to IS NULL
+           AND (expires_at IS NULL OR expires_at > ?)
+         GROUP BY content_hash, scope_type, scope_id
+         HAVING COUNT(*) > 1",
+    )?;
+
+    let hash_rows = hash_stmt.query_map(params![&now], |row| {
+        // Column 3 is now the ids after adding scope_type and scope_id
+        let ids_str: String = row.get(3)?;
+        Ok(ids_str)
+    })?;
+
+    for ids_result in hash_rows {
+        let ids_str = ids_result?;
+        let ids: Vec<i64> = ids_str
+            .split(',')
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+
+        // Create pairs from all IDs with same hash
+        // Use get_memory_internal with track_access=false to avoid inflating access stats
+        for i in 0..ids.len() {
+            for j in (i + 1)..ids.len() {
+                let memory_a = get_memory_internal(conn, ids[i], false)?;
+                let memory_b = get_memory_internal(conn, ids[j], false)?;
+                duplicates.push(DuplicatePair {
+                    memory_a,
+                    memory_b,
+                    similarity_score: 1.0, // Exact match
+                    match_type: DuplicateMatchType::ExactHash,
+                });
+            }
+        }
+    }
+
+    // Second, find high-similarity pairs from crossrefs (within same scope)
+    let mut sim_stmt = conn.prepare_cached(
+        "SELECT DISTINCT c.from_id, c.to_id, c.score
+         FROM crossrefs c
+         JOIN memories m1 ON c.from_id = m1.id
+         JOIN memories m2 ON c.to_id = m2.id
+         WHERE c.score >= ?
+           AND m1.valid_to IS NULL
+           AND m2.valid_to IS NULL
+           AND (m1.expires_at IS NULL OR m1.expires_at > ?)
+           AND (m2.expires_at IS NULL OR m2.expires_at > ?)
+           AND c.from_id < c.to_id  -- Avoid duplicate pairs
+           AND m1.scope_type = m2.scope_type  -- Same scope type
+           AND (m1.scope_id = m2.scope_id OR (m1.scope_id IS NULL AND m2.scope_id IS NULL))  -- Same scope id
+         ORDER BY c.score DESC",
+    )?;
+
+    let sim_rows = sim_stmt.query_map(params![threshold, &now, &now], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, f64>(2)?,
+        ))
+    })?;
+
+    for row_result in sim_rows {
+        let (from_id, to_id, score) = row_result?;
+
+        // Skip if this pair was already found as exact hash match
+        let already_found = duplicates.iter().any(|d| {
+            (d.memory_a.id == from_id && d.memory_b.id == to_id)
+                || (d.memory_a.id == to_id && d.memory_b.id == from_id)
+        });
+
+        if !already_found {
+            // Use get_memory_internal with track_access=false to avoid inflating access stats
+            let memory_a = get_memory_internal(conn, from_id, false)?;
+            let memory_b = get_memory_internal(conn, to_id, false)?;
+            duplicates.push(DuplicatePair {
+                memory_a,
+                memory_b,
+                similarity_score: score,
+                match_type: DuplicateMatchType::HighSimilarity,
+            });
+        }
+    }
+
+    Ok(duplicates)
+}
+
+/// Create a new memory with deduplication support
 pub fn create_memory(conn: &Connection, input: &CreateMemoryInput) -> Result<Memory> {
     let now = Utc::now();
     let now_str = now.to_rfc3339();
     let metadata_json = serde_json::to_string(&input.metadata)?;
     let importance = input.importance.unwrap_or(0.5);
 
+    // Compute content hash for deduplication
+    let content_hash = compute_content_hash(&input.content);
+
+    // Check for duplicates based on dedup_mode (scoped to same scope)
+    if input.dedup_mode != DedupMode::Allow {
+        if let Some(existing) = find_by_content_hash(conn, &content_hash, &input.scope)? {
+            match input.dedup_mode {
+                DedupMode::Reject => {
+                    return Err(EngramError::Duplicate {
+                        existing_id: existing.id,
+                        message: format!(
+                            "Duplicate memory detected (id={}). Content hash: {}",
+                            existing.id, content_hash
+                        ),
+                    });
+                }
+                DedupMode::Skip => {
+                    // Return existing memory without modification
+                    return Ok(existing);
+                }
+                DedupMode::Merge => {
+                    // Merge: update existing memory with new tags and metadata
+                    let mut merged_tags = existing.tags.clone();
+                    for tag in &input.tags {
+                        if !merged_tags.contains(tag) {
+                            merged_tags.push(tag.clone());
+                        }
+                    }
+
+                    let mut merged_metadata = existing.metadata.clone();
+                    for (key, value) in &input.metadata {
+                        merged_metadata.insert(key.clone(), value.clone());
+                    }
+
+                    let update_input = UpdateMemoryInput {
+                        content: None, // Keep existing content
+                        memory_type: None,
+                        tags: Some(merged_tags),
+                        metadata: Some(merged_metadata),
+                        importance: input.importance, // Use new importance if provided
+                        scope: None,
+                        ttl_seconds: input.ttl_seconds, // Apply new TTL if provided
+                    };
+
+                    return update_memory(conn, existing.id, &update_input);
+                }
+                DedupMode::Allow => unreachable!(),
+            }
+        }
+    }
+
     // Extract scope type and id for database storage
     let scope_type = input.scope.scope_type();
     let scope_id = input.scope.scope_id().map(|s| s.to_string());
 
-    // Calculate expires_at from ttl_seconds
+    // Validate and calculate expires_at from ttl_seconds
+    // ttl_seconds <= 0 is treated as "no expiration" (same as None)
+    // This prevents creating memories that expire immediately
     let expires_at = input
         .ttl_seconds
+        .filter(|&ttl| ttl > 0)
         .map(|ttl| (now + chrono::Duration::seconds(ttl)).to_rfc3339());
 
     conn.execute(
-        "INSERT INTO memories (content, memory_type, importance, metadata, created_at, updated_at, valid_from, scope_type, scope_id, expires_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO memories (content, memory_type, importance, metadata, created_at, updated_at, valid_from, scope_type, scope_id, expires_at, content_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
             input.content,
             input.memory_type.as_str(),
@@ -199,6 +498,7 @@ pub fn create_memory(conn: &Connection, input: &CreateMemoryInput) -> Result<Mem
             scope_type,
             scope_id,
             expires_at,
+            content_hash,
         ],
     )?;
 
@@ -269,6 +569,10 @@ pub fn update_memory(conn: &Connection, id: i64, input: &UpdateMemoryInput) -> R
     if let Some(ref content) = input.content {
         updates.push("content = ?".to_string());
         values.push(Box::new(content.clone()));
+        // Recalculate content_hash when content changes
+        let new_hash = compute_content_hash(content);
+        updates.push("content_hash = ?".to_string());
+        values.push(Box::new(new_hash));
     }
 
     if let Some(ref memory_type) = input.memory_type {
@@ -401,7 +705,7 @@ pub fn list_memories(conn: &Connection, options: &ListOptions) -> Result<Vec<Mem
         "SELECT DISTINCT m.id, m.content, m.memory_type, m.importance, m.access_count,
                 m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
                 m.visibility, m.version, m.has_embedding, m.metadata,
-                m.scope_type, m.scope_id, m.expires_at
+                m.scope_type, m.scope_id, m.expires_at, m.content_hash
          FROM memories m",
     );
 
@@ -889,6 +1193,8 @@ mod tests {
                         scope: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
+                        dedup_mode: Default::default(),
+                        dedup_threshold: None,
                     },
                 )?;
                 let memory2 = create_memory(
@@ -902,6 +1208,8 @@ mod tests {
                         scope: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
+                        dedup_mode: Default::default(),
+                        dedup_threshold: None,
                     },
                 )?;
 
@@ -978,6 +1286,8 @@ mod tests {
                         scope: MemoryScope::user("user-1"),
                         defer_embedding: true,
                         ttl_seconds: None,
+                        dedup_mode: Default::default(),
+                        dedup_threshold: None,
                     },
                 )?;
 
@@ -993,6 +1303,8 @@ mod tests {
                         scope: MemoryScope::user("user-2"),
                         defer_embedding: true,
                         ttl_seconds: None,
+                        dedup_mode: Default::default(),
+                        dedup_threshold: None,
                     },
                 )?;
 
@@ -1008,6 +1320,8 @@ mod tests {
                         scope: MemoryScope::session("session-abc"),
                         defer_embedding: true,
                         ttl_seconds: None,
+                        dedup_mode: Default::default(),
+                        dedup_threshold: None,
                     },
                 )?;
 
@@ -1023,6 +1337,8 @@ mod tests {
                         scope: MemoryScope::Global,
                         defer_embedding: true,
                         ttl_seconds: None,
+                        dedup_mode: Default::default(),
+                        dedup_threshold: None,
                     },
                 )?;
 
@@ -1132,6 +1448,8 @@ mod tests {
                         scope: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: Some(3600), // 1 hour
+                        dedup_mode: Default::default(),
+                        dedup_threshold: None,
                     },
                 )?;
 
@@ -1160,6 +1478,8 @@ mod tests {
                         scope: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
+                        dedup_mode: Default::default(),
+                        dedup_threshold: None,
                     },
                 )?;
 
@@ -1189,6 +1509,8 @@ mod tests {
                         scope: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: Some(3600), // 1 hour TTL
+                        dedup_mode: Default::default(),
+                        dedup_threshold: None,
                     },
                 )?;
 
@@ -1204,6 +1526,8 @@ mod tests {
                         scope: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
+                        dedup_mode: Default::default(),
+                        dedup_threshold: None,
                     },
                 )?;
 
@@ -1254,6 +1578,8 @@ mod tests {
                         scope: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
+                        dedup_mode: Default::default(),
+                        dedup_threshold: None,
                     },
                 )?;
 
@@ -1292,6 +1618,8 @@ mod tests {
                             scope: Default::default(),
                             defer_embedding: true,
                             ttl_seconds: Some(3600), // 1 hour TTL
+                            dedup_mode: Default::default(),
+                            dedup_threshold: None,
                         },
                     )?;
                     expired_ids.push(mem.id);
@@ -1310,6 +1638,8 @@ mod tests {
                             scope: Default::default(),
                             defer_embedding: true,
                             ttl_seconds: None,
+                            dedup_mode: Default::default(),
+                            dedup_threshold: None,
                         },
                     )?;
                 }
@@ -1342,6 +1672,621 @@ mod tests {
                 // No more expired
                 let expired_count = count_expired_memories(conn)?;
                 assert_eq!(expired_count, 0);
+
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    // ========== Deduplication Tests (RML-931) ==========
+
+    #[test]
+    fn test_content_hash_computation() {
+        // Test that content hash is consistent and normalized
+        let hash1 = compute_content_hash("Hello World");
+        let hash2 = compute_content_hash("hello world"); // Different case
+        let hash3 = compute_content_hash("  hello   world  "); // Extra whitespace
+        let hash4 = compute_content_hash("Hello World!"); // Different content
+
+        // Same normalized content should produce same hash
+        assert_eq!(hash1, hash2);
+        assert_eq!(hash2, hash3);
+
+        // Different content should produce different hash
+        assert_ne!(hash1, hash4);
+
+        // Hash should be prefixed with algorithm
+        assert!(hash1.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn test_dedup_mode_reject() {
+        use crate::types::DedupMode;
+
+        let storage = Storage::open_in_memory().unwrap();
+
+        storage
+            .with_transaction(|conn| {
+                // Create first memory
+                let _memory1 = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Unique content for testing".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec![],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: Default::default(),
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Allow, // First one allows
+                        dedup_threshold: None,
+                    },
+                )?;
+
+                // Try to create duplicate with reject mode
+                let result = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Unique content for testing".to_string(), // Same content
+                        memory_type: MemoryType::Note,
+                        tags: vec!["new-tag".to_string()],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: Default::default(),
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Reject,
+                        dedup_threshold: None,
+                    },
+                );
+
+                // Should fail with Duplicate error
+                assert!(result.is_err());
+                let err = result.unwrap_err();
+                assert!(matches!(err, crate::error::EngramError::Duplicate { .. }));
+
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_dedup_mode_skip() {
+        use crate::types::DedupMode;
+
+        let storage = Storage::open_in_memory().unwrap();
+
+        storage
+            .with_transaction(|conn| {
+                // Create first memory
+                let memory1 = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Skip test content".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec!["original".to_string()],
+                        metadata: HashMap::new(),
+                        importance: Some(0.5),
+                        scope: Default::default(),
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Allow,
+                        dedup_threshold: None,
+                    },
+                )?;
+
+                // Try to create duplicate with skip mode
+                let memory2 = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Skip test content".to_string(), // Same content
+                        memory_type: MemoryType::Note,
+                        tags: vec!["new-tag".to_string()], // Different tags
+                        metadata: HashMap::new(),
+                        importance: Some(0.9), // Different importance
+                        scope: Default::default(),
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Skip,
+                        dedup_threshold: None,
+                    },
+                )?;
+
+                // Should return existing memory unchanged
+                assert_eq!(memory1.id, memory2.id);
+                assert_eq!(memory2.tags, vec!["original".to_string()]); // Original tags
+                assert!((memory2.importance - 0.5).abs() < 0.01); // Original importance
+
+                // Only one memory should exist
+                let all = list_memories(conn, &ListOptions::default())?;
+                assert_eq!(all.len(), 1);
+
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_dedup_mode_merge() {
+        use crate::types::DedupMode;
+
+        let storage = Storage::open_in_memory().unwrap();
+
+        storage
+            .with_transaction(|conn| {
+                // Create first memory with some tags and metadata
+                let memory1 = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Merge test content".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec!["tag1".to_string(), "tag2".to_string()],
+                        metadata: {
+                            let mut m = HashMap::new();
+                            m.insert("key1".to_string(), serde_json::json!("value1"));
+                            m
+                        },
+                        importance: Some(0.5),
+                        scope: Default::default(),
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Allow,
+                        dedup_threshold: None,
+                    },
+                )?;
+
+                // Try to create duplicate with merge mode
+                let memory2 = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Merge test content".to_string(), // Same content
+                        memory_type: MemoryType::Note,
+                        tags: vec!["tag2".to_string(), "tag3".to_string()], // Overlapping + new
+                        metadata: {
+                            let mut m = HashMap::new();
+                            m.insert("key2".to_string(), serde_json::json!("value2"));
+                            m
+                        },
+                        importance: Some(0.8), // Higher importance
+                        scope: Default::default(),
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Merge,
+                        dedup_threshold: None,
+                    },
+                )?;
+
+                // Should return same memory ID
+                assert_eq!(memory1.id, memory2.id);
+
+                // Tags should be merged (no duplicates)
+                assert!(memory2.tags.contains(&"tag1".to_string()));
+                assert!(memory2.tags.contains(&"tag2".to_string()));
+                assert!(memory2.tags.contains(&"tag3".to_string()));
+                assert_eq!(memory2.tags.len(), 3);
+
+                // Metadata should be merged
+                assert!(memory2.metadata.contains_key("key1"));
+                assert!(memory2.metadata.contains_key("key2"));
+
+                // Only one memory should exist
+                let all = list_memories(conn, &ListOptions::default())?;
+                assert_eq!(all.len(), 1);
+
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_dedup_mode_allow() {
+        use crate::types::DedupMode;
+
+        let storage = Storage::open_in_memory().unwrap();
+
+        storage
+            .with_transaction(|conn| {
+                // Create first memory
+                let memory1 = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Allow duplicates content".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec![],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: Default::default(),
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Allow,
+                        dedup_threshold: None,
+                    },
+                )?;
+
+                // Create duplicate with allow mode (default)
+                let memory2 = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Allow duplicates content".to_string(), // Same content
+                        memory_type: MemoryType::Note,
+                        tags: vec![],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: Default::default(),
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Allow,
+                        dedup_threshold: None,
+                    },
+                )?;
+
+                // Should create separate memory
+                assert_ne!(memory1.id, memory2.id);
+
+                // Both memories should exist
+                let all = list_memories(conn, &ListOptions::default())?;
+                assert_eq!(all.len(), 2);
+
+                // Both should have same content hash
+                assert_eq!(memory1.content_hash, memory2.content_hash);
+
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_find_duplicates_exact_hash() {
+        use crate::types::DedupMode;
+
+        let storage = Storage::open_in_memory().unwrap();
+
+        storage
+            .with_transaction(|conn| {
+                // Create two memories with same content (exact hash duplicates)
+                let _memory1 = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Duplicate content".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec!["first".to_string()],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: Default::default(),
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Allow,
+                        dedup_threshold: None,
+                    },
+                )?;
+
+                let _memory2 = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Duplicate content".to_string(), // Same content
+                        memory_type: MemoryType::Note,
+                        tags: vec!["second".to_string()],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: Default::default(),
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Allow,
+                        dedup_threshold: None,
+                    },
+                )?;
+
+                // Create a unique memory (not a duplicate)
+                let _memory3 = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Unique content".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec![],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: Default::default(),
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Allow,
+                        dedup_threshold: None,
+                    },
+                )?;
+
+                // Find duplicates
+                let duplicates = find_duplicates(conn, 0.9)?;
+
+                // Should find one duplicate pair
+                assert_eq!(duplicates.len(), 1);
+
+                // Should be exact hash match
+                assert_eq!(duplicates[0].match_type, DuplicateMatchType::ExactHash);
+                assert!((duplicates[0].similarity_score - 1.0).abs() < 0.01);
+
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_content_hash_stored_on_create() {
+        let storage = Storage::open_in_memory().unwrap();
+
+        storage
+            .with_transaction(|conn| {
+                let memory = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Test content for hash".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec![],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: Default::default(),
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: Default::default(),
+                        dedup_threshold: None,
+                    },
+                )?;
+
+                // Content hash should be set
+                assert!(memory.content_hash.is_some());
+                let hash = memory.content_hash.as_ref().unwrap();
+                assert!(hash.starts_with("sha256:"));
+
+                // Fetch from DB and verify hash is persisted
+                let fetched = get_memory(conn, memory.id)?;
+                assert_eq!(fetched.content_hash, memory.content_hash);
+
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_update_memory_recalculates_hash() {
+        let storage = Storage::open_in_memory().unwrap();
+
+        storage
+            .with_transaction(|conn| {
+                // Create a memory
+                let memory = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Original content".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec![],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: Default::default(),
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: Default::default(),
+                        dedup_threshold: None,
+                    },
+                )?;
+
+                let original_hash = memory.content_hash.clone();
+
+                // Update the content
+                let updated = update_memory(
+                    conn,
+                    memory.id,
+                    &UpdateMemoryInput {
+                        content: Some("Updated content".to_string()),
+                        memory_type: None,
+                        tags: None,
+                        metadata: None,
+                        importance: None,
+                        scope: None,
+                        ttl_seconds: None,
+                    },
+                )?;
+
+                // Hash should be different
+                assert_ne!(updated.content_hash, original_hash);
+                assert!(updated.content_hash.is_some());
+
+                // Verify against expected hash
+                let expected_hash = compute_content_hash("Updated content");
+                assert_eq!(updated.content_hash.as_ref().unwrap(), &expected_hash);
+
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_dedup_scope_isolation() {
+        use crate::types::{DedupMode, MemoryScope};
+
+        let storage = Storage::open_in_memory().unwrap();
+
+        storage
+            .with_transaction(|conn| {
+                // Create memory in user-1 scope
+                let _user1_memory = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Shared content".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec!["user1".to_string()],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: MemoryScope::user("user-1"),
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Allow,
+                        dedup_threshold: None,
+                    },
+                )?;
+
+                // Create same content in user-2 scope with Reject mode
+                // Should succeed because scopes are different
+                let user2_result = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Shared content".to_string(), // Same content!
+                        memory_type: MemoryType::Note,
+                        tags: vec!["user2".to_string()],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: MemoryScope::user("user-2"), // Different scope
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Reject, // Should not reject - different scope
+                        dedup_threshold: None,
+                    },
+                );
+
+                // Should succeed - different scopes are not considered duplicates
+                assert!(user2_result.is_ok());
+                let _user2_memory = user2_result.unwrap();
+
+                // Now try to create duplicate in same scope (user-2)
+                let duplicate_result = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Shared content".to_string(), // Same content
+                        memory_type: MemoryType::Note,
+                        tags: vec![],
+                        metadata: HashMap::new(),
+                        importance: None,
+                        scope: MemoryScope::user("user-2"), // Same scope as user2_memory
+                        defer_embedding: true,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Reject, // Should reject - same scope
+                        dedup_threshold: None,
+                    },
+                );
+
+                // Should fail - same scope with same content
+                assert!(duplicate_result.is_err());
+                assert!(matches!(
+                    duplicate_result.unwrap_err(),
+                    crate::error::EngramError::Duplicate { .. }
+                ));
+
+                // Verify we have exactly 2 memories (one per user)
+                let all = list_memories(conn, &ListOptions::default())?;
+                assert_eq!(all.len(), 2);
+
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn test_find_similar_by_embedding() {
+        // Helper to store embedding (convert f32 vec to bytes for SQLite)
+        fn store_test_embedding(
+            conn: &Connection,
+            memory_id: i64,
+            embedding: &[f32],
+        ) -> crate::error::Result<()> {
+            let bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
+            conn.execute(
+                "INSERT INTO embeddings (memory_id, embedding, model, dimensions, created_at)
+                 VALUES (?, ?, ?, ?, datetime('now'))",
+                params![memory_id, bytes, "test", embedding.len() as i32],
+            )?;
+            // Mark memory as having embedding
+            conn.execute(
+                "UPDATE memories SET has_embedding = 1 WHERE id = ?",
+                params![memory_id],
+            )?;
+            Ok(())
+        }
+
+        let storage = Storage::open_in_memory().unwrap();
+        storage
+            .with_transaction(|conn| {
+                // Create a memory with an embedding
+                let memory1 = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Rust is a systems programming language".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec!["rust".to_string()],
+                        metadata: std::collections::HashMap::new(),
+                        importance: None,
+                        scope: MemoryScope::Global,
+                        defer_embedding: false,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Allow,
+                        dedup_threshold: None,
+                    },
+                )?;
+
+                // Store an embedding for it (simple test embedding)
+                let embedding1 = vec![0.8, 0.4, 0.2, 0.1]; // Normalized-ish vector
+                store_test_embedding(conn, memory1.id, &embedding1)?;
+
+                // Create another memory with different embedding
+                let memory2 = create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Python is a scripting language".to_string(),
+                        memory_type: MemoryType::Note,
+                        tags: vec!["python".to_string()],
+                        metadata: std::collections::HashMap::new(),
+                        importance: None,
+                        scope: MemoryScope::Global,
+                        defer_embedding: false,
+                        ttl_seconds: None,
+                        dedup_mode: DedupMode::Allow,
+                        dedup_threshold: None,
+                    },
+                )?;
+
+                // Store a very different embedding
+                let embedding2 = vec![0.1, 0.2, 0.8, 0.4]; // Different direction
+                store_test_embedding(conn, memory2.id, &embedding2)?;
+
+                // Test 1: Query with embedding similar to memory1
+                let query_similar_to_1 = vec![0.79, 0.41, 0.21, 0.11]; // Very similar to embedding1
+                let result = find_similar_by_embedding(
+                    conn,
+                    &query_similar_to_1,
+                    &MemoryScope::Global,
+                    0.95, // High threshold
+                )?;
+                assert!(result.is_some());
+                let (found_memory, similarity) = result.unwrap();
+                assert_eq!(found_memory.id, memory1.id);
+                assert!(similarity > 0.95);
+
+                // Test 2: Query with low threshold should still find memory1
+                let result_low_threshold = find_similar_by_embedding(
+                    conn,
+                    &query_similar_to_1,
+                    &MemoryScope::Global,
+                    0.5,
+                )?;
+                assert!(result_low_threshold.is_some());
+
+                // Test 3: Query with embedding not similar to anything (threshold too high)
+                let query_orthogonal = vec![0.0, 0.0, 0.0, 1.0]; // Different direction
+                let result_no_match = find_similar_by_embedding(
+                    conn,
+                    &query_orthogonal,
+                    &MemoryScope::Global,
+                    0.99, // Very high threshold
+                )?;
+                assert!(result_no_match.is_none());
+
+                // Test 4: Different scope should not find anything
+                let result_wrong_scope = find_similar_by_embedding(
+                    conn,
+                    &query_similar_to_1,
+                    &MemoryScope::User {
+                        user_id: "other-user".to_string(),
+                    },
+                    0.5,
+                )?;
+                assert!(result_wrong_scope.is_none());
 
                 Ok(())
             })

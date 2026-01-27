@@ -216,6 +216,7 @@ impl<'a> TemporalQueryEngine<'a> {
                         version: row.get(10)?,
                         has_embedding: row.get(11)?,
                         expires_at: None, // Temporal queries don't track expiration
+                        content_hash: None, // Temporal queries don't track content hash
                     })
                 },
             )
@@ -303,6 +304,7 @@ impl<'a> TemporalQueryEngine<'a> {
                     version: row.get(10)?,
                     has_embedding: row.get(11)?,
                     expires_at: None,
+                    content_hash: None,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;

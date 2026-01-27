@@ -41,6 +41,8 @@ fn setup_storage_with_data(count: usize) -> Storage {
                     defer_embedding: true,
                     scope: MemoryScope::Global,
                     ttl_seconds: None,
+                    dedup_mode: DedupMode::Allow,
+                    dedup_threshold: None,
                 };
                 create_memory(conn, &input)
             })
