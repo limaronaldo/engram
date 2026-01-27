@@ -40,6 +40,7 @@ fn setup_storage_with_data(count: usize) -> Storage {
                     importance: Some((i % 10) as f32 / 10.0),
                     defer_embedding: true,
                     scope: MemoryScope::Global,
+                    ttl_seconds: None,
                 };
                 create_memory(conn, &input)
             })

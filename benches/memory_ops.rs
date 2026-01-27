@@ -24,6 +24,7 @@ fn bench_memory_create(c: &mut Criterion) {
                         importance: Some(0.5),
                         defer_embedding: true,
                         scope: MemoryScope::Global,
+                        ttl_seconds: None,
                     };
                     create_memory(conn, &input)
                 })
@@ -50,6 +51,7 @@ fn bench_memory_get(c: &mut Criterion) {
                     importance: Some(0.5),
                     defer_embedding: true,
                     scope: MemoryScope::Global,
+                        ttl_seconds: None,
                 };
                 create_memory(conn, &input)
             })
@@ -96,6 +98,7 @@ fn bench_memory_list(c: &mut Criterion) {
                     importance: Some((i % 10) as f32 / 10.0),
                     defer_embedding: true,
                     scope: MemoryScope::Global,
+                        ttl_seconds: None,
                 };
                 create_memory(conn, &input)
             })
@@ -156,6 +159,7 @@ fn bench_crossref_operations(c: &mut Criterion) {
                     importance: None,
                     defer_embedding: true,
                     scope: MemoryScope::Global,
+                        ttl_seconds: None,
                 };
                 create_memory(conn, &input)
             })
@@ -234,6 +238,7 @@ fn bench_stats(c: &mut Criterion) {
                     importance: None,
                     defer_embedding: true,
                     scope: MemoryScope::Global,
+                        ttl_seconds: None,
                 };
                 create_memory(conn, &input)
             })

@@ -1143,7 +1143,7 @@ mod tests {
                 // Should expire approximately 1 hour from now (within 5 seconds tolerance)
                 let diff = (expires_at - now).num_seconds();
                 assert!(
-                    diff >= 3595 && diff <= 3605,
+                    (3595..=3605).contains(&diff),
                     "Expected ~3600 seconds, got {}",
                     diff
                 );
