@@ -108,6 +108,10 @@ harness = false
 name = "search"
 harness = false
 
+[[bench]]
+name = "community_detection"
+harness = false
+
 [profile.release]
 lto = true
 codegen-units = 1

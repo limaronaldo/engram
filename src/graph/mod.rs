@@ -848,29 +848,29 @@ impl KnowledgeGraph {
             .enumerate()
             .map(|(new_id, (_, members))| {
                 // Find dominant type
-                let mut type_counts: HashMap<String, usize> = HashMap::new();
-                let mut all_tags: HashMap<String, usize> = HashMap::new();
+                let mut type_counts: HashMap<&str, usize> = HashMap::new();
+                let mut all_tags: HashMap<&str, usize> = HashMap::new();
 
                 for &member_id in &members {
                     if let Some(node) = node_map.get(&member_id) {
-                        *type_counts.entry(node.memory_type.clone()).or_insert(0) += 1;
+                        *type_counts.entry(node.memory_type.as_str()).or_insert(0) += 1;
                         for tag in &node.tags {
-                            *all_tags.entry(tag.clone()).or_insert(0) += 1;
+                            *all_tags.entry(tag.as_str()).or_insert(0) += 1;
                         }
                     }
                 }
 
                 let dominant_type = type_counts
-                    .iter()
+                    .into_iter()
                     .max_by_key(|(_, count)| *count)
-                    .map(|(t, _)| t.clone());
+                    .map(|(t, _)| t.to_string());
 
                 // Common tags (present in > 50% of members)
                 let threshold = members.len() / 2;
                 let common_tags: Vec<String> = all_tags
                     .into_iter()
                     .filter(|(_, count)| *count > threshold)
-                    .map(|(tag, _)| tag)
+                    .map(|(tag, _)| tag.to_string())
                     .collect();
 
                 // Count internal edges
