@@ -340,25 +340,53 @@ pub enum DuplicateMatchType {
 ///
 /// Duplicates are scoped - memories in different scopes are not considered duplicates.
 pub fn find_duplicates(conn: &Connection, threshold: f64) -> Result<Vec<DuplicatePair>> {
+    find_duplicates_in_workspace(conn, threshold, None)
+}
+
+/// Find duplicate memories within a specific workspace (or all if None)
+pub fn find_duplicates_in_workspace(
+    conn: &Connection,
+    threshold: f64,
+    workspace: Option<&str>,
+) -> Result<Vec<DuplicatePair>> {
     let now = Utc::now().to_rfc3339();
     let mut duplicates = Vec::new();
 
-    // First, find exact hash duplicates (same content_hash within same scope)
-    let mut hash_stmt = conn.prepare_cached(
-        "SELECT content_hash, scope_type, scope_id, GROUP_CONCAT(id) as ids
-         FROM memories
-         WHERE content_hash IS NOT NULL
-           AND valid_to IS NULL
-           AND (expires_at IS NULL OR expires_at > ?)
-         GROUP BY content_hash, scope_type, scope_id
-         HAVING COUNT(*) > 1",
-    )?;
+    // First, find exact hash duplicates (same content_hash within same scope AND workspace)
+    let (hash_sql, hash_params): (&str, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(ws) = workspace
+    {
+        (
+            "SELECT content_hash, scope_type, scope_id, GROUP_CONCAT(id) as ids
+             FROM memories
+             WHERE content_hash IS NOT NULL
+               AND valid_to IS NULL
+               AND (expires_at IS NULL OR expires_at > ?)
+               AND workspace = ?
+             GROUP BY content_hash, scope_type, scope_id, workspace
+             HAVING COUNT(*) > 1",
+            vec![Box::new(now.clone()), Box::new(ws.to_string())],
+        )
+    } else {
+        (
+            "SELECT content_hash, scope_type, scope_id, GROUP_CONCAT(id) as ids
+             FROM memories
+             WHERE content_hash IS NOT NULL
+               AND valid_to IS NULL
+               AND (expires_at IS NULL OR expires_at > ?)
+             GROUP BY content_hash, scope_type, scope_id, workspace
+             HAVING COUNT(*) > 1",
+            vec![Box::new(now.clone())],
+        )
+    };
 
-    let hash_rows = hash_stmt.query_map(params![&now], |row| {
-        // Column 3 is now the ids after adding scope_type and scope_id
-        let ids_str: String = row.get(3)?;
-        Ok(ids_str)
-    })?;
+    let mut hash_stmt = conn.prepare_cached(hash_sql)?;
+    let hash_rows = hash_stmt.query_map(
+        rusqlite::params_from_iter(hash_params.iter().map(|p| p.as_ref())),
+        |row| {
+            let ids_str: String = row.get(3)?;
+            Ok(ids_str)
+        },
+    )?;
 
     for ids_result in hash_rows {
         let ids_str = ids_result?;
@@ -383,30 +411,67 @@ pub fn find_duplicates(conn: &Connection, threshold: f64) -> Result<Vec<Duplicat
         }
     }
 
-    // Second, find high-similarity pairs from crossrefs (within same scope)
-    let mut sim_stmt = conn.prepare_cached(
-        "SELECT DISTINCT c.from_id, c.to_id, c.score
-         FROM crossrefs c
-         JOIN memories m1 ON c.from_id = m1.id
-         JOIN memories m2 ON c.to_id = m2.id
-         WHERE c.score >= ?
-           AND m1.valid_to IS NULL
-           AND m2.valid_to IS NULL
-           AND (m1.expires_at IS NULL OR m1.expires_at > ?)
-           AND (m2.expires_at IS NULL OR m2.expires_at > ?)
-           AND c.from_id < c.to_id  -- Avoid duplicate pairs
-           AND m1.scope_type = m2.scope_type  -- Same scope type
-           AND (m1.scope_id = m2.scope_id OR (m1.scope_id IS NULL AND m2.scope_id IS NULL))  -- Same scope id
-         ORDER BY c.score DESC",
-    )?;
+    // Second, find high-similarity pairs from crossrefs (within same scope AND workspace)
+    let (sim_sql, sim_params): (&str, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(ws) = workspace {
+        (
+            "SELECT DISTINCT c.from_id, c.to_id, c.score
+             FROM crossrefs c
+             JOIN memories m1 ON c.from_id = m1.id
+             JOIN memories m2 ON c.to_id = m2.id
+             WHERE c.score >= ?
+               AND m1.valid_to IS NULL
+               AND m2.valid_to IS NULL
+               AND (m1.expires_at IS NULL OR m1.expires_at > ?)
+               AND (m2.expires_at IS NULL OR m2.expires_at > ?)
+               AND c.from_id < c.to_id
+               AND m1.scope_type = m2.scope_type
+               AND (m1.scope_id = m2.scope_id OR (m1.scope_id IS NULL AND m2.scope_id IS NULL))
+               AND m1.workspace = ?
+               AND m2.workspace = ?
+             ORDER BY c.score DESC",
+            vec![
+                Box::new(threshold),
+                Box::new(now.clone()),
+                Box::new(now.clone()),
+                Box::new(ws.to_string()),
+                Box::new(ws.to_string()),
+            ],
+        )
+    } else {
+        (
+            "SELECT DISTINCT c.from_id, c.to_id, c.score
+             FROM crossrefs c
+             JOIN memories m1 ON c.from_id = m1.id
+             JOIN memories m2 ON c.to_id = m2.id
+             WHERE c.score >= ?
+               AND m1.valid_to IS NULL
+               AND m2.valid_to IS NULL
+               AND (m1.expires_at IS NULL OR m1.expires_at > ?)
+               AND (m2.expires_at IS NULL OR m2.expires_at > ?)
+               AND c.from_id < c.to_id
+               AND m1.scope_type = m2.scope_type
+               AND (m1.scope_id = m2.scope_id OR (m1.scope_id IS NULL AND m2.scope_id IS NULL))
+               AND m1.workspace = m2.workspace
+             ORDER BY c.score DESC",
+            vec![
+                Box::new(threshold),
+                Box::new(now.clone()),
+                Box::new(now.clone()),
+            ],
+        )
+    };
 
-    let sim_rows = sim_stmt.query_map(params![threshold, &now, &now], |row| {
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, f64>(2)?,
-        ))
-    })?;
+    let mut sim_stmt = conn.prepare_cached(sim_sql)?;
+    let sim_rows = sim_stmt.query_map(
+        rusqlite::params_from_iter(sim_params.iter().map(|p| p.as_ref())),
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, f64>(2)?,
+            ))
+        },
+    )?;
 
     for row_result in sim_rows {
         let (from_id, to_id, score) = row_result?;
@@ -1013,39 +1078,51 @@ pub fn delete_workspace(conn: &Connection, workspace: &str, move_to_default: boo
 
     let now = Utc::now().to_rfc3339();
 
-    let affected = if move_to_default {
-        // Move all memories to the default workspace
-        conn.execute(
-            "UPDATE memories SET workspace = 'default', updated_at = ?, version = version + 1 WHERE workspace = ? AND valid_to IS NULL",
-            params![now, normalized],
-        )? as i64
-    } else {
-        // Soft delete all memories in the workspace
-        conn.execute(
-            "UPDATE memories SET valid_to = ? WHERE workspace = ? AND valid_to IS NULL",
-            params![now, normalized],
-        )? as i64
+    // First, get the IDs of all affected memories so we can record individual events
+    let affected_ids: Vec<i64> = {
+        let mut stmt =
+            conn.prepare("SELECT id FROM memories WHERE workspace = ? AND valid_to IS NULL")?;
+        let rows = stmt.query_map(params![&normalized], |row| row.get(0))?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()?
     };
 
-    // Record batch event for sync delta tracking
+    let affected = affected_ids.len() as i64;
+
     if affected > 0 {
+        if move_to_default {
+            // Move all memories to the default workspace
+            conn.execute(
+                "UPDATE memories SET workspace = 'default', updated_at = ?, version = version + 1 WHERE workspace = ? AND valid_to IS NULL",
+                params![&now, &normalized],
+            )?;
+        } else {
+            // Soft delete all memories in the workspace
+            conn.execute(
+                "UPDATE memories SET valid_to = ? WHERE workspace = ? AND valid_to IS NULL",
+                params![&now, &normalized],
+            )?;
+        }
+
+        // Record individual events for each affected memory (for proper sync delta tracking)
         let event_type = if move_to_default {
             MemoryEventType::Updated
         } else {
             MemoryEventType::Deleted
         };
-        record_event(
-            conn,
-            event_type,
-            None, // Batch operation, no single memory_id
-            None,
-            serde_json::json!({
-                "action": "delete_workspace",
-                "workspace": normalized,
-                "move_to_default": move_to_default,
-                "affected_count": affected,
-            }),
-        )?;
+
+        for memory_id in &affected_ids {
+            record_event(
+                conn,
+                event_type.clone(),
+                Some(*memory_id),
+                None,
+                serde_json::json!({
+                    "action": "delete_workspace",
+                    "workspace": normalized,
+                    "move_to_default": move_to_default,
+                }),
+            )?;
+        }
     }
 
     // Update sync state (version now tracks event count for delta sync)
@@ -2801,6 +2878,7 @@ pub fn search_by_identity(
     limit: Option<usize>,
 ) -> Result<Vec<Memory>> {
     let limit = limit.unwrap_or(50);
+    let now = Utc::now().to_rfc3339();
 
     // Search in content and tags for the identity
     // Tags are in a junction table, so we need to use a subquery or JOIN
@@ -2816,6 +2894,7 @@ pub fn search_by_identity(
          LEFT JOIN tags t ON mt.tag_id = t.id
          WHERE m.workspace = ? AND (m.content LIKE ? OR t.name LIKE ?)
            AND m.valid_to IS NULL
+           AND (m.expires_at IS NULL OR m.expires_at > ?)
          ORDER BY m.importance DESC, m.created_at DESC
          LIMIT ?"
     } else {
@@ -2828,6 +2907,7 @@ pub fn search_by_identity(
          LEFT JOIN tags t ON mt.tag_id = t.id
          WHERE (m.content LIKE ? OR t.name LIKE ?)
            AND m.valid_to IS NULL
+           AND (m.expires_at IS NULL OR m.expires_at > ?)
          ORDER BY m.importance DESC, m.created_at DESC
          LIMIT ?"
     };
@@ -2836,13 +2916,16 @@ pub fn search_by_identity(
 
     let memories = if let Some(ws) = workspace {
         stmt.query_map(
-            params![ws, &pattern, &pattern, limit as i64],
+            params![ws, &pattern, &pattern, &now, limit as i64],
             memory_from_row,
         )?
         .collect::<std::result::Result<Vec<_>, _>>()?
     } else {
-        stmt.query_map(params![&pattern, &pattern, limit as i64], memory_from_row)?
-            .collect::<std::result::Result<Vec<_>, _>>()?
+        stmt.query_map(
+            params![&pattern, &pattern, &now, limit as i64],
+            memory_from_row,
+        )?
+        .collect::<std::result::Result<Vec<_>, _>>()?
     };
 
     Ok(memories)
@@ -2857,12 +2940,17 @@ pub fn search_sessions(
     limit: Option<usize>,
 ) -> Result<Vec<Memory>> {
     let limit = limit.unwrap_or(20);
+    let now = Utc::now().to_rfc3339();
     let pattern = format!("%{}%", query_text);
 
     // Build query based on filters
     // Session chunks are stored as TranscriptChunk type (not Context)
-    let mut conditions = vec!["m.memory_type = 'transcript_chunk'", "m.valid_to IS NULL"];
-    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![];
+    let mut conditions = vec![
+        "m.memory_type = 'transcript_chunk'",
+        "m.valid_to IS NULL",
+        "(m.expires_at IS NULL OR m.expires_at > ?)",
+    ];
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
 
     // Add session filter via tags (tags are in junction table)
     let use_tag_join = session_id.is_some();

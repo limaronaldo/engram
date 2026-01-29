@@ -62,6 +62,33 @@ pub fn bm25_search_full(
     filter: Option<&serde_json::Value>,
     include_transcripts: bool,
 ) -> Result<Vec<Bm25Result>> {
+    bm25_search_complete(
+        conn,
+        query,
+        limit,
+        explain,
+        scope,
+        filter,
+        include_transcripts,
+        None,
+        None,
+        None,
+    )
+}
+
+/// Perform BM25 search with all options including workspace and tier filters
+pub fn bm25_search_complete(
+    conn: &Connection,
+    query: &str,
+    limit: i64,
+    explain: bool,
+    scope: Option<&MemoryScope>,
+    filter: Option<&serde_json::Value>,
+    include_transcripts: bool,
+    workspace: Option<&str>,
+    workspaces: Option<&[String]>,
+    tier: Option<&crate::types::MemoryTier>,
+) -> Result<Vec<Bm25Result>> {
     // Escape special FTS5 characters
     let escaped_query = escape_fts5_query(query);
     let now = Utc::now().to_rfc3339();
@@ -112,6 +139,28 @@ pub fn bm25_search_full(
         } else {
             sql.push_str(" AND m.scope_id IS NULL");
         }
+    }
+
+    // Add workspace filter (single or multiple)
+    if let Some(ws) = workspace {
+        sql.push_str(" AND m.workspace = ?");
+        params.push(Box::new(ws.to_string()));
+    } else if let Some(ws_list) = workspaces {
+        if !ws_list.is_empty() {
+            let placeholders: Vec<&str> = ws_list.iter().map(|_| "?").collect();
+            sql.push_str(&format!(
+                " AND m.workspace IN ({})",
+                placeholders.join(", ")
+            ));
+            for ws in ws_list {
+                params.push(Box::new(ws.clone()));
+            }
+        }
+    }
+
+    // Add tier filter
+    if let Some(t) = tier {
+        sql.push_str(&format!(" AND m.tier = '{}'", t.as_str()));
     }
 
     sql.push_str(" ORDER BY bm25(memories_fts) LIMIT ?");

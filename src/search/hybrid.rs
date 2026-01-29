@@ -8,15 +8,13 @@ use std::collections::HashMap;
 use chrono::Utc;
 use rusqlite::Connection;
 
-use super::bm25::bm25_search_full;
+use super::bm25::bm25_search_complete;
 use super::{select_search_strategy, SearchConfig};
 use crate::embedding::{cosine_similarity, get_embedding};
 use crate::error::Result;
 use crate::storage::filter::{parse_filter, SqlBuilder};
 use crate::storage::queries::{load_tags, memory_from_row};
-use crate::types::{
-    MatchInfo, Memory, MemoryId, MemoryScope, SearchOptions, SearchResult, SearchStrategy,
-};
+use crate::types::{MatchInfo, Memory, MemoryId, SearchOptions, SearchResult, SearchStrategy};
 
 /// Apply project context boost to a memory's score if it matches the current project path
 fn apply_project_context_boost(memory: &Memory, score: f32, config: &SearchConfig) -> f32 {
@@ -48,61 +46,22 @@ pub fn hybrid_search(
     let min_score = options.min_score.unwrap_or(config.min_score);
 
     match strategy {
-        SearchStrategy::KeywordOnly => keyword_only_search(
-            conn,
-            query,
-            limit,
-            min_score,
-            options.explain,
-            config,
-            options.scope.as_ref(),
-            options.filter.as_ref(),
-            options.include_transcripts,
-        ),
+        SearchStrategy::KeywordOnly => {
+            keyword_only_search(conn, query, limit, min_score, options, config)
+        }
         SearchStrategy::SemanticOnly => {
             if let Some(embedding) = query_embedding {
                 semantic_only_search(conn, embedding, limit, min_score, options, config)
             } else {
                 // Fallback to keyword if no embedding
-                keyword_only_search(
-                    conn,
-                    query,
-                    limit,
-                    min_score,
-                    options.explain,
-                    config,
-                    options.scope.as_ref(),
-                    options.filter.as_ref(),
-                    options.include_transcripts,
-                )
+                keyword_only_search(conn, query, limit, min_score, options, config)
             }
         }
         SearchStrategy::Hybrid => {
             if let Some(embedding) = query_embedding {
-                rrf_hybrid_search(
-                    conn,
-                    query,
-                    embedding,
-                    limit,
-                    min_score,
-                    config,
-                    options.explain,
-                    options.scope.as_ref(),
-                    options.filter.as_ref(),
-                    options.include_transcripts,
-                )
+                rrf_hybrid_search(conn, query, embedding, limit, min_score, options, config)
             } else {
-                keyword_only_search(
-                    conn,
-                    query,
-                    limit,
-                    min_score,
-                    options.explain,
-                    config,
-                    options.scope.as_ref(),
-                    options.filter.as_ref(),
-                    options.include_transcripts,
-                )
+                keyword_only_search(conn, query, limit, min_score, options, config)
             }
         }
     }
@@ -114,20 +73,20 @@ fn keyword_only_search(
     query: &str,
     limit: i64,
     min_score: f32,
-    explain: bool,
+    options: &SearchOptions,
     config: &SearchConfig,
-    scope: Option<&MemoryScope>,
-    filter: Option<&serde_json::Value>,
-    include_transcripts: bool,
 ) -> Result<Vec<SearchResult>> {
-    let bm25_results = bm25_search_full(
+    let bm25_results = bm25_search_complete(
         conn,
         query,
         limit * 2,
-        explain,
-        scope,
-        filter,
-        include_transcripts,
+        options.explain,
+        options.scope.as_ref(),
+        options.filter.as_ref(),
+        options.include_transcripts,
+        options.workspace.as_deref(),
+        options.workspaces.as_deref(),
+        options.tier.as_ref(),
     )?;
 
     let mut results: Vec<SearchResult> = bm25_results
@@ -237,6 +196,28 @@ fn semantic_only_search(
         }
     }
 
+    // Add workspace filter (single or multiple)
+    if let Some(ref workspace) = options.workspace {
+        sql.push_str(" AND m.workspace = ?");
+        params.push(Box::new(workspace.clone()));
+    } else if let Some(ref workspaces) = options.workspaces {
+        if !workspaces.is_empty() {
+            let placeholders: Vec<&str> = workspaces.iter().map(|_| "?").collect();
+            sql.push_str(&format!(
+                " AND m.workspace IN ({})",
+                placeholders.join(", ")
+            ));
+            for ws in workspaces {
+                params.push(Box::new(ws.clone()));
+            }
+        }
+    }
+
+    // Add tier filter
+    if let Some(ref tier) = options.tier {
+        sql.push_str(&format!(" AND m.tier = '{}'", tier.as_str()));
+    }
+
     let mut stmt = conn.prepare(&sql)?;
 
     let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
@@ -291,30 +272,33 @@ fn rrf_hybrid_search(
     query_embedding: &[f32],
     limit: i64,
     min_score: f32,
+    options: &SearchOptions,
     config: &SearchConfig,
-    explain: bool,
-    scope: Option<&MemoryScope>,
-    filter: Option<&serde_json::Value>,
-    include_transcripts: bool,
 ) -> Result<Vec<SearchResult>> {
-    // Get keyword results (with filter applied and transcript exclusion)
-    let keyword_results = bm25_search_full(
+    // Get keyword results (with all filters applied)
+    let keyword_results = bm25_search_complete(
         conn,
         query,
         limit * 2,
-        explain,
-        scope,
-        filter,
-        include_transcripts,
+        options.explain,
+        options.scope.as_ref(),
+        options.filter.as_ref(),
+        options.include_transcripts,
+        options.workspace.as_deref(),
+        options.workspaces.as_deref(),
+        options.tier.as_ref(),
     )?;
 
     // Get semantic results (without boost - we'll apply it to the final RRF score)
     let semantic_options = SearchOptions {
         limit: Some(limit * 2),
         min_score: Some(0.0), // We'll filter after fusion
-        scope: scope.cloned(),
-        filter: filter.cloned(),
-        include_transcripts, // Pass through transcript inclusion setting
+        scope: options.scope.clone(),
+        filter: options.filter.clone(),
+        include_transcripts: options.include_transcripts,
+        workspace: options.workspace.clone(),
+        workspaces: options.workspaces.clone(),
+        tier: options.tier,
         ..Default::default()
     };
     // Create a config without project boost for sub-search (we'll apply boost to final RRF)
@@ -406,7 +390,7 @@ fn rrf_hybrid_search(
             // Apply project context boost to final RRF score
             let boosted_score = apply_project_context_boost(&memory, rrf_score, config);
 
-            let matched_terms = if explain {
+            let matched_terms = if options.explain {
                 keyword_results
                     .iter()
                     .find(|r| r.memory.id == id)
@@ -416,7 +400,7 @@ fn rrf_hybrid_search(
                 vec![]
             };
 
-            let highlights = if explain {
+            let highlights = if options.explain {
                 keyword_results
                     .iter()
                     .find(|r| r.memory.id == id)
