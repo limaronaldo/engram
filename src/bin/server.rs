@@ -3232,6 +3232,7 @@ mod tests {
             fuzzy_engine: Arc::new(Mutex::new(FuzzyEngine::new())),
             search_config: SearchConfig::default(),
             realtime: None,
+            embedding_cache: Arc::new(engram::embedding::EmbeddingCache::default()),
         }
     }
 

@@ -67,7 +67,7 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
     ),
     (
         "memory_list",
-        "List memories with filtering and pagination. Supports advanced filter syntax with AND/OR and comparison operators.",
+        "List memories with filtering and pagination. Supports workspace isolation, tier filtering, and advanced filter syntax with AND/OR and comparison operators.",
         r#"{
             "type": "object",
             "properties": {
@@ -75,11 +75,15 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "offset": {"type": "integer", "default": 0},
                 "tags": {"type": "array", "items": {"type": "string"}},
                 "type": {"type": "string"},
+                "workspace": {"type": "string", "description": "Filter by single workspace"},
+                "workspaces": {"type": "array", "items": {"type": "string"}, "description": "Filter by multiple workspaces"},
+                "tier": {"type": "string", "enum": ["permanent", "daily"], "description": "Filter by memory tier"},
+                "include_transcripts": {"type": "boolean", "default": false, "description": "Include transcript chunk memories (excluded by default)"},
                 "sort_by": {"type": "string", "enum": ["created_at", "updated_at", "importance", "access_count"]},
                 "sort_order": {"type": "string", "enum": ["asc", "desc"], "default": "desc"},
                 "filter": {
                     "type": "object",
-                    "description": "Advanced filter with AND/OR logic and comparison operators. Example: {\"AND\": [{\"metadata.project\": {\"eq\": \"engram\"}}, {\"importance\": {\"gte\": 0.5}}]}. Supported operators: eq, neq, gt, gte, lt, lte, contains, not_contains, exists. Fields: content, memory_type, importance, tags, created_at, updated_at, metadata.*"
+                    "description": "Advanced filter with AND/OR logic and comparison operators. Supports workspace, tier, and metadata fields. Example: {\"AND\": [{\"metadata.project\": {\"eq\": \"engram\"}}, {\"importance\": {\"gte\": 0.5}}]}. Supported operators: eq, neq, gt, gte, lt, lte, contains, not_contains, exists. Fields: content, memory_type, importance, tags, workspace, tier, created_at, updated_at, metadata.*"
                 },
                 "metadata_filter": {
                     "type": "object",
@@ -91,7 +95,7 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
     // Search
     (
         "memory_search",
-        "Search memories using hybrid search (keyword + semantic). Automatically selects optimal strategy with optional reranking. Supports advanced filters.",
+        "Search memories using hybrid search (keyword + semantic). Automatically selects optimal strategy with optional reranking. Supports workspace isolation, tier filtering, and advanced filters.",
         r#"{
             "type": "object",
             "properties": {
@@ -100,13 +104,17 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "min_score": {"type": "number", "default": 0.1},
                 "tags": {"type": "array", "items": {"type": "string"}},
                 "type": {"type": "string"},
+                "workspace": {"type": "string", "description": "Filter by single workspace"},
+                "workspaces": {"type": "array", "items": {"type": "string"}, "description": "Filter by multiple workspaces"},
+                "tier": {"type": "string", "enum": ["permanent", "daily"], "description": "Filter by memory tier"},
+                "include_transcripts": {"type": "boolean", "default": false, "description": "Include transcript chunk memories (excluded by default)"},
                 "strategy": {"type": "string", "enum": ["keyword", "semantic", "hybrid"], "description": "Force specific strategy"},
                 "explain": {"type": "boolean", "default": false, "description": "Include match explanations"},
                 "rerank": {"type": "boolean", "default": true, "description": "Apply reranking to improve result quality"},
                 "rerank_strategy": {"type": "string", "enum": ["none", "heuristic", "multi_signal"], "default": "heuristic", "description": "Reranking strategy to use"},
                 "filter": {
                     "type": "object",
-                    "description": "Advanced filter with AND/OR logic. Example: {\"AND\": [{\"metadata.project\": {\"eq\": \"engram\"}}, {\"importance\": {\"gte\": 0.5}}]}"
+                    "description": "Advanced filter with AND/OR logic. Supports workspace, tier, and metadata fields. Example: {\"AND\": [{\"workspace\": {\"eq\": \"my-project\"}}, {\"importance\": {\"gte\": 0.5}}]}"
                 }
             },
             "required": ["query"]

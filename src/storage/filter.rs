@@ -93,6 +93,10 @@ pub enum FieldPath {
     ScopeType,
     /// Scope ID
     ScopeId,
+    /// Workspace
+    Workspace,
+    /// Tier (permanent/daily)
+    Tier,
     /// Nested metadata field (e.g., "metadata.project" or "metadata.config.timeout")
     Metadata(String),
 }
@@ -147,6 +151,8 @@ impl FieldPath {
             "updated_at" | "updatedAt" => Ok(FieldPath::UpdatedAt),
             "scope_type" | "scopeType" => Ok(FieldPath::ScopeType),
             "scope_id" | "scopeId" => Ok(FieldPath::ScopeId),
+            "workspace" => Ok(FieldPath::Workspace),
+            "tier" => Ok(FieldPath::Tier),
             s if s.starts_with("metadata.") => {
                 let json_path = s.strip_prefix("metadata.").unwrap();
                 // Validate the JSON path to prevent SQL injection
@@ -154,7 +160,7 @@ impl FieldPath {
                 Ok(FieldPath::Metadata(json_path.to_string()))
             }
             _ => Err(EngramError::InvalidInput(format!(
-                "Unknown filter field: {}. Valid fields: content, memory_type, importance, tags, created_at, updated_at, scope_type, scope_id, metadata.*",
+                "Unknown filter field: {}. Valid fields: content, memory_type, importance, tags, created_at, updated_at, scope_type, scope_id, workspace, tier, metadata.*",
                 path
             ))),
         }
@@ -171,6 +177,8 @@ impl FieldPath {
             FieldPath::UpdatedAt => "m.updated_at".to_string(),
             FieldPath::ScopeType => "m.scope_type".to_string(),
             FieldPath::ScopeId => "m.scope_id".to_string(),
+            FieldPath::Workspace => "m.workspace".to_string(),
+            FieldPath::Tier => "m.tier".to_string(),
             FieldPath::Metadata(path) => {
                 // Convert dot notation to SQLite JSON path
                 // e.g., "project.name" -> "$.project.name"

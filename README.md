@@ -201,8 +201,8 @@ Add to your MCP config (`~/.config/claude/mcp.json` or similar):
 {
   "mcpServers": {
     "engram": {
-      "command": "engram-server",
-      "args": ["--mcp"],
+      "command": "/Users/ronaldo/Projects/FORK/engram/target/release/engram-server",
+      "args": [],
       "env": {
         "ENGRAM_DB_PATH": "~/.local/share/engram/memories.db"
       }
