@@ -18,8 +18,10 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
                 "metadata": {"type": "object", "description": "Additional metadata as key-value pairs"},
                 "importance": {"type": "number", "minimum": 0, "maximum": 1, "description": "Importance score (0-1)"},
+                "workspace": {"type": "string", "description": "Workspace to store the memory in (default: 'default')"},
+                "tier": {"type": "string", "enum": ["permanent", "daily"], "default": "permanent", "description": "Memory tier: permanent (never expires) or daily (auto-expires)"},
                 "defer_embedding": {"type": "boolean", "default": false, "description": "Defer embedding to background queue"},
-                "ttl_seconds": {"type": "integer", "description": "Time-to-live in seconds. Memory will auto-expire after this duration. Omit for permanent storage."},
+                "ttl_seconds": {"type": "integer", "description": "Time-to-live in seconds. Memory will auto-expire after this duration. Omit for permanent storage. Setting this implies tier='daily'."},
                 "dedup_mode": {"type": "string", "enum": ["reject", "merge", "skip", "allow"], "default": "allow", "description": "How to handle duplicate content: reject (error if exact match), merge (combine tags/metadata with existing), skip (return existing unchanged), allow (create duplicate)"},
                 "dedup_threshold": {"type": "number", "minimum": 0, "maximum": 1, "description": "Similarity threshold for semantic deduplication (0.0-1.0). When set with dedup_mode != 'allow', memories with cosine similarity >= threshold are treated as duplicates. Requires embeddings. If not set, only exact content hash matching is used."}
             },
@@ -78,7 +80,6 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "workspace": {"type": "string", "description": "Filter by single workspace"},
                 "workspaces": {"type": "array", "items": {"type": "string"}, "description": "Filter by multiple workspaces"},
                 "tier": {"type": "string", "enum": ["permanent", "daily"], "description": "Filter by memory tier"},
-                "include_transcripts": {"type": "boolean", "default": false, "description": "Include transcript chunk memories (excluded by default)"},
                 "sort_by": {"type": "string", "enum": ["created_at", "updated_at", "importance", "access_count"]},
                 "sort_order": {"type": "string", "enum": ["asc", "desc"], "default": "desc"},
                 "filter": {
@@ -279,16 +280,6 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
         "memory_sync_status",
         "Get cloud sync status",
         r#"{"type": "object", "properties": {}}"#,
-    ),
-    (
-        "memory_sync_force",
-        "Force immediate sync to cloud",
-        r#"{
-            "type": "object",
-            "properties": {
-                "direction": {"type": "string", "enum": ["push", "pull", "bidirectional"], "default": "push"}
-            }
-        }"#,
     ),
     // Stats and aggregation
     (

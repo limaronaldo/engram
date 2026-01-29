@@ -50,6 +50,7 @@ Store a new memory.
   "type": "preference",
   "tags": ["ui", "coding"],
   "workspace": "my-project",
+  "tier": "permanent",
   "importance": 0.8,
   "metadata": {"source": "user-request"},
   "ttl_seconds": null,
@@ -64,9 +65,10 @@ Store a new memory.
 | `type` | enum | `"note"` | note, todo, issue, decision, preference, learning, context, credential |
 | `tags` | array | `[]` | Tags for categorization |
 | `workspace` | string | `"default"` | Workspace to store in |
+| `tier` | enum | `"permanent"` | Memory tier: permanent (never expires) or daily (auto-expires) |
 | `importance` | number | `0.5` | Importance score (0-1) |
 | `metadata` | object | `{}` | Additional key-value pairs |
-| `ttl_seconds` | integer | null | Time-to-live (null = permanent) |
+| `ttl_seconds` | integer | null | Time-to-live (null = permanent). Setting this implies tier='daily' |
 | `dedup_mode` | enum | `"allow"` | reject, merge, skip, allow |
 | `dedup_threshold` | number | null | Semantic similarity threshold for dedup |
 
@@ -94,7 +96,7 @@ Update an existing memory.
 }
 ```
 
-Set `ttl_seconds: 0` to remove expiration (make permanent).
+**Note:** Setting `ttl_seconds: 0` to remove expiration only works for memories with `tier="permanent"`. For daily tier memories, you must first promote them using `memory_promote_to_permanent`.
 
 ### memory_delete
 
@@ -119,7 +121,6 @@ List memories with filtering.
   "workspace": "my-project",
   "workspaces": ["project-a", "project-b"],
   "tier": "permanent",
-  "include_transcripts": false,
   "sort_by": "created_at",
   "sort_order": "desc",
   "filter": {
@@ -140,10 +141,11 @@ List memories with filtering.
 | `workspace` | string | null | Filter by single workspace |
 | `workspaces` | array | null | Filter by multiple workspaces |
 | `tier` | enum | null | `"permanent"` or `"daily"` |
-| `include_transcripts` | boolean | false | Include transcript chunks |
 | `sort_by` | enum | `"created_at"` | created_at, updated_at, importance, access_count |
 | `sort_order` | enum | `"desc"` | asc, desc |
 | `filter` | object | null | Advanced filter with AND/OR logic |
+
+**Note:** To exclude transcript chunks from results, filter by type or use the `filter` parameter to exclude `memory_type="transcript_chunk"`.
 
 ### memory_list_compact
 
@@ -213,7 +215,9 @@ Get search suggestions and typo corrections.
 
 ### memory_search_by_identity
 
-Search memories mentioning an identity.
+Search memories mentioning an identity by name or alias.
+
+**Note:** This currently performs a content/tag LIKE search for the identity string, not a lookup in the identity table. For true identity-based search with alias resolution, use `identity_resolve` first to get the canonical ID, then search with that.
 
 ```json
 {
@@ -1010,21 +1014,11 @@ Get cloud sync status.
 {}
 ```
 
-### memory_sync_force
-
-Force immediate sync.
-
-```json
-{
-  "direction": "push"
-}
-```
-
-Direction: `push`, `pull`, `bidirectional`
-
 ---
 
 ## Embedding Cache
+
+**Note:** These tools are currently placeholders and return zeros. The embedding cache is implemented internally but not yet exposed through these MCP tools.
 
 ### embedding_cache_stats
 
@@ -1032,13 +1026,15 @@ Direction: `push`, `pull`, `bidirectional`
 {}
 ```
 
-Returns: enabled, hits, misses, hit_rate, entries, bytes.
+Returns: enabled, hits, misses, hit_rate, entries, bytes. (Currently returns placeholder values)
 
 ### embedding_cache_clear
 
 ```json
 {}
 ```
+
+(Currently a no-op)
 
 ---
 
@@ -1180,7 +1176,7 @@ Migrate base64 images to file storage.
 }
 ```
 
-Set `ttl_seconds: 0` to remove expiration.
+**Important:** Setting `ttl_seconds: 0` to remove expiration only works for memories with `tier="permanent"`. For daily tier memories, this will return an error. To convert a daily memory to permanent, use `memory_promote_to_permanent` instead.
 
 ### memory_embedding_status
 
