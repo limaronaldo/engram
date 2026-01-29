@@ -113,6 +113,51 @@ engram-cli search "asynch awiat rust"
 # → Returns: "Use async/await for I/O-bound work in Rust"
 ```
 
+### Multi-Workspace Support
+
+Isolate memories by project or context:
+
+```bash
+# Create memory in a specific workspace
+engram-cli create "API keys stored in Vault" --workspace my-project
+
+# List workspaces
+engram-cli workspace list
+```
+
+### Memory Tiering
+
+Two tiers for different retention needs:
+
+- **Permanent**: Important knowledge, decisions (never expires)
+- **Daily**: Session context, scratch notes (auto-expire after 24h)
+
+```bash
+# Create a daily memory (expires in 24h)
+engram-cli create "Current debugging task" --tier daily
+```
+
+### Session Transcript Indexing
+
+Store and search conversation transcripts:
+
+```bash
+# Index a conversation session
+engram-cli session index --session-id chat-123 --messages messages.json
+
+# Search within transcripts
+engram-cli session search "error handling"
+```
+
+### Identity Links (Entity Unification)
+
+Link different mentions to canonical identities:
+
+```bash
+# Create identity with aliases
+engram-cli identity create user:ronaldo --alias "Ronaldo" --alias "@ronaldo"
+```
+
 ### Knowledge Graph
 
 ```bash
@@ -168,24 +213,68 @@ Add to your MCP config (`~/.config/claude/mcp.json` or similar):
 
 ### Available MCP Tools
 
+**Core Memory Operations:**
 | Tool | Description |
 |------|-------------|
 | `memory_create` | Store a new memory |
-| `memory_search` | Hybrid search with typo tolerance |
+| `memory_create_daily` | Create auto-expiring daily memory |
 | `memory_get` | Retrieve by ID |
 | `memory_update` | Update content or metadata |
 | `memory_delete` | Remove a memory |
 | `memory_list` | List with filters |
+| `memory_search` | Hybrid search with typo tolerance |
 | `memory_related` | Find cross-references |
-| `memory_scan_project` | Ingest project context files |
-| `memory_get_project_context` | Retrieve project context memories |
+| `memory_stats` | Usage statistics |
+
+**Workspace Management:**
+| Tool | Description |
+|------|-------------|
+| `workspace_list` | List all workspaces |
+| `workspace_stats` | Get workspace statistics |
+| `workspace_move` | Move memory to workspace |
+| `workspace_delete` | Delete workspace (with migrate option) |
+
+**Session Indexing:**
+| Tool | Description |
+|------|-------------|
+| `session_index` | Index conversation transcript |
+| `session_index_delta` | Incremental transcript update |
+| `session_get` | Get session info |
+| `session_list` | List sessions |
+| `session_search` | Search within transcripts |
+| `session_delete` | Delete session |
+
+**Identity Links:**
+| Tool | Description |
+|------|-------------|
+| `identity_create` | Create canonical identity |
+| `identity_get` | Get identity details |
+| `identity_add_alias` | Add alias to identity |
+| `identity_link` | Link memory to identity |
+| `identity_unlink` | Unlink memory from identity |
+| `identity_resolve` | Resolve alias to canonical ID |
+
+**Knowledge Graph:**
+| Tool | Description |
+|------|-------------|
 | `memory_extract_entities` | Extract named entities from a memory |
 | `memory_get_entities` | List entities for a memory |
 | `memory_search_entities` | Search entities by name |
 | `memory_entity_stats` | Entity statistics |
 | `memory_traverse` | Multi-hop graph traversal |
 | `memory_find_path` | Shortest path between memories |
-| `memory_stats` | Usage statistics |
+
+**Project Context:**
+| Tool | Description |
+|------|-------------|
+| `memory_scan_project` | Ingest project context files |
+| `memory_get_project_context` | Retrieve project context memories |
+
+**Performance:**
+| Tool | Description |
+|------|-------------|
+| `embedding_cache_stats` | Cache hit/miss statistics |
+| `embedding_cache_clear` | Clear embedding cache |
 
 ---
 
@@ -196,6 +285,10 @@ Add to your MCP config (`~/.config/claude/mcp.json` or similar):
 | `ENGRAM_DB_PATH` | SQLite database path | `~/.local/share/engram/memories.db` |
 | `ENGRAM_STORAGE_URI` | S3/R2 URI for cloud sync | - |
 | `ENGRAM_CLOUD_ENCRYPT` | AES-256-GCM encryption | `false` |
+| `ENGRAM_EMBEDDING_MODEL` | Embedding model (`tfidf`, `openai`) | `tfidf` |
+| `ENGRAM_CLEANUP_INTERVAL` | Expired memory cleanup interval (seconds) | `3600` |
+| `ENGRAM_WS_PORT` | WebSocket server port (0 = disabled) | `0` |
+| `OPENAI_API_KEY` | OpenAI API key (for `openai` embeddings) | - |
 
 ---
 
