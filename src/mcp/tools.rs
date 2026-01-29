@@ -477,6 +477,719 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             "required": ["path"]
         }"#,
     ),
+    // Workspace Management
+    (
+        "workspace_list",
+        "List all workspaces with their statistics (memory count, tier breakdown, etc.)",
+        r#"{
+            "type": "object",
+            "properties": {}
+        }"#,
+    ),
+    (
+        "workspace_stats",
+        "Get detailed statistics for a specific workspace",
+        r#"{
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Workspace name"}
+            },
+            "required": ["workspace"]
+        }"#,
+    ),
+    (
+        "workspace_move",
+        "Move a memory to a different workspace",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID to move"},
+                "workspace": {"type": "string", "description": "Target workspace name"}
+            },
+            "required": ["id", "workspace"]
+        }"#,
+    ),
+    (
+        "workspace_delete",
+        "Delete a workspace. Can either move all memories to 'default' workspace or hard delete them.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Workspace to delete"},
+                "move_to_default": {"type": "boolean", "default": true, "description": "If true, moves memories to 'default' workspace. If false, deletes all memories in the workspace."}
+            },
+            "required": ["workspace"]
+        }"#,
+    ),
+    // Memory Tiering
+    (
+        "memory_create_daily",
+        "Create a daily (ephemeral) memory that auto-expires after the specified TTL. Useful for session context and scratch notes.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "The content to remember"},
+                "type": {"type": "string", "enum": ["note", "todo", "issue", "decision", "preference", "learning", "context", "credential"], "default": "note"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
+                "metadata": {"type": "object", "description": "Additional metadata as key-value pairs"},
+                "importance": {"type": "number", "minimum": 0, "maximum": 1, "description": "Importance score (0-1)"},
+                "ttl_seconds": {"type": "integer", "default": 86400, "description": "Time-to-live in seconds (default: 24 hours)"},
+                "workspace": {"type": "string", "description": "Workspace to store the memory in (default: 'default')"}
+            },
+            "required": ["content"]
+        }"#,
+    ),
+    (
+        "memory_promote_to_permanent",
+        "Promote a daily memory to permanent tier. Clears the expiration and makes the memory permanent.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID to promote"}
+            },
+            "required": ["id"]
+        }"#,
+    ),
+    // Embedding Cache
+    (
+        "embedding_cache_stats",
+        "Get statistics about the embedding cache (hits, misses, entries, bytes used, hit rate)",
+        r#"{
+            "type": "object",
+            "properties": {}
+        }"#,
+    ),
+    (
+        "embedding_cache_clear",
+        "Clear all entries from the embedding cache",
+        r#"{
+            "type": "object",
+            "properties": {}
+        }"#,
+    ),
+    // Session Transcript Indexing
+    (
+        "session_index",
+        "Index a conversation into searchable memory chunks. Uses dual-limiter chunking (messages + characters) with overlap.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Unique session identifier"},
+                "messages": {
+                    "type": "array",
+                    "description": "Array of conversation messages",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "role": {"type": "string", "description": "Message role (user, assistant, system)"},
+                            "content": {"type": "string", "description": "Message content"},
+                            "timestamp": {"type": "string", "description": "ISO 8601 timestamp"},
+                            "id": {"type": "string", "description": "Optional message ID"}
+                        },
+                        "required": ["role", "content"]
+                    }
+                },
+                "title": {"type": "string", "description": "Optional session title"},
+                "workspace": {"type": "string", "description": "Workspace to store chunks in (default: 'default')"},
+                "agent_id": {"type": "string", "description": "Optional agent identifier"},
+                "max_messages": {"type": "integer", "default": 10, "description": "Max messages per chunk"},
+                "max_chars": {"type": "integer", "default": 8000, "description": "Max characters per chunk"},
+                "overlap": {"type": "integer", "default": 2, "description": "Overlap messages between chunks"},
+                "ttl_days": {"type": "integer", "default": 7, "description": "TTL for transcript chunks in days"}
+            },
+            "required": ["session_id", "messages"]
+        }"#,
+    ),
+    (
+        "session_index_delta",
+        "Incrementally index new messages to an existing session. More efficient than full reindex.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session to update"},
+                "messages": {
+                    "type": "array",
+                    "description": "New messages to add",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "role": {"type": "string"},
+                            "content": {"type": "string"},
+                            "timestamp": {"type": "string"},
+                            "id": {"type": "string"}
+                        },
+                        "required": ["role", "content"]
+                    }
+                }
+            },
+            "required": ["session_id", "messages"]
+        }"#,
+    ),
+    (
+        "session_get",
+        "Get information about an indexed session",
+        r#"{
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID to retrieve"}
+            },
+            "required": ["session_id"]
+        }"#,
+    ),
+    (
+        "session_list",
+        "List indexed sessions with optional workspace filter",
+        r#"{
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Filter by workspace"},
+                "limit": {"type": "integer", "default": 20, "description": "Maximum sessions to return"}
+            }
+        }"#,
+    ),
+    (
+        "session_delete",
+        "Delete a session and all its indexed chunks",
+        r#"{
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session to delete"}
+            },
+            "required": ["session_id"]
+        }"#,
+    ),
+    // Identity Management
+    (
+        "identity_create",
+        "Create a new identity with canonical ID, display name, and optional aliases",
+        r#"{
+            "type": "object",
+            "properties": {
+                "canonical_id": {"type": "string", "description": "Unique canonical identifier (e.g., 'user:ronaldo', 'org:acme')"},
+                "display_name": {"type": "string", "description": "Human-readable display name"},
+                "entity_type": {"type": "string", "enum": ["person", "organization", "project", "tool", "concept", "other"], "default": "person"},
+                "description": {"type": "string", "description": "Optional description"},
+                "aliases": {"type": "array", "items": {"type": "string"}, "description": "Initial aliases for this identity"},
+                "metadata": {"type": "object", "description": "Additional metadata"}
+            },
+            "required": ["canonical_id", "display_name"]
+        }"#,
+    ),
+    (
+        "identity_get",
+        "Get an identity by its canonical ID",
+        r#"{
+            "type": "object",
+            "properties": {
+                "canonical_id": {"type": "string", "description": "Canonical identifier"}
+            },
+            "required": ["canonical_id"]
+        }"#,
+    ),
+    (
+        "identity_update",
+        "Update an identity's display name, description, or type",
+        r#"{
+            "type": "object",
+            "properties": {
+                "canonical_id": {"type": "string", "description": "Canonical identifier"},
+                "display_name": {"type": "string", "description": "New display name"},
+                "description": {"type": "string", "description": "New description"},
+                "entity_type": {"type": "string", "enum": ["person", "organization", "project", "tool", "concept", "other"]}
+            },
+            "required": ["canonical_id"]
+        }"#,
+    ),
+    (
+        "identity_delete",
+        "Delete an identity and all its aliases",
+        r#"{
+            "type": "object",
+            "properties": {
+                "canonical_id": {"type": "string", "description": "Canonical identifier to delete"}
+            },
+            "required": ["canonical_id"]
+        }"#,
+    ),
+    (
+        "identity_add_alias",
+        "Add an alias to an identity. Aliases are normalized (lowercase, trimmed). Conflicts with existing aliases are rejected.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "canonical_id": {"type": "string", "description": "Canonical identifier"},
+                "alias": {"type": "string", "description": "Alias to add"},
+                "source": {"type": "string", "description": "Optional source of the alias (e.g., 'manual', 'extracted')"}
+            },
+            "required": ["canonical_id", "alias"]
+        }"#,
+    ),
+    (
+        "identity_remove_alias",
+        "Remove an alias from any identity",
+        r#"{
+            "type": "object",
+            "properties": {
+                "alias": {"type": "string", "description": "Alias to remove"}
+            },
+            "required": ["alias"]
+        }"#,
+    ),
+    (
+        "identity_resolve",
+        "Resolve an alias to its canonical identity. Returns the identity if found, null otherwise.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "alias": {"type": "string", "description": "Alias to resolve"}
+            },
+            "required": ["alias"]
+        }"#,
+    ),
+    (
+        "identity_list",
+        "List all identities with optional type filter",
+        r#"{
+            "type": "object",
+            "properties": {
+                "entity_type": {"type": "string", "enum": ["person", "organization", "project", "tool", "concept", "other"]},
+                "limit": {"type": "integer", "default": 50}
+            }
+        }"#,
+    ),
+    (
+        "identity_search",
+        "Search identities by alias or display name",
+        r#"{
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"},
+                "limit": {"type": "integer", "default": 20}
+            },
+            "required": ["query"]
+        }"#,
+    ),
+    (
+        "identity_link",
+        "Link an identity to a memory (mark that the identity is mentioned in the memory)",
+        r#"{
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "integer", "description": "Memory ID"},
+                "canonical_id": {"type": "string", "description": "Identity canonical ID"},
+                "mention_text": {"type": "string", "description": "The text that mentions this identity"}
+            },
+            "required": ["memory_id", "canonical_id"]
+        }"#,
+    ),
+    (
+        "identity_unlink",
+        "Remove the link between an identity and a memory",
+        r#"{
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "integer", "description": "Memory ID"},
+                "canonical_id": {"type": "string", "description": "Identity canonical ID"}
+            },
+            "required": ["memory_id", "canonical_id"]
+        }"#,
+    ),
+    // Content Utilities
+    (
+        "memory_soft_trim",
+        "Intelligently trim memory content while preserving context. Keeps the beginning (head) and end (tail) of content with an ellipsis in the middle. Useful for displaying long content in limited space while keeping important context from both ends.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID to trim"},
+                "max_chars": {"type": "integer", "default": 500, "description": "Maximum characters for trimmed output"},
+                "head_percent": {"type": "integer", "default": 60, "description": "Percentage of space for the head (0-100)"},
+                "tail_percent": {"type": "integer", "default": 30, "description": "Percentage of space for the tail (0-100)"},
+                "ellipsis": {"type": "string", "default": "\n...\n", "description": "Text to insert between head and tail"},
+                "preserve_words": {"type": "boolean", "default": true, "description": "Avoid breaking in the middle of words"}
+            },
+            "required": ["id"]
+        }"#,
+    ),
+    (
+        "memory_list_compact",
+        "List memories with compact preview instead of full content. More efficient for browsing/listing UIs. Returns only essential fields and a truncated content preview with metadata about original content length.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "default": 20, "description": "Maximum memories to return"},
+                "offset": {"type": "integer", "default": 0, "description": "Pagination offset"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Filter by tags"},
+                "type": {"type": "string", "description": "Filter by memory type"},
+                "workspace": {"type": "string", "description": "Filter by workspace"},
+                "tier": {"type": "string", "enum": ["permanent", "daily"], "description": "Filter by tier"},
+                "sort_by": {"type": "string", "enum": ["created_at", "updated_at", "importance", "access_count"], "default": "created_at"},
+                "sort_order": {"type": "string", "enum": ["asc", "desc"], "default": "desc"},
+                "preview_chars": {"type": "integer", "default": 100, "description": "Maximum characters for content preview"}
+            }
+        }"#,
+    ),
+    (
+        "memory_content_stats",
+        "Get content statistics for a memory (character count, word count, line count, sentence count, paragraph count)",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID"}
+            },
+            "required": ["id"]
+        }"#,
+    ),
+    // Batch Operations
+    (
+        "memory_create_batch",
+        "Create multiple memories in a single operation. More efficient than individual creates for bulk imports.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "memories": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "content": {"type": "string"},
+                            "type": {"type": "string", "enum": ["note", "todo", "issue", "decision", "preference", "learning", "context", "credential"]},
+                            "tags": {"type": "array", "items": {"type": "string"}},
+                            "metadata": {"type": "object"},
+                            "importance": {"type": "number", "minimum": 0, "maximum": 1},
+                            "workspace": {"type": "string"}
+                        },
+                        "required": ["content"]
+                    },
+                    "description": "Array of memories to create"
+                }
+            },
+            "required": ["memories"]
+        }"#,
+    ),
+    (
+        "memory_delete_batch",
+        "Delete multiple memories in a single operation.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "ids": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "Array of memory IDs to delete"
+                }
+            },
+            "required": ["ids"]
+        }"#,
+    ),
+    // Tag Utilities
+    (
+        "memory_tags",
+        "List all tags with usage counts and most recent usage timestamps.",
+        r#"{
+            "type": "object",
+            "properties": {}
+        }"#,
+    ),
+    (
+        "memory_tag_hierarchy",
+        "Get tags organized in a hierarchical tree structure. Tags with slashes are treated as paths (e.g., 'project/engram/core').",
+        r#"{
+            "type": "object",
+            "properties": {}
+        }"#,
+    ),
+    (
+        "memory_validate_tags",
+        "Validate tag consistency across memories. Reports orphaned tags, unused tags, and suggested normalizations.",
+        r#"{
+            "type": "object",
+            "properties": {}
+        }"#,
+    ),
+    // Import/Export
+    (
+        "memory_export",
+        "Export all memories to a JSON-serializable format for backup or migration.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Optional: export only from specific workspace"},
+                "include_embeddings": {"type": "boolean", "default": false, "description": "Include embedding vectors in export (larger file size)"}
+            }
+        }"#,
+    ),
+    (
+        "memory_import",
+        "Import memories from a previously exported JSON format.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "data": {"type": "object", "description": "The exported data object"},
+                "skip_duplicates": {"type": "boolean", "default": true, "description": "Skip memories with matching content hash"}
+            },
+            "required": ["data"]
+        }"#,
+    ),
+    // Maintenance
+    (
+        "memory_rebuild_embeddings",
+        "Rebuild embeddings for all memories that are missing them. Useful after model changes or data recovery.",
+        r#"{
+            "type": "object",
+            "properties": {}
+        }"#,
+    ),
+    (
+        "memory_rebuild_crossrefs",
+        "Rebuild cross-reference links between memories. Re-analyzes all memories to find and create links.",
+        r#"{
+            "type": "object",
+            "properties": {}
+        }"#,
+    ),
+    // Special Memory Types
+    (
+        "memory_create_section",
+        "Create a section memory for organizing content hierarchically. Sections can have parent sections for nested organization.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Section title"},
+                "content": {"type": "string", "description": "Section description or content"},
+                "parent_id": {"type": "integer", "description": "Optional parent section ID for nesting"},
+                "level": {"type": "integer", "default": 1, "description": "Heading level (1-6)"},
+                "workspace": {"type": "string", "description": "Workspace for the section"}
+            },
+            "required": ["title"]
+        }"#,
+    ),
+    (
+        "memory_checkpoint",
+        "Create a checkpoint memory marking a significant point in a session. Useful for session resumption and context restoration.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session identifier"},
+                "summary": {"type": "string", "description": "Summary of session state at checkpoint"},
+                "context": {"type": "object", "description": "Additional context data to preserve"},
+                "workspace": {"type": "string", "description": "Workspace for the checkpoint"}
+            },
+            "required": ["session_id", "summary"]
+        }"#,
+    ),
+    (
+        "memory_boost",
+        "Temporarily boost a memory's importance score. The boost can optionally decay over time.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID to boost"},
+                "boost_amount": {"type": "number", "default": 0.2, "description": "Amount to increase importance (0-1)"},
+                "duration_seconds": {"type": "integer", "description": "Optional: duration before boost decays (omit for permanent boost)"}
+            },
+            "required": ["id"]
+        }"#,
+    ),
+    // Event System
+    (
+        "memory_events_poll",
+        "Poll for memory events (create, update, delete, etc.) since a given point. Useful for syncing and monitoring.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "since_id": {"type": "integer", "description": "Return events after this event ID"},
+                "since_time": {"type": "string", "format": "date-time", "description": "Return events after this timestamp (RFC3339)"},
+                "agent_id": {"type": "string", "description": "Filter events for specific agent"},
+                "limit": {"type": "integer", "default": 100, "description": "Maximum events to return"}
+            }
+        }"#,
+    ),
+    (
+        "memory_events_clear",
+        "Clear old events from the event log. Helps manage storage for long-running systems.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "before_id": {"type": "integer", "description": "Delete events before this ID"},
+                "before_time": {"type": "string", "format": "date-time", "description": "Delete events before this timestamp"},
+                "keep_recent": {"type": "integer", "description": "Keep only the N most recent events"}
+            }
+        }"#,
+    ),
+    // Advanced Sync
+    (
+        "sync_version",
+        "Get the current sync version and metadata. Used to check if local data is up-to-date.",
+        r#"{
+            "type": "object",
+            "properties": {}
+        }"#,
+    ),
+    (
+        "sync_delta",
+        "Get changes (delta) since a specific version. Returns created, updated, and deleted memories.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "since_version": {"type": "integer", "description": "Version to get changes from"}
+            },
+            "required": ["since_version"]
+        }"#,
+    ),
+    (
+        "sync_state",
+        "Get or update sync state for a specific agent. Tracks what each agent has synced.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "Agent identifier"},
+                "update_version": {"type": "integer", "description": "If provided, updates the agent's last synced version"}
+            },
+            "required": ["agent_id"]
+        }"#,
+    ),
+    (
+        "sync_cleanup",
+        "Clean up old sync data (events, etc.) older than specified days.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "older_than_days": {"type": "integer", "default": 30, "description": "Delete sync data older than this many days"}
+            }
+        }"#,
+    ),
+    // Multi-Agent Sharing
+    (
+        "memory_share",
+        "Share a memory with another agent. The target agent can poll for shared memories.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "integer", "description": "ID of memory to share"},
+                "from_agent": {"type": "string", "description": "Sender agent identifier"},
+                "to_agent": {"type": "string", "description": "Recipient agent identifier"},
+                "message": {"type": "string", "description": "Optional message to include with share"}
+            },
+            "required": ["memory_id", "from_agent", "to_agent"]
+        }"#,
+    ),
+    (
+        "memory_shared_poll",
+        "Poll for memories shared with this agent.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "Agent identifier to check shares for"},
+                "include_acknowledged": {"type": "boolean", "default": false, "description": "Include already acknowledged shares"}
+            },
+            "required": ["agent_id"]
+        }"#,
+    ),
+    (
+        "memory_share_ack",
+        "Acknowledge receipt of a shared memory.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "share_id": {"type": "integer", "description": "Share ID to acknowledge"},
+                "agent_id": {"type": "string", "description": "Agent acknowledging the share"}
+            },
+            "required": ["share_id", "agent_id"]
+        }"#,
+    ),
+    // Search Variants
+    (
+        "memory_search_by_identity",
+        "Search memories by identity (person, entity, or alias). Finds all mentions of a specific identity across memories.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "identity": {"type": "string", "description": "Identity name or alias to search for"},
+                "workspace": {"type": "string", "description": "Optional: limit search to specific workspace"},
+                "limit": {"type": "integer", "default": 50, "description": "Maximum results to return"}
+            },
+            "required": ["identity"]
+        }"#,
+    ),
+    (
+        "memory_session_search",
+        "Search within session transcript chunks. Useful for finding content from past conversations.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"},
+                "session_id": {"type": "string", "description": "Optional: limit to specific session"},
+                "workspace": {"type": "string", "description": "Optional: limit to specific workspace"},
+                "limit": {"type": "integer", "default": 20, "description": "Maximum results to return"}
+            },
+            "required": ["query"]
+        }"#,
+    ),
+    // Image Handling
+    (
+        "memory_upload_image",
+        "Upload an image file and attach it to a memory. The image will be stored locally and linked to the memory's metadata.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "memory_id": {"type": "integer", "description": "ID of the memory to attach the image to"},
+                "file_path": {"type": "string", "description": "Path to the image file to upload"},
+                "image_index": {"type": "integer", "default": 0, "description": "Index for ordering multiple images (0-based)"},
+                "caption": {"type": "string", "description": "Optional caption for the image"}
+            },
+            "required": ["memory_id", "file_path"]
+        }"#,
+    ),
+    (
+        "memory_migrate_images",
+        "Migrate existing base64-encoded images in memories to file storage. Scans all memories and uploads any embedded data URIs to storage, replacing them with file references.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "dry_run": {"type": "boolean", "default": false, "description": "If true, only report what would be migrated without making changes"}
+            }
+        }"#,
+    ),
+    // Auto-Tagging
+    (
+        "memory_suggest_tags",
+        "Suggest tags for a memory based on AI content analysis. Uses pattern matching, keyword extraction, and structure detection to suggest relevant tags with confidence scores.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID to analyze (alternative to content)"},
+                "memory_id": {"type": "integer", "description": "Memory ID to analyze (alias for id)"},
+                "content": {"type": "string", "description": "Content to analyze (alternative to id/memory_id)"},
+                "type": {"type": "string", "enum": ["note", "todo", "issue", "decision", "preference", "learning", "context", "credential"], "description": "Memory type (used when providing content directly)"},
+                "existing_tags": {"type": "array", "items": {"type": "string"}, "description": "Tags already on the memory (excluded from suggestions)"},
+                "min_confidence": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.5, "description": "Minimum confidence threshold for suggestions"},
+                "max_tags": {"type": "integer", "default": 5, "description": "Maximum number of tags to suggest"},
+                "enable_patterns": {"type": "boolean", "default": true, "description": "Use pattern-based tagging"},
+                "enable_keywords": {"type": "boolean", "default": true, "description": "Use keyword-based tagging"},
+                "enable_entities": {"type": "boolean", "default": true, "description": "Use entity-based tagging"},
+                "enable_type_tags": {"type": "boolean", "default": true, "description": "Add tags based on memory type"},
+                "keyword_mappings": {"type": "object", "description": "Custom keyword-to-tag mappings (e.g., {\"ibvi\": \"project/ibvi\"})"}
+            }
+        }"#,
+    ),
+    (
+        "memory_auto_tag",
+        "Automatically suggest and optionally apply tags to a memory. Analyzes content using AI heuristics and can merge suggested tags with existing ones.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID to auto-tag"},
+                "memory_id": {"type": "integer", "description": "Memory ID (alias for id)"},
+                "apply": {"type": "boolean", "default": false, "description": "If true, apply the suggested tags to the memory. If false, only return suggestions."},
+                "merge": {"type": "boolean", "default": true, "description": "If true and apply=true, merge with existing tags. If false, replace existing tags."},
+                "min_confidence": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.5, "description": "Minimum confidence threshold"},
+                "max_tags": {"type": "integer", "default": 5, "description": "Maximum tags to suggest/apply"},
+                "keyword_mappings": {"type": "object", "description": "Custom keyword-to-tag mappings"}
+            },
+            "required": ["id"]
+        }"#,
+    ),
 ];
 
 /// Get all tool definitions as ToolDefinition structs

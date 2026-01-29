@@ -186,7 +186,7 @@ pub fn get_related_multi_hop(
 
         let node_ids: Vec<MemoryId> = current_batch.iter().map(|(id, _, _, _, _)| *id).collect();
 
-        // Batch fetch cross-reference edges
+        // Batch fetch cross-reference edges (with SQL-level per-node limiting)
         let crossrefs_map = get_edges_for_traversal_batch(
             conn,
             &node_ids,
@@ -194,6 +194,7 @@ pub fn get_related_multi_hop(
             options.min_score,
             options.min_confidence,
             options.direction,
+            options.limit_per_hop,
         )?;
 
         // Batch fetch entity-based connections if enabled
@@ -207,9 +208,9 @@ pub fn get_related_multi_hop(
         for (current_id, _current_depth, current_path, current_edge_path, current_score) in
             current_batch
         {
-            // Process cross-references
+            // Process cross-references (already limited per-node in SQL)
             if let Some(crossrefs) = crossrefs_map.get(&current_id) {
-                for crossref in crossrefs.iter().take(options.limit_per_hop) {
+                for crossref in crossrefs.iter() {
                     // Determine the neighbor ID based on direction
                     let neighbor_id = if crossref.from_id == current_id {
                         crossref.to_id
@@ -265,7 +266,9 @@ pub fn get_related_multi_hop(
 
             // Process entity connections
             if let Some(entity_connections) = entity_connections_map.get(&current_id) {
-                for (neighbor_id, entity_name) in entity_connections.iter().take(options.limit_per_hop) {
+                for (neighbor_id, entity_name) in
+                    entity_connections.iter().take(options.limit_per_hop)
+                {
                     let neighbor_id = *neighbor_id;
                     if visited.contains(&neighbor_id) {
                         continue;
@@ -326,7 +329,10 @@ pub fn get_related_multi_hop(
     })
 }
 
-/// Get edges for multiple memory IDs
+/// Get edges for multiple memory IDs with per-node SQL limiting
+///
+/// Uses ROW_NUMBER() window function to limit results per source node in SQL,
+/// preventing memory/time blowup on high-degree nodes.
 fn get_edges_for_traversal_batch(
     conn: &Connection,
     memory_ids: &[MemoryId],
@@ -334,24 +340,18 @@ fn get_edges_for_traversal_batch(
     min_score: f32,
     min_confidence: f32,
     direction: TraversalDirection,
+    limit_per_node: usize,
 ) -> Result<HashMap<MemoryId, Vec<CrossReference>>> {
     if memory_ids.is_empty() {
         return Ok(HashMap::new());
     }
 
-    // SQLite limit safety: chunk the IDs if necessary
-    // For now assuming reasonable batch sizes, but let's be safe with a chunk size of 100
     let mut result: HashMap<MemoryId, Vec<CrossReference>> = HashMap::new();
     let id_set: HashSet<MemoryId> = memory_ids.iter().cloned().collect();
 
+    // SQLite limit safety: chunk the IDs
     for chunk in memory_ids.chunks(100) {
         let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-
-        let direction_clause = match direction {
-            TraversalDirection::Outgoing => format!("from_id IN ({})", placeholders),
-            TraversalDirection::Incoming => format!("to_id IN ({})", placeholders),
-            TraversalDirection::Both => format!("(from_id IN ({0}) OR to_id IN ({0}))", placeholders),
-        };
 
         let edge_type_clause = if edge_types.is_empty() {
             String::new()
@@ -363,15 +363,107 @@ fn get_edges_for_traversal_batch(
             format!(" AND edge_type IN ({})", types.join(", "))
         };
 
+        // Build query based on direction, using ROW_NUMBER() to limit per source node
+        let (partition_col, filter_clause) = match direction {
+            TraversalDirection::Outgoing => ("from_id", format!("from_id IN ({})", placeholders)),
+            TraversalDirection::Incoming => ("to_id", format!("to_id IN ({})", placeholders)),
+            TraversalDirection::Both => {
+                // For Both direction, we need a UNION approach to properly partition
+                // by source node from both directions
+                let query = format!(
+                    r#"
+                    WITH ranked_edges AS (
+                        SELECT *, ROW_NUMBER() OVER (
+                            PARTITION BY from_id ORDER BY score * confidence DESC
+                        ) as rn
+                        FROM crossrefs
+                        WHERE from_id IN ({placeholders}) AND valid_to IS NULL
+                          AND score >= ? AND confidence >= ?
+                          {edge_type_clause}
+                        UNION ALL
+                        SELECT *, ROW_NUMBER() OVER (
+                            PARTITION BY to_id ORDER BY score * confidence DESC
+                        ) as rn
+                        FROM crossrefs
+                        WHERE to_id IN ({placeholders}) AND from_id NOT IN ({placeholders}) AND valid_to IS NULL
+                          AND score >= ? AND confidence >= ?
+                          {edge_type_clause}
+                    )
+                    SELECT from_id, to_id, edge_type, score, confidence, strength, source,
+                           source_context, created_at, valid_from, valid_to, pinned, metadata
+                    FROM ranked_edges
+                    WHERE rn <= ?
+                    "#,
+                    placeholders = placeholders,
+                    edge_type_clause = edge_type_clause,
+                );
+
+                let mut stmt = conn.prepare(&query)?;
+                let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+                // First subquery params: from_id IN, min_score, min_confidence
+                for id in chunk {
+                    params.push(Box::new(*id));
+                }
+                params.push(Box::new(min_score));
+                params.push(Box::new(min_confidence));
+
+                // Second subquery params: to_id IN, from_id NOT IN, min_score, min_confidence
+                for id in chunk {
+                    params.push(Box::new(*id));
+                }
+                for id in chunk {
+                    params.push(Box::new(*id));
+                }
+                params.push(Box::new(min_score));
+                params.push(Box::new(min_confidence));
+
+                // Limit param
+                params.push(Box::new(limit_per_node as i64));
+
+                let param_refs: Vec<&dyn rusqlite::ToSql> =
+                    params.iter().map(|p| p.as_ref()).collect();
+
+                let crossrefs = stmt
+                    .query_map(param_refs.as_slice(), crossref_from_row)?
+                    .filter_map(|r| r.ok());
+
+                for crossref in crossrefs {
+                    if id_set.contains(&crossref.from_id) {
+                        result
+                            .entry(crossref.from_id)
+                            .or_default()
+                            .push(crossref.clone());
+                    }
+                    if id_set.contains(&crossref.to_id) && crossref.from_id != crossref.to_id {
+                        result.entry(crossref.to_id).or_default().push(crossref);
+                    }
+                }
+
+                continue; // Skip the common path below for Both direction
+            }
+        };
+
+        // Common path for Outgoing and Incoming directions
         let query = format!(
-            "SELECT from_id, to_id, edge_type, score, confidence, strength, source,
-                    source_context, created_at, valid_from, valid_to, pinned, metadata
-             FROM crossrefs
-             WHERE {} AND valid_to IS NULL
-               AND score >= ? AND confidence >= ?
-             {}
-             ORDER BY score * confidence DESC",
-            direction_clause, edge_type_clause
+            r#"
+            WITH ranked_edges AS (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY {partition_col} ORDER BY score * confidence DESC
+                ) as rn
+                FROM crossrefs
+                WHERE {filter_clause} AND valid_to IS NULL
+                  AND score >= ? AND confidence >= ?
+                  {edge_type_clause}
+            )
+            SELECT from_id, to_id, edge_type, score, confidence, strength, source,
+                   source_context, created_at, valid_from, valid_to, pinned, metadata
+            FROM ranked_edges
+            WHERE rn <= ?
+            "#,
+            partition_col = partition_col,
+            filter_clause = filter_clause,
+            edge_type_clause = edge_type_clause,
         );
 
         let mut stmt = conn.prepare(&query)?;
@@ -380,13 +472,9 @@ fn get_edges_for_traversal_batch(
         for id in chunk {
             params.push(Box::new(*id));
         }
-        if direction == TraversalDirection::Both {
-            for id in chunk {
-                params.push(Box::new(*id));
-            }
-        }
         params.push(Box::new(min_score));
         params.push(Box::new(min_confidence));
+        params.push(Box::new(limit_per_node as i64));
 
         let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
@@ -398,22 +486,15 @@ fn get_edges_for_traversal_batch(
             match direction {
                 TraversalDirection::Outgoing => {
                     if id_set.contains(&crossref.from_id) {
-                         result.entry(crossref.from_id).or_default().push(crossref);
+                        result.entry(crossref.from_id).or_default().push(crossref);
                     }
                 }
                 TraversalDirection::Incoming => {
                     if id_set.contains(&crossref.to_id) {
-                         result.entry(crossref.to_id).or_default().push(crossref);
+                        result.entry(crossref.to_id).or_default().push(crossref);
                     }
                 }
-                TraversalDirection::Both => {
-                    if id_set.contains(&crossref.from_id) {
-                         result.entry(crossref.from_id).or_default().push(crossref.clone());
-                    }
-                    if id_set.contains(&crossref.to_id) && crossref.from_id != crossref.to_id {
-                         result.entry(crossref.to_id).or_default().push(crossref);
-                    }
-                }
+                TraversalDirection::Both => unreachable!(), // Handled above with continue
             }
         }
     }
@@ -572,6 +653,8 @@ mod tests {
             importance: None,
             metadata: Default::default(),
             scope: Default::default(),
+            workspace: None,
+            tier: Default::default(),
             defer_embedding: false,
             ttl_seconds: None,
             dedup_mode: Default::default(),

@@ -43,16 +43,109 @@ pub struct Memory {
     /// Memory scope for isolation (user/session/agent/global)
     #[serde(default)]
     pub scope: MemoryScope,
+    /// Workspace for project-based isolation (normalized: lowercase, [a-z0-9_-], max 64 chars)
+    #[serde(default = "default_workspace")]
+    pub workspace: String,
+    /// Memory tier for tiered storage (permanent vs daily)
+    #[serde(default)]
+    pub tier: MemoryTier,
     /// Current version number
     #[serde(default = "default_version")]
     pub version: i32,
     /// Whether embedding is computed
     #[serde(default)]
     pub has_embedding: bool,
-    /// When the memory expires (None = never)
+    /// When the memory expires (None = never for permanent, required for daily)
     pub expires_at: Option<DateTime<Utc>>,
     /// Content hash for deduplication (SHA256 of normalized content)
     pub content_hash: Option<String>,
+}
+
+fn default_workspace() -> String {
+    "default".to_string()
+}
+
+/// Reserved workspace names that cannot be used
+pub const RESERVED_WORKSPACES: &[&str] = &["_system", "_archive"];
+
+/// Maximum workspace name length
+pub const MAX_WORKSPACE_LENGTH: usize = 64;
+
+/// Workspace validation error
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceError {
+    Empty,
+    TooLong,
+    InvalidChars,
+    Reserved,
+}
+
+impl std::fmt::Display for WorkspaceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WorkspaceError::Empty => write!(f, "Workspace name cannot be empty"),
+            WorkspaceError::TooLong => write!(f, "Workspace name exceeds {} characters", MAX_WORKSPACE_LENGTH),
+            WorkspaceError::InvalidChars => write!(f, "Workspace name can only contain lowercase letters, numbers, hyphens, and underscores"),
+            WorkspaceError::Reserved => write!(f, "Workspace name is reserved"),
+        }
+    }
+}
+
+impl std::error::Error for WorkspaceError {}
+
+/// Normalize and validate a workspace name
+///
+/// Rules:
+/// - Trim whitespace and convert to lowercase
+/// - Only allow [a-z0-9_-] characters
+/// - Max 64 characters
+/// - Cannot start with underscore (reserved for system workspaces)
+/// - "default" is allowed (it's the default workspace)
+pub fn normalize_workspace(s: &str) -> Result<String, WorkspaceError> {
+    let normalized = s.trim().to_lowercase();
+
+    if normalized.is_empty() {
+        return Err(WorkspaceError::Empty);
+    }
+
+    if normalized.len() > MAX_WORKSPACE_LENGTH {
+        return Err(WorkspaceError::TooLong);
+    }
+
+    if !normalized
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+    {
+        return Err(WorkspaceError::InvalidChars);
+    }
+
+    if normalized.starts_with('_') || RESERVED_WORKSPACES.contains(&normalized.as_str()) {
+        return Err(WorkspaceError::Reserved);
+    }
+
+    Ok(normalized)
+}
+
+/// Statistics for a workspace
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceStats {
+    /// Workspace name
+    pub workspace: String,
+    /// Total number of memories
+    pub memory_count: i64,
+    /// Number of permanent memories
+    pub permanent_count: i64,
+    /// Number of daily (ephemeral) memories
+    pub daily_count: i64,
+    /// Timestamp of first memory
+    pub first_memory_at: Option<DateTime<Utc>>,
+    /// Timestamp of last memory
+    pub last_memory_at: Option<DateTime<Utc>>,
+    /// Top tags in this workspace (tag, count)
+    #[serde(default)]
+    pub top_tags: Vec<(String, i64)>,
+    /// Average importance score
+    pub avg_importance: Option<f32>,
 }
 
 fn default_importance() -> f32 {
@@ -77,6 +170,57 @@ pub enum MemoryType {
     Context,
     Credential,
     Custom,
+    /// Session transcript chunk (for conversation indexing)
+    /// Default tier: Daily with 7-day TTL
+    TranscriptChunk,
+}
+
+/// Memory tier for tiered storage (permanent vs ephemeral)
+///
+/// Tiers control memory lifetime:
+/// - `Permanent`: Never expires, for important knowledge and decisions
+/// - `Daily`: Auto-expires after TTL, for session context and scratch notes
+///
+/// Invariants enforced at write-time:
+/// - Permanent tier: expires_at MUST be NULL
+/// - Daily tier: expires_at MUST be set (defaults to created_at + 24h)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum MemoryTier {
+    /// Never expires (default)
+    #[default]
+    Permanent,
+    /// Auto-expires after configurable TTL (default: 24 hours)
+    Daily,
+}
+
+impl MemoryTier {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MemoryTier::Permanent => "permanent",
+            MemoryTier::Daily => "daily",
+        }
+    }
+
+    /// Default TTL in seconds for daily tier
+    pub fn default_ttl_seconds(&self) -> Option<i64> {
+        match self {
+            MemoryTier::Permanent => None,
+            MemoryTier::Daily => Some(24 * 60 * 60), // 24 hours
+        }
+    }
+}
+
+impl std::str::FromStr for MemoryTier {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "permanent" => Ok(MemoryTier::Permanent),
+            "daily" => Ok(MemoryTier::Daily),
+            _ => Err(format!("Unknown memory tier: {}", s)),
+        }
+    }
 }
 
 impl MemoryType {
@@ -91,7 +235,13 @@ impl MemoryType {
             MemoryType::Context => "context",
             MemoryType::Credential => "credential",
             MemoryType::Custom => "custom",
+            MemoryType::TranscriptChunk => "transcript_chunk",
         }
+    }
+
+    /// Returns true if this type should be excluded from default search
+    pub fn excluded_from_default_search(&self) -> bool {
+        matches!(self, MemoryType::TranscriptChunk)
     }
 }
 
@@ -109,6 +259,7 @@ impl std::str::FromStr for MemoryType {
             "context" => Ok(MemoryType::Context),
             "credential" => Ok(MemoryType::Credential),
             "custom" => Ok(MemoryType::Custom),
+            "transcript_chunk" => Ok(MemoryType::TranscriptChunk),
             _ => Err(format!("Unknown memory type: {}", s)),
         }
     }
@@ -503,10 +654,17 @@ pub struct CreateMemoryInput {
     /// Memory scope for isolation (user/session/agent/global)
     #[serde(default)]
     pub scope: MemoryScope,
+    /// Workspace for project-based isolation (will be normalized)
+    pub workspace: Option<String>,
+    /// Memory tier (permanent or daily)
+    #[serde(default)]
+    pub tier: MemoryTier,
     /// Defer embedding computation to background queue
     #[serde(default)]
     pub defer_embedding: bool,
-    /// Time-to-live in seconds (None = never expires)
+    /// Time-to-live in seconds (None = use tier default, Some(0) = never expires)
+    /// For daily tier: defaults to 24 hours if not specified
+    /// For permanent tier: must be None (enforced at write-time)
     pub ttl_seconds: Option<i64>,
     /// Deduplication mode (default: allow)
     #[serde(default)]
@@ -556,6 +714,12 @@ pub struct ListOptions {
     pub metadata_filter: Option<HashMap<String, serde_json::Value>>,
     /// Filter by memory scope
     pub scope: Option<MemoryScope>,
+    /// Filter by workspace (single workspace)
+    pub workspace: Option<String>,
+    /// Filter by multiple workspaces (OR logic)
+    pub workspaces: Option<Vec<String>>,
+    /// Filter by memory tier
+    pub tier: Option<MemoryTier>,
     /// Advanced filter expression with AND/OR/comparison operators (RML-932)
     /// Example: {"AND": [{"metadata.project": {"eq": "engram"}}, {"importance": {"gte": 0.5}}]}
     pub filter: Option<serde_json::Value>,
@@ -596,6 +760,16 @@ pub struct SearchOptions {
     pub explain: bool,
     /// Filter by memory scope
     pub scope: Option<MemoryScope>,
+    /// Filter by workspace (single workspace)
+    pub workspace: Option<String>,
+    /// Filter by multiple workspaces (OR logic)
+    pub workspaces: Option<Vec<String>>,
+    /// Filter by memory tier
+    pub tier: Option<MemoryTier>,
+    /// Include transcript chunks in search (default: false)
+    /// By default, transcript_chunk memories are excluded from search
+    #[serde(default)]
+    pub include_transcripts: bool,
     /// Advanced filter expression with AND/OR/comparison operators (RML-932)
     /// Takes precedence over `tags` and `memory_type` if specified
     pub filter: Option<serde_json::Value>,

@@ -284,6 +284,9 @@ impl<'a> DocumentIngestor<'a> {
                     sort_by: None,
                     sort_order: None,
                     scope: None,
+                    workspace: None,
+                    workspaces: None,
+                    tier: None,
                     metadata_filter: Some(filter),
                     filter: None,
                 };
@@ -353,6 +356,8 @@ impl<'a> DocumentIngestor<'a> {
             metadata,
             importance: Some(0.5),
             scope: crate::types::MemoryScope::Global,
+            workspace: None,
+            tier: crate::types::MemoryTier::Permanent,
             defer_embedding: false,
             ttl_seconds: None,
             dedup_mode: Default::default(),
@@ -483,6 +488,9 @@ fn heading_level_to_usize(level: HeadingLevel) -> usize {
 }
 
 /// Extract sections from PDF content
+///
+/// Requires the `pdf` feature to be enabled.
+#[cfg(feature = "pdf")]
 fn extract_pdf_sections(content: &[u8]) -> std::result::Result<Vec<DocumentSection>, String> {
     let text = pdf_extract::extract_text_from_mem(content)
         .map_err(|e| format!("PDF extraction failed: {}", e))?;
@@ -508,6 +516,12 @@ fn extract_pdf_sections(content: &[u8]) -> std::result::Result<Vec<DocumentSecti
         .collect();
 
     Ok(sections)
+}
+
+/// Stub for PDF extraction when the `pdf` feature is disabled
+#[cfg(not(feature = "pdf"))]
+fn extract_pdf_sections(_content: &[u8]) -> std::result::Result<Vec<DocumentSection>, String> {
+    Err("PDF extraction requires the 'pdf' feature to be enabled".to_string())
 }
 
 /// Create chunks from sections with overlap

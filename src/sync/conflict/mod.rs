@@ -147,6 +147,8 @@ mod tests {
             owner_id: None,
             visibility: crate::types::Visibility::Private,
             scope: crate::types::MemoryScope::Global,
+            workspace: "default".to_string(),
+            tier: crate::types::MemoryTier::Permanent,
             version: 1,
             has_embedding: false,
             expires_at: None,

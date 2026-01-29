@@ -1,0 +1,90 @@
+{
+  "test_cases": [
+    {
+      "name": "simple_mention",
+      "input": "Hello @alice, how are you?",
+      "expected_entities": [
+        {
+          "mention_text": "@alice",
+          "entity_type": "Mention"
+        }
+      ]
+    },
+    {
+      "name": "multiple_mentions",
+      "input": "Meeting with @bob and @charlie tomorrow",
+      "expected_entities": [
+        {
+          "mention_text": "@bob",
+          "entity_type": "Mention"
+        },
+        {
+          "mention_text": "@charlie",
+          "entity_type": "Mention"
+        }
+      ]
+    },
+    {
+      "name": "email_extraction",
+      "input": "Send email to support@example.com for help",
+      "expected_entities": [
+        {
+          "mention_text": "support@example.com",
+          "entity_type": "Email"
+        },
+        {
+          "mention_text": "@example",
+          "entity_type": "Mention"
+        }
+      ]
+    },
+    {
+      "name": "mixed_entities",
+      "input": "@admin please check support@company.org and update John Smith's profile",
+      "expected_entities": [
+        {
+          "mention_text": "@admin",
+          "entity_type": "Mention"
+        },
+        {
+          "mention_text": "support@company.org",
+          "entity_type": "Email"
+        },
+        {
+          "mention_text": "@company",
+          "entity_type": "Mention"
+        },
+        {
+          "mention_text": "John Smith",
+          "entity_type": "Name"
+        }
+      ]
+    },
+    {
+      "name": "dedup_repeated_mentions",
+      "input": "@alice said hello, then @alice waved goodbye",
+      "expected_entities": [
+        {
+          "mention_text": "@alice",
+          "entity_type": "Mention",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "name": "empty_input",
+      "input": "",
+      "expected_entities": []
+    },
+    {
+      "name": "whitespace_only",
+      "input": "   \t\n   ",
+      "expected_entities": []
+    },
+    {
+      "name": "no_entities",
+      "input": "This is a plain text without any entities",
+      "expected_entities": []
+    }
+  ]
+}

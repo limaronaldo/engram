@@ -21,6 +21,21 @@ path = "src/bin/server.rs"
 name = "engram-cli"
 path = "src/bin/cli.rs"
 
+[features]
+default = ["cloud", "openai"]
+
+# Cloud sync (S3/R2/GCS) - adds ~2MB to binary
+cloud = ["dep:aws-sdk-s3", "dep:aws-config", "dep:aes-gcm"]
+
+# OpenAI embeddings - requires API key
+openai = ["dep:reqwest"]
+
+# PDF document ingestion
+pdf = ["dep:pdf-extract"]
+
+# All features
+full = ["cloud", "openai", "pdf"]
+
 [dependencies]
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
@@ -44,22 +59,18 @@ tower-http = { version = "0.5", features = ["cors", "trace"] }
 # MCP Protocol (JSON-RPC over stdio)
 jsonrpc-core = "18.0"
 
-# Embeddings - ONNX Runtime disabled for now (use tfidf or openai)
-# ort = { version = "2.0.0-rc.11", features = ["download-binaries"] }
-# tokenizers = "0.19"
-
 # Shell expansion for paths
 shellexpand = "3.1"
 
-# OpenAI API client
-reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
+# OpenAI API client (optional, feature-gated)
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false, optional = true }
 
-# Cloud storage (S3/R2/GCS)
-aws-sdk-s3 = "1.12"
-aws-config = "1.1"
+# Cloud storage (S3/R2/GCS) - optional, feature-gated
+aws-sdk-s3 = { version = "1.12", optional = true }
+aws-config = { version = "1.1", optional = true }
 
-# Encryption
-aes-gcm = "0.10"
+# Encryption (for cloud sync)
+aes-gcm = { version = "0.10", optional = true }
 rand = "0.8"
 base64 = "0.21"
 
@@ -75,6 +86,7 @@ thiserror = "1.0"
 anyhow = "1.0"
 
 # Utilities
+dirs = "5.0"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.6", features = ["v4", "serde"] }
 parking_lot = "0.12"
@@ -87,7 +99,7 @@ sha2 = "0.10"
 
 # Document ingestion (RML-928)
 pulldown-cmark = "0.10"
-pdf-extract = "0.7"
+pdf-extract = { version = "0.7", optional = true }
 
 # Async channels for embedding queue
 async-channel = "2.1"
@@ -99,6 +111,7 @@ tempfile = "3.9"
 tokio-test = "0.4"
 pretty_assertions = "1.4"
 fake = { version = "2.9", features = ["derive"] }
+proptest = "1.4"
 
 [[bench]]
 name = "memory_ops"
@@ -116,6 +129,10 @@ harness = false
 name = "entity_extraction"
 harness = false
 
+[[bench]]
+name = "traversal"
+harness = false
+
 [profile.release]
 lto = true
 codegen-units = 1
@@ -125,7 +142,3 @@ strip = true
 [profile.bench]
 lto = true
 codegen-units = 1
-
-[[bench]]
-name = "traversal"
-harness = false

@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, Row};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
@@ -54,6 +55,15 @@ pub fn memory_from_row(row: &Row) -> rusqlite::Result<Memory> {
     let metadata: HashMap<String, serde_json::Value> =
         serde_json::from_str(&metadata_str).unwrap_or_default();
 
+    // Workspace column (with fallback for backward compatibility)
+    let workspace: String = row
+        .get("workspace")
+        .unwrap_or_else(|_| "default".to_string());
+
+    // Tier column (with fallback for backward compatibility)
+    let tier_str: String = row.get("tier").unwrap_or_else(|_| "permanent".to_string());
+    let tier = tier_str.parse().unwrap_or_default();
+
     Ok(Memory {
         id,
         content,
@@ -76,6 +86,8 @@ pub fn memory_from_row(row: &Row) -> rusqlite::Result<Memory> {
         owner_id,
         visibility,
         scope,
+        workspace,
+        tier,
         version,
         has_embedding: has_embedding != 0,
         expires_at: expires_at.and_then(|s| {
@@ -133,7 +145,7 @@ fn get_memory_internal(conn: &Connection, id: i64, track_access: bool) -> Result
         "SELECT id, content, memory_type, importance, access_count,
                 created_at, updated_at, last_accessed_at, owner_id,
                 visibility, version, has_embedding, metadata,
-                scope_type, scope_id, expires_at, content_hash
+                scope_type, scope_id, workspace, tier, expires_at, content_hash
          FROM memories
          WHERE id = ? AND valid_to IS NULL
            AND (expires_at IS NULL OR expires_at > ?)",
@@ -188,37 +200,41 @@ pub fn compute_content_hash(content: &str) -> String {
     format!("sha256:{}", hex::encode(hasher.finalize()))
 }
 
-/// Find a memory by content hash within the same scope (exact duplicate detection)
+/// Find a memory by content hash within the same scope and workspace (exact duplicate detection)
 ///
-/// Deduplication respects scope isolation:
+/// Deduplication respects both scope and workspace isolation:
 /// - User-scoped memories only dedupe against other memories with same user_id
 /// - Session-scoped memories only dedupe against other memories with same session_id
 /// - Global memories only dedupe against other global memories
+/// - All deduplication is workspace-scoped (memories in different workspaces are never duplicates)
 pub fn find_by_content_hash(
     conn: &Connection,
     content_hash: &str,
     scope: &MemoryScope,
+    workspace: Option<&str>,
 ) -> Result<Option<Memory>> {
     let now = Utc::now().to_rfc3339();
     let scope_type = scope.scope_type();
     let scope_id = scope.scope_id().map(|s| s.to_string());
+    let workspace = workspace.unwrap_or("default");
 
     let mut stmt = conn.prepare_cached(
         "SELECT id, content, memory_type, importance, access_count,
                 created_at, updated_at, last_accessed_at, owner_id,
                 visibility, version, has_embedding, metadata,
-                scope_type, scope_id, expires_at, content_hash
+                scope_type, scope_id, workspace, tier, expires_at, content_hash
          FROM memories
          WHERE content_hash = ? AND valid_to IS NULL
            AND (expires_at IS NULL OR expires_at > ?)
            AND scope_type = ?
            AND (scope_id = ? OR (scope_id IS NULL AND ? IS NULL))
+           AND workspace = ?
          LIMIT 1",
     )?;
 
     let result = stmt
         .query_row(
-            params![content_hash, now, scope_type, scope_id, scope_id],
+            params![content_hash, now, scope_type, scope_id, scope_id, workspace],
             memory_from_row,
         )
         .ok();
@@ -231,7 +247,7 @@ pub fn find_by_content_hash(
     }
 }
 
-/// Find the most similar memory to given embedding within the same scope (semantic duplicate detection)
+/// Find the most similar memory to given embedding within the same scope AND workspace (semantic duplicate detection)
 ///
 /// Returns the memory with the highest similarity score if it meets the threshold.
 /// Only checks memories that have embeddings computed.
@@ -239,6 +255,7 @@ pub fn find_similar_by_embedding(
     conn: &Connection,
     query_embedding: &[f32],
     scope: &MemoryScope,
+    workspace: Option<&str>,
     threshold: f32,
 ) -> Result<Option<(Memory, f32)>> {
     use crate::embedding::{cosine_similarity, get_embedding};
@@ -246,23 +263,25 @@ pub fn find_similar_by_embedding(
     let now = Utc::now().to_rfc3339();
     let scope_type = scope.scope_type();
     let scope_id = scope.scope_id().map(|s| s.to_string());
+    let workspace = workspace.unwrap_or("default");
 
-    // Get all memories with embeddings in the same scope
+    // Get all memories with embeddings in the same scope AND workspace
     let mut stmt = conn.prepare_cached(
         "SELECT id, content, memory_type, importance, access_count,
                 created_at, updated_at, last_accessed_at, owner_id,
                 visibility, version, has_embedding, metadata,
-                scope_type, scope_id, expires_at, content_hash
+                scope_type, scope_id, workspace, tier, expires_at, content_hash
          FROM memories
          WHERE has_embedding = 1 AND valid_to IS NULL
            AND (expires_at IS NULL OR expires_at > ?)
            AND scope_type = ?
-           AND (scope_id = ? OR (scope_id IS NULL AND ? IS NULL))",
+           AND (scope_id = ? OR (scope_id IS NULL AND ? IS NULL))
+           AND workspace = ?",
     )?;
 
     let memories: Vec<Memory> = stmt
         .query_map(
-            params![now, scope_type, scope_id, scope_id],
+            params![now, scope_type, scope_id, scope_id, workspace],
             memory_from_row,
         )?
         .filter_map(|r| r.ok())
@@ -424,9 +443,18 @@ pub fn create_memory(conn: &Connection, input: &CreateMemoryInput) -> Result<Mem
     // Compute content hash for deduplication
     let content_hash = compute_content_hash(&input.content);
 
-    // Check for duplicates based on dedup_mode (scoped to same scope)
+    // Normalize workspace early for dedup checking
+    let workspace = match &input.workspace {
+        Some(ws) => crate::types::normalize_workspace(ws)
+            .map_err(|e| EngramError::InvalidInput(format!("Invalid workspace: {}", e)))?,
+        None => "default".to_string(),
+    };
+
+    // Check for duplicates based on dedup_mode (scoped to same scope AND workspace)
     if input.dedup_mode != DedupMode::Allow {
-        if let Some(existing) = find_by_content_hash(conn, &content_hash, &input.scope)? {
+        if let Some(existing) =
+            find_by_content_hash(conn, &content_hash, &input.scope, Some(&workspace))?
+        {
             match input.dedup_mode {
                 DedupMode::Reject => {
                     return Err(EngramError::Duplicate {
@@ -476,17 +504,35 @@ pub fn create_memory(conn: &Connection, input: &CreateMemoryInput) -> Result<Mem
     let scope_type = input.scope.scope_type();
     let scope_id = input.scope.scope_id().map(|s| s.to_string());
 
-    // Validate and calculate expires_at from ttl_seconds
-    // ttl_seconds <= 0 is treated as "no expiration" (same as None)
-    // This prevents creating memories that expire immediately
-    let expires_at = input
-        .ttl_seconds
-        .filter(|&ttl| ttl > 0)
-        .map(|ttl| (now + chrono::Duration::seconds(ttl)).to_rfc3339());
+    // workspace was already normalized above for dedup checking
+
+    // Determine tier and enforce tier invariants
+    let tier = input.tier;
+
+    // Calculate expires_at based on tier and ttl_seconds
+    // Tier invariants:
+    //   - Permanent: expires_at MUST be NULL (cannot expire)
+    //   - Daily: expires_at MUST be set (default: created_at + 24h)
+    let expires_at = match tier {
+        MemoryTier::Permanent => {
+            // Permanent memories cannot have an expiration
+            if input.ttl_seconds.is_some() && input.ttl_seconds != Some(0) {
+                return Err(EngramError::InvalidInput(
+                    "Permanent tier memories cannot have a TTL. Use Daily tier for expiring memories.".to_string()
+                ));
+            }
+            None
+        }
+        MemoryTier::Daily => {
+            // Daily memories must have an expiration (default: 24 hours)
+            let ttl = input.ttl_seconds.filter(|&t| t > 0).unwrap_or(86400); // 24h default
+            Some((now + chrono::Duration::seconds(ttl)).to_rfc3339())
+        }
+    };
 
     conn.execute(
-        "INSERT INTO memories (content, memory_type, importance, metadata, created_at, updated_at, valid_from, scope_type, scope_id, expires_at, content_hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO memories (content, memory_type, importance, metadata, created_at, updated_at, valid_from, scope_type, scope_id, workspace, tier, expires_at, content_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
             input.content,
             input.memory_type.as_str(),
@@ -497,6 +543,8 @@ pub fn create_memory(conn: &Connection, input: &CreateMemoryInput) -> Result<Mem
             now_str,
             scope_type,
             scope_id,
+            workspace,
+            tier.as_str(),
             expires_at,
             content_hash,
         ],
@@ -531,9 +579,21 @@ pub fn create_memory(conn: &Connection, input: &CreateMemoryInput) -> Result<Mem
         params![id, input.content, tags_json, metadata_json, now_str],
     )?;
 
-    // Update sync state
+    // Record event for sync delta tracking
+    record_event(
+        conn,
+        MemoryEventType::Created,
+        Some(id),
+        None,
+        serde_json::json!({
+            "workspace": input.workspace.as_deref().unwrap_or("default"),
+            "memory_type": input.memory_type.as_str(),
+        }),
+    )?;
+
+    // Update sync state (version now tracks event count for delta sync)
     conn.execute(
-        "UPDATE sync_state SET pending_changes = pending_changes + 1 WHERE id = 1",
+        "UPDATE sync_state SET pending_changes = pending_changes + 1, version = (SELECT MAX(id) FROM memory_events) WHERE id = 1",
         [],
     )?;
 
@@ -598,13 +658,29 @@ pub fn update_memory(conn: &Connection, id: i64, input: &UpdateMemoryInput) -> R
         values.push(Box::new(scope.scope_id().map(|s| s.to_string())));
     }
 
-    // Handle TTL update
+    // Handle TTL update with tier invariant enforcement
+    // Normalize: ttl_seconds <= 0 means "no expiration" (consistent with create_memory)
+    // Invariants:
+    //   - Permanent tier: expires_at MUST be NULL
+    //   - Daily tier: expires_at MUST be set
     if let Some(ttl) = input.ttl_seconds {
-        if ttl == 0 {
-            // Remove expiration
+        if ttl <= 0 {
+            // Request to remove expiration
+            // Only allowed for Permanent tier; for Daily tier, this is an error
+            if current.tier == MemoryTier::Daily {
+                return Err(crate::error::EngramError::InvalidInput(
+                    "Cannot remove expiration from a Daily tier memory. Use promote_to_permanent first.".to_string()
+                ));
+            }
             updates.push("expires_at = NULL".to_string());
         } else {
-            // Set new expiration
+            // Request to set expiration
+            // Only allowed for Daily tier; for Permanent tier, this is an error
+            if current.tier == MemoryTier::Permanent {
+                return Err(crate::error::EngramError::InvalidInput(
+                    "Cannot set expiration on a Permanent tier memory. Permanent memories cannot expire.".to_string()
+                ));
+            }
             let expires_at = (Utc::now() + chrono::Duration::seconds(ttl)).to_rfc3339();
             updates.push("expires_at = ?".to_string());
             values.push(Box::new(expires_at));
@@ -660,18 +736,346 @@ pub fn update_memory(conn: &Connection, id: i64, input: &UpdateMemoryInput) -> R
         )?;
     }
 
-    // Update sync state
+    // Build list of changed fields for event data
+    let mut changed_fields = Vec::new();
+    if input.content.is_some() {
+        changed_fields.push("content");
+    }
+    if input.tags.is_some() {
+        changed_fields.push("tags");
+    }
+    if input.metadata.is_some() {
+        changed_fields.push("metadata");
+    }
+    if input.importance.is_some() {
+        changed_fields.push("importance");
+    }
+    if input.ttl_seconds.is_some() {
+        changed_fields.push("ttl");
+    }
+
+    // Record event for sync delta tracking
+    record_event(
+        conn,
+        MemoryEventType::Updated,
+        Some(id),
+        None,
+        serde_json::json!({
+            "changed_fields": changed_fields,
+        }),
+    )?;
+
+    // Update sync state (version now tracks event count for delta sync)
     conn.execute(
-        "UPDATE sync_state SET pending_changes = pending_changes + 1 WHERE id = 1",
+        "UPDATE sync_state SET pending_changes = pending_changes + 1, version = (SELECT MAX(id) FROM memory_events) WHERE id = 1",
         [],
     )?;
 
     get_memory_internal(conn, id, false)
 }
 
+/// Promote a memory from Daily tier to Permanent tier.
+///
+/// This operation:
+/// - Changes the tier from Daily to Permanent
+/// - Clears the expires_at field (permanent memories cannot expire)
+/// - Updates the updated_at timestamp
+///
+/// # Errors
+/// - Returns `NotFound` if memory doesn't exist
+/// - Returns `Validation` if memory is already Permanent
+pub fn promote_to_permanent(conn: &Connection, id: i64) -> Result<Memory> {
+    let memory = get_memory_internal(conn, id, false)?;
+
+    if memory.tier == MemoryTier::Permanent {
+        return Err(EngramError::InvalidInput(format!(
+            "Memory {} is already in the Permanent tier",
+            id
+        )));
+    }
+
+    let now = Utc::now().to_rfc3339();
+
+    conn.execute(
+        "UPDATE memories SET tier = 'permanent', expires_at = NULL, updated_at = ?, version = version + 1 WHERE id = ?",
+        params![now, id],
+    )?;
+
+    // Record event for sync delta tracking
+    record_event(
+        conn,
+        MemoryEventType::Updated,
+        Some(id),
+        None,
+        serde_json::json!({
+            "changed_fields": ["tier", "expires_at"],
+            "action": "promote_to_permanent",
+        }),
+    )?;
+
+    // Update sync state (version now tracks event count for delta sync)
+    conn.execute(
+        "UPDATE sync_state SET pending_changes = pending_changes + 1, version = (SELECT MAX(id) FROM memory_events) WHERE id = 1",
+        [],
+    )?;
+
+    tracing::info!(memory_id = id, "Promoted memory to permanent tier");
+
+    get_memory_internal(conn, id, false)
+}
+
+/// Move a memory to a different workspace.
+///
+/// # Arguments
+/// - `id`: Memory ID
+/// - `workspace`: New workspace name (will be normalized)
+///
+/// # Errors
+/// - Returns `NotFound` if memory doesn't exist
+/// - Returns `Validation` if workspace name is invalid
+pub fn move_to_workspace(conn: &Connection, id: i64, workspace: &str) -> Result<Memory> {
+    // Validate workspace exists (by checking the memory exists first)
+    let _memory = get_memory_internal(conn, id, false)?;
+
+    // Normalize the workspace name
+    let normalized = crate::types::normalize_workspace(workspace)
+        .map_err(|e| EngramError::InvalidInput(format!("Invalid workspace: {}", e)))?;
+
+    let now = Utc::now().to_rfc3339();
+
+    conn.execute(
+        "UPDATE memories SET workspace = ?, updated_at = ?, version = version + 1 WHERE id = ?",
+        params![normalized, now, id],
+    )?;
+
+    // Record event for sync delta tracking
+    record_event(
+        conn,
+        MemoryEventType::Updated,
+        Some(id),
+        None,
+        serde_json::json!({
+            "changed_fields": ["workspace"],
+            "action": "move_to_workspace",
+            "new_workspace": normalized,
+        }),
+    )?;
+
+    // Update sync state (version now tracks event count for delta sync)
+    conn.execute(
+        "UPDATE sync_state SET pending_changes = pending_changes + 1, version = (SELECT MAX(id) FROM memory_events) WHERE id = 1",
+        [],
+    )?;
+
+    tracing::info!(memory_id = id, workspace = %normalized, "Moved memory to workspace");
+
+    get_memory_internal(conn, id, false)
+}
+
+/// List all workspaces with their statistics.
+///
+/// Returns computed stats for each workspace that has at least one memory.
+/// Stats are computed on-demand (not cached at the database level).
+pub fn list_workspaces(conn: &Connection) -> Result<Vec<WorkspaceStats>> {
+    let now = Utc::now().to_rfc3339();
+
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT
+            workspace,
+            COUNT(*) as memory_count,
+            SUM(CASE WHEN tier = 'permanent' THEN 1 ELSE 0 END) as permanent_count,
+            SUM(CASE WHEN tier = 'daily' THEN 1 ELSE 0 END) as daily_count,
+            MIN(created_at) as first_memory_at,
+            MAX(created_at) as last_memory_at,
+            AVG(importance) as avg_importance
+        FROM memories
+        WHERE valid_to IS NULL AND (expires_at IS NULL OR expires_at > ?)
+        GROUP BY workspace
+        ORDER BY memory_count DESC
+        "#,
+    )?;
+
+    let workspaces: Vec<WorkspaceStats> = stmt
+        .query_map(params![now], |row| {
+            let workspace: String = row.get(0)?;
+            let memory_count: i64 = row.get(1)?;
+            let permanent_count: i64 = row.get(2)?;
+            let daily_count: i64 = row.get(3)?;
+            let first_memory_at: Option<String> = row.get(4)?;
+            let last_memory_at: Option<String> = row.get(5)?;
+            let avg_importance: Option<f64> = row.get(6)?;
+
+            Ok(WorkspaceStats {
+                workspace,
+                memory_count,
+                permanent_count,
+                daily_count,
+                first_memory_at: first_memory_at.and_then(|s| {
+                    DateTime::parse_from_rfc3339(&s)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .ok()
+                }),
+                last_memory_at: last_memory_at.and_then(|s| {
+                    DateTime::parse_from_rfc3339(&s)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .ok()
+                }),
+                top_tags: vec![], // Loaded separately if needed
+                avg_importance: avg_importance.map(|v| v as f32),
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(workspaces)
+}
+
+/// Get statistics for a specific workspace.
+pub fn get_workspace_stats(conn: &Connection, workspace: &str) -> Result<WorkspaceStats> {
+    let normalized = crate::types::normalize_workspace(workspace)
+        .map_err(|e| EngramError::InvalidInput(format!("Invalid workspace: {}", e)))?;
+
+    let now = Utc::now().to_rfc3339();
+
+    let stats = conn
+        .query_row(
+            r#"
+        SELECT
+            workspace,
+            COUNT(*) as memory_count,
+            SUM(CASE WHEN tier = 'permanent' THEN 1 ELSE 0 END) as permanent_count,
+            SUM(CASE WHEN tier = 'daily' THEN 1 ELSE 0 END) as daily_count,
+            MIN(created_at) as first_memory_at,
+            MAX(created_at) as last_memory_at,
+            AVG(importance) as avg_importance
+        FROM memories
+        WHERE workspace = ? AND valid_to IS NULL AND (expires_at IS NULL OR expires_at > ?)
+        GROUP BY workspace
+        "#,
+            params![normalized, now],
+            |row| {
+                let workspace: String = row.get(0)?;
+                let memory_count: i64 = row.get(1)?;
+                let permanent_count: i64 = row.get(2)?;
+                let daily_count: i64 = row.get(3)?;
+                let first_memory_at: Option<String> = row.get(4)?;
+                let last_memory_at: Option<String> = row.get(5)?;
+                let avg_importance: Option<f64> = row.get(6)?;
+
+                Ok(WorkspaceStats {
+                    workspace,
+                    memory_count,
+                    permanent_count,
+                    daily_count,
+                    first_memory_at: first_memory_at.and_then(|s| {
+                        DateTime::parse_from_rfc3339(&s)
+                            .map(|dt| dt.with_timezone(&Utc))
+                            .ok()
+                    }),
+                    last_memory_at: last_memory_at.and_then(|s| {
+                        DateTime::parse_from_rfc3339(&s)
+                            .map(|dt| dt.with_timezone(&Utc))
+                            .ok()
+                    }),
+                    top_tags: vec![],
+                    avg_importance: avg_importance.map(|v| v as f32),
+                })
+            },
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => {
+                EngramError::NotFound(0) // Workspace doesn't exist
+            }
+            _ => EngramError::Database(e),
+        })?;
+
+    Ok(stats)
+}
+
+/// Delete a workspace by moving all its memories to the default workspace or deleting them.
+///
+/// # Arguments
+/// - `workspace`: Workspace to delete
+/// - `move_to_default`: If true, moves memories to "default" workspace. If false, deletes them.
+///
+/// # Returns
+/// Number of memories affected.
+pub fn delete_workspace(conn: &Connection, workspace: &str, move_to_default: bool) -> Result<i64> {
+    let normalized = crate::types::normalize_workspace(workspace)
+        .map_err(|e| EngramError::InvalidInput(format!("Invalid workspace: {}", e)))?;
+
+    if normalized == "default" {
+        return Err(EngramError::InvalidInput(
+            "Cannot delete the default workspace".to_string(),
+        ));
+    }
+
+    let now = Utc::now().to_rfc3339();
+
+    let affected = if move_to_default {
+        // Move all memories to the default workspace
+        conn.execute(
+            "UPDATE memories SET workspace = 'default', updated_at = ?, version = version + 1 WHERE workspace = ? AND valid_to IS NULL",
+            params![now, normalized],
+        )? as i64
+    } else {
+        // Soft delete all memories in the workspace
+        conn.execute(
+            "UPDATE memories SET valid_to = ? WHERE workspace = ? AND valid_to IS NULL",
+            params![now, normalized],
+        )? as i64
+    };
+
+    // Record batch event for sync delta tracking
+    if affected > 0 {
+        let event_type = if move_to_default {
+            MemoryEventType::Updated
+        } else {
+            MemoryEventType::Deleted
+        };
+        record_event(
+            conn,
+            event_type,
+            None, // Batch operation, no single memory_id
+            None,
+            serde_json::json!({
+                "action": "delete_workspace",
+                "workspace": normalized,
+                "move_to_default": move_to_default,
+                "affected_count": affected,
+            }),
+        )?;
+    }
+
+    // Update sync state (version now tracks event count for delta sync)
+    conn.execute(
+        "UPDATE sync_state SET pending_changes = pending_changes + ?, version = (SELECT COALESCE(MAX(id), 0) FROM memory_events) WHERE id = 1",
+        params![affected],
+    )?;
+
+    tracing::info!(
+        workspace = %normalized,
+        move_to_default,
+        affected,
+        "Deleted workspace"
+    );
+
+    Ok(affected)
+}
+
 /// Delete a memory (soft delete by setting valid_to)
 pub fn delete_memory(conn: &Connection, id: i64) -> Result<()> {
     let now = Utc::now().to_rfc3339();
+
+    // Get memory info before deletion for event data
+    let memory_info: Option<(String, String)> = conn
+        .query_row(
+            "SELECT workspace, memory_type FROM memories WHERE id = ? AND valid_to IS NULL",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ok();
 
     let affected = conn.execute(
         "UPDATE memories SET valid_to = ? WHERE id = ? AND valid_to IS NULL",
@@ -688,9 +1092,23 @@ pub fn delete_memory(conn: &Connection, id: i64) -> Result<()> {
         params![now, id, id],
     )?;
 
-    // Update sync state
+    // Record event for sync delta tracking
+    let (workspace, memory_type) =
+        memory_info.unwrap_or(("default".to_string(), "unknown".to_string()));
+    record_event(
+        conn,
+        MemoryEventType::Deleted,
+        Some(id),
+        None,
+        serde_json::json!({
+            "workspace": workspace,
+            "memory_type": memory_type,
+        }),
+    )?;
+
+    // Update sync state (version now tracks event count for delta sync)
     conn.execute(
-        "UPDATE sync_state SET pending_changes = pending_changes + 1 WHERE id = 1",
+        "UPDATE sync_state SET pending_changes = pending_changes + 1, version = (SELECT MAX(id) FROM memory_events) WHERE id = 1",
         [],
     )?;
 
@@ -705,7 +1123,7 @@ pub fn list_memories(conn: &Connection, options: &ListOptions) -> Result<Vec<Mem
         "SELECT DISTINCT m.id, m.content, m.memory_type, m.importance, m.access_count,
                 m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
                 m.visibility, m.version, m.has_embedding, m.metadata,
-                m.scope_type, m.scope_id, m.expires_at, m.content_hash
+                m.scope_type, m.scope_id, m.workspace, m.tier, m.expires_at, m.content_hash
          FROM memories m",
     );
 
@@ -754,6 +1172,18 @@ pub fn list_memories(conn: &Connection, options: &ListOptions) -> Result<Vec<Mem
         } else {
             conditions.push("m.scope_id IS NULL".to_string());
         }
+    }
+
+    // Workspace filter
+    if let Some(ref workspace) = options.workspace {
+        conditions.push("m.workspace = ?".to_string());
+        params.push(Box::new(workspace.clone()));
+    }
+
+    // Tier filter
+    if let Some(ref tier) = options.tier {
+        conditions.push("m.tier = ?".to_string());
+        params.push(Box::new(tier.as_str().to_string()));
     }
 
     sql.push_str(" WHERE ");
@@ -985,13 +1415,26 @@ pub fn set_memory_expiration(
             )?;
         }
         None => {
-            // No change
+            // No change - don't record event or update sync state
+            return get_memory_internal(conn, id, false);
         }
     }
 
-    // Update sync state
+    // Record event for sync delta tracking
+    record_event(
+        conn,
+        MemoryEventType::Updated,
+        Some(id),
+        None,
+        serde_json::json!({
+            "changed_fields": ["expires_at"],
+            "action": "set_expiration",
+        }),
+    )?;
+
+    // Update sync state (version now tracks event count for delta sync)
     conn.execute(
-        "UPDATE sync_state SET pending_changes = pending_changes + 1 WHERE id = 1",
+        "UPDATE sync_state SET pending_changes = pending_changes + 1, version = (SELECT MAX(id) FROM memory_events) WHERE id = 1",
         [],
     )?;
 
@@ -1043,9 +1486,21 @@ pub fn cleanup_expired_memories(conn: &Connection) -> Result<i64> {
             params![now],
         )?;
 
-        // Update sync state
+        // Record batch event for sync delta tracking
+        record_event(
+            conn,
+            MemoryEventType::Deleted,
+            None, // Batch operation
+            None,
+            serde_json::json!({
+                "action": "cleanup_expired",
+                "affected_count": affected,
+            }),
+        )?;
+
+        // Update sync state (version now tracks event count for delta sync)
         conn.execute(
-            "UPDATE sync_state SET pending_changes = pending_changes + ? WHERE id = 1",
+            "UPDATE sync_state SET pending_changes = pending_changes + ?, version = (SELECT COALESCE(MAX(id), 0) FROM memory_events) WHERE id = 1",
             params![affected as i64],
         )?;
     }
@@ -1065,6 +1520,193 @@ pub fn count_expired_memories(conn: &Connection) -> Result<i64> {
     )?;
 
     Ok(count)
+}
+
+/// A compact memory representation for efficient list views.
+/// Contains only essential fields and a truncated content preview.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CompactMemoryRow {
+    /// Memory ID
+    pub id: i64,
+    /// Content preview (first line or N chars)
+    pub preview: String,
+    /// Whether content was truncated
+    pub truncated: bool,
+    /// Memory type
+    pub memory_type: MemoryType,
+    /// Tags
+    pub tags: Vec<String>,
+    /// Importance score
+    pub importance: f32,
+    /// Creation timestamp
+    pub created_at: DateTime<Utc>,
+    /// Last update timestamp
+    pub updated_at: DateTime<Utc>,
+    /// Workspace name
+    pub workspace: String,
+    /// Memory tier
+    pub tier: MemoryTier,
+    /// Original content length in chars
+    pub content_length: usize,
+    /// Number of lines in original content
+    pub line_count: usize,
+}
+
+/// List memories in compact format with preview only.
+///
+/// This is more efficient than `list_memories` when you don't need full content,
+/// such as for browsing/listing UIs.
+///
+/// # Arguments
+/// * `conn` - Database connection
+/// * `options` - List filtering/pagination options
+/// * `preview_chars` - Max chars for preview (default: 100)
+pub fn list_memories_compact(
+    conn: &Connection,
+    options: &ListOptions,
+    preview_chars: Option<usize>,
+) -> Result<Vec<CompactMemoryRow>> {
+    use crate::intelligence::compact_preview;
+
+    let now = Utc::now().to_rfc3339();
+    let max_preview = preview_chars.unwrap_or(100);
+
+    let mut sql = String::from(
+        "SELECT DISTINCT m.id, m.content, m.memory_type, m.importance,
+                m.created_at, m.updated_at, m.workspace, m.tier
+         FROM memories m",
+    );
+
+    let mut conditions = vec!["m.valid_to IS NULL".to_string()];
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![];
+
+    // Exclude expired memories
+    conditions.push("(m.expires_at IS NULL OR m.expires_at > ?)".to_string());
+    params.push(Box::new(now));
+
+    // Tag filter (requires join)
+    if let Some(ref tags) = options.tags {
+        if !tags.is_empty() {
+            sql.push_str(
+                " JOIN memory_tags mt ON m.id = mt.memory_id
+                  JOIN tags t ON mt.tag_id = t.id",
+            );
+            let placeholders: Vec<String> = tags.iter().map(|_| "?".to_string()).collect();
+            conditions.push(format!("t.name IN ({})", placeholders.join(", ")));
+            for tag in tags {
+                params.push(Box::new(tag.clone()));
+            }
+        }
+    }
+
+    // Type filter
+    if let Some(ref memory_type) = options.memory_type {
+        conditions.push("m.memory_type = ?".to_string());
+        params.push(Box::new(memory_type.as_str().to_string()));
+    }
+
+    // Metadata filter (JSON)
+    if let Some(ref metadata_filter) = options.metadata_filter {
+        for (key, value) in metadata_filter {
+            metadata_value_to_param(key, value, &mut conditions, &mut params)?;
+        }
+    }
+
+    // Scope filter
+    if let Some(ref scope) = options.scope {
+        conditions.push("m.scope_type = ?".to_string());
+        params.push(Box::new(scope.scope_type().to_string()));
+        if let Some(scope_id) = scope.scope_id() {
+            conditions.push("m.scope_id = ?".to_string());
+            params.push(Box::new(scope_id.to_string()));
+        } else {
+            conditions.push("m.scope_id IS NULL".to_string());
+        }
+    }
+
+    // Workspace filter
+    if let Some(ref workspace) = options.workspace {
+        conditions.push("m.workspace = ?".to_string());
+        params.push(Box::new(workspace.clone()));
+    }
+
+    // Tier filter
+    if let Some(ref tier) = options.tier {
+        conditions.push("m.tier = ?".to_string());
+        params.push(Box::new(tier.as_str().to_string()));
+    }
+
+    sql.push_str(" WHERE ");
+    sql.push_str(&conditions.join(" AND "));
+
+    // Sorting
+    let sort_field = match options.sort_by.unwrap_or_default() {
+        SortField::CreatedAt => "m.created_at",
+        SortField::UpdatedAt => "m.updated_at",
+        SortField::LastAccessedAt => "m.last_accessed_at",
+        SortField::Importance => "m.importance",
+        SortField::AccessCount => "m.access_count",
+    };
+    let sort_order = match options.sort_order.unwrap_or_default() {
+        SortOrder::Asc => "ASC",
+        SortOrder::Desc => "DESC",
+    };
+    sql.push_str(&format!(" ORDER BY {} {}", sort_field, sort_order));
+
+    // Pagination
+    let limit = options.limit.unwrap_or(100);
+    let offset = options.offset.unwrap_or(0);
+    sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
+
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+
+    let memories: Vec<CompactMemoryRow> = stmt
+        .query_map(param_refs.as_slice(), |row| {
+            let id: i64 = row.get("id")?;
+            let content: String = row.get("content")?;
+            let memory_type_str: String = row.get("memory_type")?;
+            let importance: f32 = row.get("importance")?;
+            let created_at_str: String = row.get("created_at")?;
+            let updated_at_str: String = row.get("updated_at")?;
+            let workspace: String = row.get("workspace")?;
+            let tier_str: String = row.get("tier")?;
+
+            let memory_type = memory_type_str.parse().unwrap_or(MemoryType::Note);
+            let tier = tier_str.parse().unwrap_or_default();
+
+            // Generate compact preview
+            let (preview, truncated) = compact_preview(&content, max_preview);
+            let content_length = content.len();
+            let line_count = content.lines().count();
+
+            Ok(CompactMemoryRow {
+                id,
+                preview,
+                truncated,
+                memory_type,
+                tags: vec![], // Will be loaded separately
+                importance,
+                created_at: DateTime::parse_from_rfc3339(&created_at_str)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now()),
+                updated_at: DateTime::parse_from_rfc3339(&updated_at_str)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now()),
+                workspace,
+                tier,
+                content_length,
+                line_count,
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .map(|mut m| {
+            m.tags = load_tags(conn, m.id).unwrap_or_default();
+            m
+        })
+        .collect();
+
+    Ok(memories)
 }
 
 /// Get storage statistics
@@ -1158,6 +1800,1117 @@ pub fn get_memory_versions(conn: &Connection, memory_id: i64) -> Result<Vec<Memo
     Ok(versions)
 }
 
+// ============================================================================
+// Batch Operations
+// ============================================================================
+
+/// Result of a batch create operation
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BatchCreateResult {
+    pub created: Vec<Memory>,
+    pub failed: Vec<BatchError>,
+    pub total_created: usize,
+    pub total_failed: usize,
+}
+
+/// Result of a batch delete operation
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BatchDeleteResult {
+    pub deleted: Vec<i64>,
+    pub failed: Vec<BatchError>,
+    pub total_deleted: usize,
+    pub total_failed: usize,
+}
+
+/// Error information for batch operations
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BatchError {
+    pub index: usize,
+    pub id: Option<i64>,
+    pub error: String,
+}
+
+/// Create multiple memories in a single transaction
+pub fn create_memory_batch(
+    conn: &Connection,
+    inputs: &[CreateMemoryInput],
+) -> Result<BatchCreateResult> {
+    let mut created = Vec::new();
+    let mut failed = Vec::new();
+
+    for (index, input) in inputs.iter().enumerate() {
+        match create_memory(conn, input) {
+            Ok(memory) => created.push(memory),
+            Err(e) => failed.push(BatchError {
+                index,
+                id: None,
+                error: e.to_string(),
+            }),
+        }
+    }
+
+    Ok(BatchCreateResult {
+        total_created: created.len(),
+        total_failed: failed.len(),
+        created,
+        failed,
+    })
+}
+
+/// Delete multiple memories in a single transaction
+pub fn delete_memory_batch(conn: &Connection, ids: &[i64]) -> Result<BatchDeleteResult> {
+    let mut deleted = Vec::new();
+    let mut failed = Vec::new();
+
+    for (index, &id) in ids.iter().enumerate() {
+        match delete_memory(conn, id) {
+            Ok(()) => deleted.push(id),
+            Err(e) => failed.push(BatchError {
+                index,
+                id: Some(id),
+                error: e.to_string(),
+            }),
+        }
+    }
+
+    Ok(BatchDeleteResult {
+        total_deleted: deleted.len(),
+        total_failed: failed.len(),
+        deleted,
+        failed,
+    })
+}
+
+// ============================================================================
+// Tag Utilities
+// ============================================================================
+
+/// Tag with usage count
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TagInfo {
+    pub name: String,
+    pub count: i64,
+    pub last_used: Option<DateTime<Utc>>,
+}
+
+/// Get all tags with their usage counts
+pub fn list_tags(conn: &Connection) -> Result<Vec<TagInfo>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT t.name, COUNT(mt.memory_id) as count,
+               MAX(m.updated_at) as last_used
+        FROM tags t
+        LEFT JOIN memory_tags mt ON t.id = mt.tag_id
+        LEFT JOIN memories m ON mt.memory_id = m.id AND m.valid_to IS NULL
+        GROUP BY t.id, t.name
+        ORDER BY count DESC, t.name ASC
+        "#,
+    )?;
+
+    let tags: Vec<TagInfo> = stmt
+        .query_map([], |row| {
+            let name: String = row.get(0)?;
+            let count: i64 = row.get(1)?;
+            let last_used: Option<String> = row.get(2)?;
+
+            Ok(TagInfo {
+                name,
+                count,
+                last_used: last_used.and_then(|s| {
+                    DateTime::parse_from_rfc3339(&s)
+                        .map(|dt| dt.with_timezone(&Utc))
+                        .ok()
+                }),
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(tags)
+}
+
+/// Tag hierarchy node
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TagHierarchyNode {
+    pub name: String,
+    pub full_path: String,
+    pub count: i64,
+    pub children: Vec<TagHierarchyNode>,
+}
+
+/// Build tag hierarchy from slash-separated tags (e.g., "project/engram/core")
+pub fn get_tag_hierarchy(conn: &Connection) -> Result<Vec<TagHierarchyNode>> {
+    let tags = list_tags(conn)?;
+
+    // Build hierarchy from slash-separated paths
+    let mut root_nodes: HashMap<String, TagHierarchyNode> = HashMap::new();
+
+    for tag in tags {
+        let parts: Vec<&str> = tag.name.split('/').collect();
+        if parts.is_empty() {
+            continue;
+        }
+
+        let root_name = parts[0].to_string();
+        if !root_nodes.contains_key(&root_name) {
+            root_nodes.insert(
+                root_name.clone(),
+                TagHierarchyNode {
+                    name: root_name.clone(),
+                    full_path: root_name.clone(),
+                    count: 0,
+                    children: Vec::new(),
+                },
+            );
+        }
+
+        // Add count to appropriate level
+        if parts.len() == 1 {
+            if let Some(node) = root_nodes.get_mut(&root_name) {
+                node.count += tag.count;
+            }
+        } else {
+            // For nested tags, we'd need recursive building
+            // For now, just add to root count
+            if let Some(node) = root_nodes.get_mut(&root_name) {
+                node.count += tag.count;
+            }
+        }
+    }
+
+    Ok(root_nodes.into_values().collect())
+}
+
+/// Tag validation result
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TagValidationResult {
+    pub valid: bool,
+    pub orphaned_tags: Vec<String>,
+    pub empty_tags: Vec<String>,
+    pub duplicate_assignments: Vec<(i64, String)>,
+    pub total_tags: i64,
+    pub total_assignments: i64,
+}
+
+/// Validate tag consistency
+pub fn validate_tags(conn: &Connection) -> Result<TagValidationResult> {
+    // Find orphaned tags (tags with no memories)
+    let orphaned: Vec<String> = conn
+        .prepare(
+            "SELECT t.name FROM tags t
+             LEFT JOIN memory_tags mt ON t.id = mt.tag_id
+             WHERE mt.tag_id IS NULL",
+        )?
+        .query_map([], |row| row.get(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    // Find empty tag names
+    let empty: Vec<String> = conn
+        .prepare("SELECT name FROM tags WHERE name = '' OR name IS NULL")?
+        .query_map([], |row| row.get(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    // Count totals
+    let total_tags: i64 = conn.query_row("SELECT COUNT(*) FROM tags", [], |row| row.get(0))?;
+    let total_assignments: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memory_tags", [], |row| row.get(0))?;
+
+    Ok(TagValidationResult {
+        valid: orphaned.is_empty() && empty.is_empty(),
+        orphaned_tags: orphaned,
+        empty_tags: empty,
+        duplicate_assignments: vec![], // Would need more complex query
+        total_tags,
+        total_assignments,
+    })
+}
+
+// ============================================================================
+// Import/Export
+// ============================================================================
+
+/// Exported memory format
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExportedMemory {
+    pub id: i64,
+    pub content: String,
+    pub memory_type: String,
+    pub tags: Vec<String>,
+    pub metadata: HashMap<String, serde_json::Value>,
+    pub importance: f32,
+    pub workspace: String,
+    pub tier: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Export format
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExportData {
+    pub version: String,
+    pub exported_at: String,
+    pub memory_count: usize,
+    pub memories: Vec<ExportedMemory>,
+}
+
+/// Export all memories to JSON-serializable format
+pub fn export_memories(conn: &Connection) -> Result<ExportData> {
+    let memories = list_memories(
+        conn,
+        &ListOptions {
+            limit: Some(100000),
+            ..Default::default()
+        },
+    )?;
+
+    let exported: Vec<ExportedMemory> = memories
+        .into_iter()
+        .map(|m| ExportedMemory {
+            id: m.id,
+            content: m.content,
+            memory_type: m.memory_type.as_str().to_string(),
+            tags: m.tags,
+            metadata: m.metadata,
+            importance: m.importance,
+            workspace: m.workspace,
+            tier: m.tier.as_str().to_string(),
+            created_at: m.created_at.to_rfc3339(),
+            updated_at: m.updated_at.to_rfc3339(),
+        })
+        .collect();
+
+    Ok(ExportData {
+        version: "1.0".to_string(),
+        exported_at: Utc::now().to_rfc3339(),
+        memory_count: exported.len(),
+        memories: exported,
+    })
+}
+
+/// Import result
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ImportResult {
+    pub imported: usize,
+    pub skipped: usize,
+    pub failed: usize,
+    pub errors: Vec<String>,
+}
+
+/// Import memories from exported format
+pub fn import_memories(
+    conn: &Connection,
+    data: &ExportData,
+    skip_duplicates: bool,
+) -> Result<ImportResult> {
+    let mut imported = 0;
+    let mut skipped = 0;
+    let mut failed = 0;
+    let mut errors = Vec::new();
+
+    for mem in &data.memories {
+        let memory_type = mem.memory_type.parse().unwrap_or(MemoryType::Note);
+        let tier = mem.tier.parse().unwrap_or(MemoryTier::Permanent);
+
+        let input = CreateMemoryInput {
+            content: mem.content.clone(),
+            memory_type,
+            tags: mem.tags.clone(),
+            metadata: mem.metadata.clone(),
+            importance: Some(mem.importance),
+            scope: MemoryScope::Global,
+            workspace: Some(mem.workspace.clone()),
+            tier,
+            defer_embedding: false,
+            ttl_seconds: None,
+            dedup_mode: if skip_duplicates {
+                DedupMode::Skip
+            } else {
+                DedupMode::Allow
+            },
+            dedup_threshold: None,
+        };
+
+        match create_memory(conn, &input) {
+            Ok(_) => imported += 1,
+            Err(EngramError::Duplicate { .. }) => skipped += 1,
+            Err(e) => {
+                failed += 1;
+                errors.push(format!("Failed to import memory {}: {}", mem.id, e));
+            }
+        }
+    }
+
+    Ok(ImportResult {
+        imported,
+        skipped,
+        failed,
+        errors,
+    })
+}
+
+// ============================================================================
+// Maintenance Operations
+// ============================================================================
+
+/// Queue all memories for re-embedding
+pub fn rebuild_embeddings(conn: &Connection) -> Result<i64> {
+    let now = Utc::now().to_rfc3339();
+
+    // Clear existing queue
+    conn.execute("DELETE FROM embedding_queue", [])?;
+
+    // Queue all memories
+    let count = conn.execute(
+        "INSERT INTO embedding_queue (memory_id, status, queued_at)
+         SELECT id, 'pending', ? FROM memories WHERE valid_to IS NULL",
+        params![now],
+    )?;
+
+    // Reset has_embedding flag
+    conn.execute(
+        "UPDATE memories SET has_embedding = 0 WHERE valid_to IS NULL",
+        [],
+    )?;
+
+    Ok(count as i64)
+}
+
+/// Rebuild all cross-references based on embeddings
+pub fn rebuild_crossrefs(conn: &Connection) -> Result<i64> {
+    let now = Utc::now().to_rfc3339();
+
+    // Clear existing auto-generated crossrefs (keep manual ones)
+    let deleted = conn.execute(
+        "UPDATE crossrefs SET valid_to = ? WHERE source = 'auto' AND valid_to IS NULL",
+        params![now],
+    )?;
+
+    // Note: Actual crossref generation requires embeddings and is done by the embedding worker
+    // This just clears the old ones so they can be regenerated
+
+    Ok(deleted as i64)
+}
+
+// ============================================================================
+// Special Memory Types
+// ============================================================================
+
+/// Create a section memory (for document structure)
+pub fn create_section_memory(
+    conn: &Connection,
+    title: &str,
+    content: &str,
+    parent_id: Option<i64>,
+    level: i32,
+    workspace: Option<&str>,
+) -> Result<Memory> {
+    let mut metadata = HashMap::new();
+    metadata.insert("section_title".to_string(), serde_json::json!(title));
+    metadata.insert("section_level".to_string(), serde_json::json!(level));
+    if let Some(pid) = parent_id {
+        metadata.insert("parent_memory_id".to_string(), serde_json::json!(pid));
+    }
+
+    let input = CreateMemoryInput {
+        content: format!("# {}\n\n{}", title, content),
+        memory_type: MemoryType::Context,
+        tags: vec!["section".to_string()],
+        metadata,
+        importance: Some(0.6),
+        scope: MemoryScope::Global,
+        workspace: workspace.map(String::from),
+        tier: MemoryTier::Permanent,
+        defer_embedding: false,
+        ttl_seconds: None,
+        dedup_mode: DedupMode::Skip,
+        dedup_threshold: None,
+    };
+
+    create_memory(conn, &input)
+}
+
+/// Create a checkpoint memory for session state
+pub fn create_checkpoint(
+    conn: &Connection,
+    session_id: &str,
+    summary: &str,
+    context: &HashMap<String, serde_json::Value>,
+    workspace: Option<&str>,
+) -> Result<Memory> {
+    let mut metadata = context.clone();
+    metadata.insert(
+        "checkpoint_session".to_string(),
+        serde_json::json!(session_id),
+    );
+    metadata.insert(
+        "checkpoint_time".to_string(),
+        serde_json::json!(Utc::now().to_rfc3339()),
+    );
+
+    let input = CreateMemoryInput {
+        content: format!("Session Checkpoint: {}\n\n{}", session_id, summary),
+        memory_type: MemoryType::Context,
+        tags: vec!["checkpoint".to_string(), format!("session:{}", session_id)],
+        metadata,
+        importance: Some(0.7),
+        scope: MemoryScope::Global,
+        workspace: workspace.map(String::from),
+        tier: MemoryTier::Permanent,
+        defer_embedding: false,
+        ttl_seconds: None,
+        dedup_mode: DedupMode::Allow,
+        dedup_threshold: None,
+    };
+
+    create_memory(conn, &input)
+}
+
+/// Temporarily boost a memory's importance
+pub fn boost_memory(
+    conn: &Connection,
+    id: i64,
+    boost_amount: f32,
+    duration_seconds: Option<i64>,
+) -> Result<Memory> {
+    let memory = get_memory(conn, id)?;
+    let new_importance = (memory.importance + boost_amount).min(1.0);
+    let now = Utc::now();
+
+    // Update importance
+    conn.execute(
+        "UPDATE memories SET importance = ?, updated_at = ? WHERE id = ?",
+        params![new_importance, now.to_rfc3339(), id],
+    )?;
+
+    // If duration specified, store boost info in metadata for later decay
+    if let Some(duration) = duration_seconds {
+        let expires = now + chrono::Duration::seconds(duration);
+        let mut metadata = memory.metadata.clone();
+        metadata.insert(
+            "boost_expires".to_string(),
+            serde_json::json!(expires.to_rfc3339()),
+        );
+        metadata.insert(
+            "boost_original_importance".to_string(),
+            serde_json::json!(memory.importance),
+        );
+
+        let metadata_json = serde_json::to_string(&metadata)?;
+        conn.execute(
+            "UPDATE memories SET metadata = ? WHERE id = ?",
+            params![metadata_json, id],
+        )?;
+    }
+
+    get_memory(conn, id)
+}
+
+// =============================================================================
+// Event System
+// =============================================================================
+
+/// Event types for the memory system
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MemoryEventType {
+    Created,
+    Updated,
+    Deleted,
+    Linked,
+    Unlinked,
+    Shared,
+    Synced,
+}
+
+impl std::fmt::Display for MemoryEventType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MemoryEventType::Created => write!(f, "created"),
+            MemoryEventType::Updated => write!(f, "updated"),
+            MemoryEventType::Deleted => write!(f, "deleted"),
+            MemoryEventType::Linked => write!(f, "linked"),
+            MemoryEventType::Unlinked => write!(f, "unlinked"),
+            MemoryEventType::Shared => write!(f, "shared"),
+            MemoryEventType::Synced => write!(f, "synced"),
+        }
+    }
+}
+
+impl std::str::FromStr for MemoryEventType {
+    type Err = EngramError;
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "created" => Ok(MemoryEventType::Created),
+            "updated" => Ok(MemoryEventType::Updated),
+            "deleted" => Ok(MemoryEventType::Deleted),
+            "linked" => Ok(MemoryEventType::Linked),
+            "unlinked" => Ok(MemoryEventType::Unlinked),
+            "shared" => Ok(MemoryEventType::Shared),
+            "synced" => Ok(MemoryEventType::Synced),
+            _ => Err(EngramError::InvalidInput(format!(
+                "Invalid event type: {}",
+                s
+            ))),
+        }
+    }
+}
+
+/// A memory event for tracking changes
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryEvent {
+    pub id: i64,
+    pub event_type: String,
+    pub memory_id: Option<i64>,
+    pub agent_id: Option<String>,
+    pub data: serde_json::Value,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Record an event in the event system
+pub fn record_event(
+    conn: &Connection,
+    event_type: MemoryEventType,
+    memory_id: Option<i64>,
+    agent_id: Option<&str>,
+    data: serde_json::Value,
+) -> Result<i64> {
+    let now = Utc::now();
+    let data_json = serde_json::to_string(&data)?;
+
+    conn.execute(
+        "INSERT INTO memory_events (event_type, memory_id, agent_id, data, created_at)
+         VALUES (?, ?, ?, ?, ?)",
+        params![
+            event_type.to_string(),
+            memory_id,
+            agent_id,
+            data_json,
+            now.to_rfc3339()
+        ],
+    )?;
+
+    Ok(conn.last_insert_rowid())
+}
+
+/// Poll for events since a given timestamp or event ID
+pub fn poll_events(
+    conn: &Connection,
+    since_id: Option<i64>,
+    since_time: Option<DateTime<Utc>>,
+    agent_id: Option<&str>,
+    limit: Option<usize>,
+) -> Result<Vec<MemoryEvent>> {
+    let limit = limit.unwrap_or(100);
+
+    let (query, params): (&str, Vec<Box<dyn rusqlite::ToSql>>) =
+        match (since_id, since_time, agent_id) {
+            (Some(id), _, Some(agent)) => (
+                "SELECT id, event_type, memory_id, agent_id, data, created_at
+             FROM memory_events WHERE id > ? AND (agent_id = ? OR agent_id IS NULL)
+             ORDER BY id ASC LIMIT ?",
+                vec![
+                    Box::new(id),
+                    Box::new(agent.to_string()),
+                    Box::new(limit as i64),
+                ],
+            ),
+            (Some(id), _, None) => (
+                "SELECT id, event_type, memory_id, agent_id, data, created_at
+             FROM memory_events WHERE id > ?
+             ORDER BY id ASC LIMIT ?",
+                vec![Box::new(id), Box::new(limit as i64)],
+            ),
+            (None, Some(time), Some(agent)) => (
+                "SELECT id, event_type, memory_id, agent_id, data, created_at
+             FROM memory_events WHERE created_at > ? AND (agent_id = ? OR agent_id IS NULL)
+             ORDER BY id ASC LIMIT ?",
+                vec![
+                    Box::new(time.to_rfc3339()),
+                    Box::new(agent.to_string()),
+                    Box::new(limit as i64),
+                ],
+            ),
+            (None, Some(time), None) => (
+                "SELECT id, event_type, memory_id, agent_id, data, created_at
+             FROM memory_events WHERE created_at > ?
+             ORDER BY id ASC LIMIT ?",
+                vec![Box::new(time.to_rfc3339()), Box::new(limit as i64)],
+            ),
+            (None, None, Some(agent)) => (
+                "SELECT id, event_type, memory_id, agent_id, data, created_at
+             FROM memory_events WHERE agent_id = ? OR agent_id IS NULL
+             ORDER BY id DESC LIMIT ?",
+                vec![Box::new(agent.to_string()), Box::new(limit as i64)],
+            ),
+            (None, None, None) => (
+                "SELECT id, event_type, memory_id, agent_id, data, created_at
+             FROM memory_events ORDER BY id DESC LIMIT ?",
+                vec![Box::new(limit as i64)],
+            ),
+        };
+
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let mut stmt = conn.prepare(query)?;
+    let events = stmt
+        .query_map(params_refs.as_slice(), |row| {
+            let data_str: String = row.get(4)?;
+            let created_str: String = row.get(5)?;
+            Ok(MemoryEvent {
+                id: row.get(0)?,
+                event_type: row.get(1)?,
+                memory_id: row.get(2)?,
+                agent_id: row.get(3)?,
+                data: serde_json::from_str(&data_str).unwrap_or(serde_json::json!({})),
+                created_at: DateTime::parse_from_rfc3339(&created_str)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now()),
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok(events)
+}
+
+/// Clear old events (cleanup)
+pub fn clear_events(
+    conn: &Connection,
+    before_id: Option<i64>,
+    before_time: Option<DateTime<Utc>>,
+    keep_recent: Option<usize>,
+) -> Result<i64> {
+    let deleted = if let Some(id) = before_id {
+        conn.execute("DELETE FROM memory_events WHERE id < ?", params![id])?
+    } else if let Some(time) = before_time {
+        conn.execute(
+            "DELETE FROM memory_events WHERE created_at < ?",
+            params![time.to_rfc3339()],
+        )?
+    } else if let Some(keep) = keep_recent {
+        // Keep only the most recent N events
+        conn.execute(
+            "DELETE FROM memory_events WHERE id NOT IN (
+                SELECT id FROM memory_events ORDER BY id DESC LIMIT ?
+            )",
+            params![keep as i64],
+        )?
+    } else {
+        // Clear all events
+        conn.execute("DELETE FROM memory_events", [])?
+    };
+
+    Ok(deleted as i64)
+}
+
+// =============================================================================
+// Advanced Sync
+// =============================================================================
+
+/// Sync version info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncVersion {
+    pub version: i64,
+    pub last_modified: DateTime<Utc>,
+    pub memory_count: i64,
+    pub checksum: String,
+}
+
+/// Get the current sync version
+pub fn get_sync_version(conn: &Connection) -> Result<SyncVersion> {
+    let memory_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM memories", [], |row| row.get(0))?;
+
+    let last_modified: Option<String> = conn
+        .query_row("SELECT MAX(updated_at) FROM memories", [], |row| row.get(0))
+        .ok();
+
+    let version: i64 = conn
+        .query_row("SELECT MAX(version) FROM sync_state", [], |row| row.get(0))
+        .unwrap_or(0);
+
+    // Simple checksum based on count and last modified
+    let checksum = format!(
+        "{}-{}-{}",
+        memory_count,
+        version,
+        last_modified.as_deref().unwrap_or("none")
+    );
+
+    Ok(SyncVersion {
+        version,
+        last_modified: last_modified
+            .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(Utc::now),
+        memory_count,
+        checksum,
+    })
+}
+
+/// Delta entry for sync
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncDelta {
+    pub created: Vec<Memory>,
+    pub updated: Vec<Memory>,
+    pub deleted: Vec<i64>,
+    pub from_version: i64,
+    pub to_version: i64,
+}
+
+/// Get changes since a specific version
+pub fn get_sync_delta(conn: &Connection, since_version: i64) -> Result<SyncDelta> {
+    let current_version = get_sync_version(conn)?.version;
+
+    // Get events since that version to determine what changed
+    let events = poll_events(conn, Some(since_version), None, None, Some(10000))?;
+
+    let mut created_ids = std::collections::HashSet::new();
+    let mut updated_ids = std::collections::HashSet::new();
+    let mut deleted_ids = std::collections::HashSet::new();
+
+    for event in events {
+        if let Some(memory_id) = event.memory_id {
+            match event.event_type.as_str() {
+                "created" => {
+                    created_ids.insert(memory_id);
+                }
+                "updated" => {
+                    if !created_ids.contains(&memory_id) {
+                        updated_ids.insert(memory_id);
+                    }
+                }
+                "deleted" => {
+                    created_ids.remove(&memory_id);
+                    updated_ids.remove(&memory_id);
+                    deleted_ids.insert(memory_id);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let created: Vec<Memory> = created_ids
+        .iter()
+        .filter_map(|id| get_memory(conn, *id).ok())
+        .collect();
+
+    let updated: Vec<Memory> = updated_ids
+        .iter()
+        .filter_map(|id| get_memory(conn, *id).ok())
+        .collect();
+
+    Ok(SyncDelta {
+        created,
+        updated,
+        deleted: deleted_ids.into_iter().collect(),
+        from_version: since_version,
+        to_version: current_version,
+    })
+}
+
+/// Agent sync state
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentSyncState {
+    pub agent_id: String,
+    pub last_sync_version: i64,
+    pub last_sync_time: DateTime<Utc>,
+    pub pending_changes: i64,
+}
+
+/// Get sync state for a specific agent
+pub fn get_agent_sync_state(conn: &Connection, agent_id: &str) -> Result<AgentSyncState> {
+    let result: std::result::Result<(i64, String), rusqlite::Error> = conn.query_row(
+        "SELECT last_sync_version, last_sync_time FROM agent_sync_state WHERE agent_id = ?",
+        params![agent_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    );
+
+    match result {
+        Ok((version, time_str)) => {
+            let current_version = get_sync_version(conn)?.version;
+            let pending = (current_version - version).max(0);
+
+            Ok(AgentSyncState {
+                agent_id: agent_id.to_string(),
+                last_sync_version: version,
+                last_sync_time: DateTime::parse_from_rfc3339(&time_str)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now()),
+                pending_changes: pending,
+            })
+        }
+        Err(_) => {
+            // No sync state yet for this agent
+            Ok(AgentSyncState {
+                agent_id: agent_id.to_string(),
+                last_sync_version: 0,
+                last_sync_time: Utc::now(),
+                pending_changes: get_sync_version(conn)?.version,
+            })
+        }
+    }
+}
+
+/// Update sync state for an agent
+pub fn update_agent_sync_state(conn: &Connection, agent_id: &str, version: i64) -> Result<()> {
+    let now = Utc::now();
+    conn.execute(
+        "INSERT INTO agent_sync_state (agent_id, last_sync_version, last_sync_time)
+         VALUES (?, ?, ?)
+         ON CONFLICT(agent_id) DO UPDATE SET
+            last_sync_version = excluded.last_sync_version,
+            last_sync_time = excluded.last_sync_time",
+        params![agent_id, version, now.to_rfc3339()],
+    )?;
+    Ok(())
+}
+
+/// Cleanup old sync data
+pub fn cleanup_sync_data(conn: &Connection, older_than_days: i64) -> Result<i64> {
+    let cutoff = Utc::now() - chrono::Duration::days(older_than_days);
+    let deleted = conn.execute(
+        "DELETE FROM memory_events WHERE created_at < ?",
+        params![cutoff.to_rfc3339()],
+    )?;
+    Ok(deleted as i64)
+}
+
+// =============================================================================
+// Multi-Agent Sharing
+// =============================================================================
+
+/// A shared memory entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedMemory {
+    pub id: i64,
+    pub memory_id: i64,
+    pub from_agent: String,
+    pub to_agent: String,
+    pub message: Option<String>,
+    pub acknowledged: bool,
+    pub acknowledged_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Share a memory with another agent
+pub fn share_memory(
+    conn: &Connection,
+    memory_id: i64,
+    from_agent: &str,
+    to_agent: &str,
+    message: Option<&str>,
+) -> Result<i64> {
+    let now = Utc::now();
+
+    // Verify memory exists
+    let _ = get_memory(conn, memory_id)?;
+
+    conn.execute(
+        "INSERT INTO shared_memories (memory_id, from_agent, to_agent, message, acknowledged, created_at)
+         VALUES (?, ?, ?, ?, 0, ?)",
+        params![memory_id, from_agent, to_agent, message, now.to_rfc3339()],
+    )?;
+
+    let share_id = conn.last_insert_rowid();
+
+    // Record event
+    record_event(
+        conn,
+        MemoryEventType::Shared,
+        Some(memory_id),
+        Some(from_agent),
+        serde_json::json!({
+            "to_agent": to_agent,
+            "share_id": share_id,
+            "message": message
+        }),
+    )?;
+
+    Ok(share_id)
+}
+
+/// Poll for shared memories sent to this agent
+pub fn poll_shared_memories(
+    conn: &Connection,
+    to_agent: &str,
+    include_acknowledged: bool,
+) -> Result<Vec<SharedMemory>> {
+    let query = if include_acknowledged {
+        "SELECT id, memory_id, from_agent, to_agent, message, acknowledged, acknowledged_at, created_at
+         FROM shared_memories WHERE to_agent = ?
+         ORDER BY created_at DESC"
+    } else {
+        "SELECT id, memory_id, from_agent, to_agent, message, acknowledged, acknowledged_at, created_at
+         FROM shared_memories WHERE to_agent = ? AND acknowledged = 0
+         ORDER BY created_at DESC"
+    };
+
+    let mut stmt = conn.prepare(query)?;
+    let shares = stmt
+        .query_map(params![to_agent], |row| {
+            let created_str: String = row.get(7)?;
+            let ack_str: Option<String> = row.get(6)?;
+            Ok(SharedMemory {
+                id: row.get(0)?,
+                memory_id: row.get(1)?,
+                from_agent: row.get(2)?,
+                to_agent: row.get(3)?,
+                message: row.get(4)?,
+                acknowledged: row.get(5)?,
+                acknowledged_at: ack_str.and_then(|s| {
+                    DateTime::parse_from_rfc3339(&s)
+                        .ok()
+                        .map(|dt| dt.with_timezone(&Utc))
+                }),
+                created_at: DateTime::parse_from_rfc3339(&created_str)
+                    .map(|dt| dt.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now()),
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok(shares)
+}
+
+/// Acknowledge a shared memory
+pub fn acknowledge_share(conn: &Connection, share_id: i64, agent_id: &str) -> Result<()> {
+    let now = Utc::now();
+
+    let affected = conn.execute(
+        "UPDATE shared_memories SET acknowledged = 1, acknowledged_at = ?
+         WHERE id = ? AND to_agent = ?",
+        params![now.to_rfc3339(), share_id, agent_id],
+    )?;
+
+    if affected == 0 {
+        return Err(EngramError::NotFound(share_id));
+    }
+
+    Ok(())
+}
+
+// =============================================================================
+// Search Variants
+// =============================================================================
+
+/// Search memories by identity (canonical ID or alias)
+pub fn search_by_identity(
+    conn: &Connection,
+    identity: &str,
+    workspace: Option<&str>,
+    limit: Option<usize>,
+) -> Result<Vec<Memory>> {
+    let limit = limit.unwrap_or(50);
+
+    // Search in content and tags for the identity
+    // Tags are in a junction table, so we need to use a subquery or JOIN
+    let pattern = format!("%{}%", identity);
+
+    let query = if workspace.is_some() {
+        "SELECT DISTINCT m.id, m.content, m.memory_type, m.importance, m.access_count,
+                m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
+                m.visibility, m.version, m.has_embedding, m.metadata,
+                m.scope_type, m.scope_id, m.workspace, m.tier, m.expires_at, m.content_hash
+         FROM memories m
+         LEFT JOIN memory_tags mt ON m.id = mt.memory_id
+         LEFT JOIN tags t ON mt.tag_id = t.id
+         WHERE m.workspace = ? AND (m.content LIKE ? OR t.name LIKE ?)
+           AND m.valid_to IS NULL
+         ORDER BY m.importance DESC, m.created_at DESC
+         LIMIT ?"
+    } else {
+        "SELECT DISTINCT m.id, m.content, m.memory_type, m.importance, m.access_count,
+                m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
+                m.visibility, m.version, m.has_embedding, m.metadata,
+                m.scope_type, m.scope_id, m.workspace, m.tier, m.expires_at, m.content_hash
+         FROM memories m
+         LEFT JOIN memory_tags mt ON m.id = mt.memory_id
+         LEFT JOIN tags t ON mt.tag_id = t.id
+         WHERE (m.content LIKE ? OR t.name LIKE ?)
+           AND m.valid_to IS NULL
+         ORDER BY m.importance DESC, m.created_at DESC
+         LIMIT ?"
+    };
+
+    let mut stmt = conn.prepare(query)?;
+
+    let memories = if let Some(ws) = workspace {
+        stmt.query_map(
+            params![ws, &pattern, &pattern, limit as i64],
+            memory_from_row,
+        )?
+        .collect::<std::result::Result<Vec<_>, _>>()?
+    } else {
+        stmt.query_map(params![&pattern, &pattern, limit as i64], memory_from_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    };
+
+    Ok(memories)
+}
+
+/// Search within session transcript chunks
+pub fn search_sessions(
+    conn: &Connection,
+    query_text: &str,
+    session_id: Option<&str>,
+    workspace: Option<&str>,
+    limit: Option<usize>,
+) -> Result<Vec<Memory>> {
+    let limit = limit.unwrap_or(20);
+    let pattern = format!("%{}%", query_text);
+
+    // Build query based on filters
+    // Session chunks are stored as TranscriptChunk type (not Context)
+    let mut conditions = vec!["m.memory_type = 'transcript_chunk'", "m.valid_to IS NULL"];
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![];
+
+    // Add session filter via tags (tags are in junction table)
+    let use_tag_join = session_id.is_some();
+    if let Some(sid) = session_id {
+        let tag_name = format!("session:{}", sid);
+        conditions.push("t.name = ?");
+        params_vec.push(Box::new(tag_name));
+    }
+
+    // Add workspace filter
+    if let Some(ws) = workspace {
+        conditions.push("m.workspace = ?");
+        params_vec.push(Box::new(ws.to_string()));
+    }
+
+    // Add content search
+    conditions.push("m.content LIKE ?");
+    params_vec.push(Box::new(pattern));
+
+    // Add limit
+    params_vec.push(Box::new(limit as i64));
+
+    // Build query with optional tag join
+    let join_clause = if use_tag_join {
+        "JOIN memory_tags mt ON m.id = mt.memory_id JOIN tags t ON mt.tag_id = t.id"
+    } else {
+        ""
+    };
+
+    let query = format!(
+        "SELECT DISTINCT m.id, m.content, m.memory_type, m.importance, m.access_count,
+                m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
+                m.visibility, m.version, m.has_embedding, m.metadata,
+                m.scope_type, m.scope_id, m.workspace, m.tier, m.expires_at, m.content_hash
+         FROM memories m {} WHERE {} ORDER BY m.created_at DESC LIMIT ?",
+        join_clause,
+        conditions.join(" AND ")
+    );
+
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+    let mut stmt = conn.prepare(&query)?;
+    let memories = stmt
+        .query_map(params_refs.as_slice(), memory_from_row)?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok(memories)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1191,6 +2944,8 @@ mod tests {
                         metadata: metadata1,
                         importance: None,
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
@@ -1206,6 +2961,8 @@ mod tests {
                         metadata: metadata2,
                         importance: None,
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
@@ -1284,6 +3041,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: MemoryScope::user("user-1"),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
@@ -1301,6 +3060,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: MemoryScope::user("user-2"),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
@@ -1318,6 +3079,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: MemoryScope::session("session-abc"),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
@@ -1335,6 +3098,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: MemoryScope::Global,
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
@@ -1436,7 +3201,7 @@ mod tests {
 
         storage
             .with_transaction(|conn| {
-                // Create memory with TTL of 1 hour
+                // Create daily memory with TTL of 1 hour
                 let memory = create_memory(
                     conn,
                     &CreateMemoryInput {
@@ -1446,6 +3211,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: Default::default(),
+                        workspace: None,
+                        tier: MemoryTier::Daily, // Daily tier for expiring memories
                         defer_embedding: true,
                         ttl_seconds: Some(3600), // 1 hour
                         dedup_mode: Default::default(),
@@ -1453,8 +3220,9 @@ mod tests {
                     },
                 )?;
 
-                // Verify expires_at is set
+                // Verify expires_at is set and tier is daily
                 assert!(memory.expires_at.is_some());
+                assert_eq!(memory.tier, MemoryTier::Daily);
                 let expires_at = memory.expires_at.unwrap();
                 let now = Utc::now();
 
@@ -1476,6 +3244,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
@@ -1497,7 +3267,7 @@ mod tests {
 
         storage
             .with_transaction(|conn| {
-                // Create two memories with TTL
+                // Create a daily memory with TTL (will expire)
                 let memory1 = create_memory(
                     conn,
                     &CreateMemoryInput {
@@ -1507,6 +3277,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: Default::default(),
+                        workspace: None,
+                        tier: MemoryTier::Daily, // Daily tier for expiring memories
                         defer_embedding: true,
                         ttl_seconds: Some(3600), // 1 hour TTL
                         dedup_mode: Default::default(),
@@ -1524,6 +3296,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
@@ -1576,6 +3350,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
@@ -1604,7 +3380,7 @@ mod tests {
 
         storage
             .with_transaction(|conn| {
-                // Create 3 memories that we'll expire manually
+                // Create 3 daily memories that we'll expire manually
                 let mut expired_ids = vec![];
                 for i in 0..3 {
                     let mem = create_memory(
@@ -1616,6 +3392,8 @@ mod tests {
                             metadata: HashMap::new(),
                             importance: None,
                             scope: Default::default(),
+                            workspace: None,
+                            tier: MemoryTier::Daily, // Daily tier for expiring memories
                             defer_embedding: true,
                             ttl_seconds: Some(3600), // 1 hour TTL
                             dedup_mode: Default::default(),
@@ -1636,6 +3414,8 @@ mod tests {
                             metadata: HashMap::new(),
                             importance: None,
                             scope: Default::default(),
+                            workspace: None,
+                            tier: Default::default(),
                             defer_embedding: true,
                             ttl_seconds: None,
                             dedup_mode: Default::default(),
@@ -1717,6 +3497,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow, // First one allows
@@ -1734,6 +3516,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Reject,
@@ -1769,6 +3553,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: Some(0.5),
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
@@ -1786,6 +3572,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: Some(0.9), // Different importance
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Skip,
@@ -1829,6 +3617,8 @@ mod tests {
                         },
                         importance: Some(0.5),
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
@@ -1850,6 +3640,8 @@ mod tests {
                         },
                         importance: Some(0.8), // Higher importance
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Merge,
@@ -1897,6 +3689,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
@@ -1914,6 +3708,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
@@ -1954,6 +3750,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
@@ -1970,6 +3768,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
@@ -1987,6 +3787,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
@@ -2024,6 +3826,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
@@ -2061,6 +3865,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
@@ -2116,6 +3922,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: MemoryScope::user("user-1"),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
@@ -2134,6 +3942,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: MemoryScope::user("user-2"), // Different scope
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Reject, // Should not reject - different scope
@@ -2155,6 +3965,8 @@ mod tests {
                         metadata: HashMap::new(),
                         importance: None,
                         scope: MemoryScope::user("user-2"), // Same scope as user2_memory
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Reject, // Should reject - same scope
@@ -2213,6 +4025,8 @@ mod tests {
                         metadata: std::collections::HashMap::new(),
                         importance: None,
                         scope: MemoryScope::Global,
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: false,
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
@@ -2234,6 +4048,8 @@ mod tests {
                         metadata: std::collections::HashMap::new(),
                         importance: None,
                         scope: MemoryScope::Global,
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: false,
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
@@ -2251,6 +4067,7 @@ mod tests {
                     conn,
                     &query_similar_to_1,
                     &MemoryScope::Global,
+                    None, // default workspace
                     0.95, // High threshold
                 )?;
                 assert!(result.is_some());
@@ -2263,6 +4080,7 @@ mod tests {
                     conn,
                     &query_similar_to_1,
                     &MemoryScope::Global,
+                    None,
                     0.5,
                 )?;
                 assert!(result_low_threshold.is_some());
@@ -2273,6 +4091,7 @@ mod tests {
                     conn,
                     &query_orthogonal,
                     &MemoryScope::Global,
+                    None,
                     0.99, // Very high threshold
                 )?;
                 assert!(result_no_match.is_none());
@@ -2284,6 +4103,7 @@ mod tests {
                     &MemoryScope::User {
                         user_id: "other-user".to_string(),
                     },
+                    None,
                     0.5,
                 )?;
                 assert!(result_wrong_scope.is_none());

@@ -3,7 +3,8 @@ use engram::storage::graph_queries::{get_related_multi_hop, TraversalOptions};
 use engram::storage::queries::{create_crossref, create_memory};
 use engram::storage::Storage;
 use engram::types::{
-    CreateCrossRefInput, CreateMemoryInput, DedupMode, EdgeType, MemoryId, MemoryScope, MemoryType,
+    CreateCrossRefInput, CreateMemoryInput, DedupMode, EdgeType, MemoryId, MemoryScope, MemoryTier,
+    MemoryType,
 };
 
 fn create_test_memory(storage: &Storage, i: usize) -> MemoryId {
@@ -20,6 +21,8 @@ fn create_test_memory(storage: &Storage, i: usize) -> MemoryId {
                 ttl_seconds: None,
                 dedup_mode: DedupMode::Allow,
                 dedup_threshold: None,
+                workspace: Some("default".to_string()),
+                tier: MemoryTier::Permanent,
             };
             create_memory(conn, &input)
         })

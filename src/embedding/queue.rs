@@ -378,6 +378,8 @@ mod tests {
                         metadata: std::collections::HashMap::new(),
                         importance: None,
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: true,
                         ttl_seconds: None,
                         dedup_mode: Default::default(),

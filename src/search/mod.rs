@@ -55,6 +55,16 @@ pub fn select_search_strategy(query: &str) -> SearchStrategy {
     SearchStrategy::Hybrid
 }
 
+/// Strategy for deduplicating search results across result sets
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DedupeStrategy {
+    /// Deduplicate by memory ID (default, fastest)
+    #[default]
+    ById,
+    /// Deduplicate by content hash (catches duplicates with different IDs)
+    ByContentHash,
+}
+
 /// Configuration for search thresholds
 #[derive(Debug, Clone)]
 pub struct SearchConfig {
@@ -68,12 +78,15 @@ pub struct SearchConfig {
     pub keyword_weight: f32,
     /// Weight for semantic score in hybrid search
     pub semantic_weight: f32,
-    /// RRF constant (k parameter)
+    /// RRF constant (k parameter, default: 60)
+    /// Higher values favor lower-ranked results, lower values favor top results
     pub rrf_k: f32,
     /// Boost factor for project context memories when metadata.project_path matches cwd
     pub project_context_boost: f32,
     /// Current working directory for project context matching
     pub project_context_path: Option<String>,
+    /// Deduplication strategy for hybrid search
+    pub dedupe_strategy: DedupeStrategy,
 }
 
 impl Default for SearchConfig {
@@ -87,6 +100,7 @@ impl Default for SearchConfig {
             rrf_k: 60.0,
             project_context_boost: 0.2,
             project_context_path: None,
+            dedupe_strategy: DedupeStrategy::default(),
         }
     }
 }

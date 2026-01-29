@@ -1,13 +1,22 @@
 //! Embedding generation and async queue management (RML-873)
 //!
 //! Supports multiple embedding backends:
-//! - OpenAI API (text-embedding-3-small)
-//! - Local ONNX models (via ort)
+//! - OpenAI API (text-embedding-3-small) - requires `openai` feature
 //! - TF-IDF fallback (no external dependencies)
+//!
+//! Features:
+//! - LRU embedding cache with zero-copy Arc<[f32]> sharing
+//! - Async queue processing for batch operations
+//!
+//! # Feature Flags
+//!
+//! - `openai`: Enables OpenAI embedding backend (requires API key)
 
+mod cache;
 mod queue;
 mod tfidf;
 
+pub use cache::{EmbeddingCache, EmbeddingCacheStats};
 pub use queue::{get_embedding, get_embedding_status, EmbeddingQueue, EmbeddingWorker};
 pub use tfidf::TfIdfEmbedder;
 
@@ -34,6 +43,9 @@ pub trait Embedder: Send + Sync {
 }
 
 /// OpenAI embedding client
+///
+/// Requires the `openai` feature to be enabled.
+#[cfg(feature = "openai")]
 pub struct OpenAIEmbedder {
     client: reqwest::Client,
     api_key: String,
@@ -41,6 +53,7 @@ pub struct OpenAIEmbedder {
     dimensions: usize,
 }
 
+#[cfg(feature = "openai")]
 impl OpenAIEmbedder {
     pub fn new(api_key: String) -> Self {
         Self {
@@ -147,6 +160,7 @@ impl OpenAIEmbedder {
     }
 }
 
+#[cfg(feature = "openai")]
 impl Embedder for OpenAIEmbedder {
     fn embed(&self, text: &str) -> Result<Vec<f32>> {
         // Blocking call for sync interface
@@ -171,8 +185,13 @@ impl Embedder for OpenAIEmbedder {
 }
 
 /// Create an embedder from configuration
+///
+/// Available models depend on enabled features:
+/// - `"tfidf"`: Always available, no external dependencies
+/// - `"openai"`: Requires `openai` feature and API key
 pub fn create_embedder(config: &EmbeddingConfig) -> Result<Arc<dyn Embedder>> {
     match config.model.as_str() {
+        #[cfg(feature = "openai")]
         "openai" => {
             let api_key = config
                 .api_key
@@ -180,6 +199,10 @@ pub fn create_embedder(config: &EmbeddingConfig) -> Result<Arc<dyn Embedder>> {
                 .ok_or_else(|| EngramError::Config("OpenAI API key required".to_string()))?;
             Ok(Arc::new(OpenAIEmbedder::new(api_key)))
         }
+        #[cfg(not(feature = "openai"))]
+        "openai" => Err(EngramError::Config(
+            "OpenAI embeddings require the 'openai' feature to be enabled".to_string(),
+        )),
         "tfidf" => Ok(Arc::new(TfIdfEmbedder::new(config.dimensions))),
         _ => Err(EngramError::Config(format!(
             "Unknown embedding model: {}",

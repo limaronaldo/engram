@@ -17,9 +17,11 @@ use engram::mcp::{
     get_tool_definitions, methods, InitializeResult, McpHandler, McpRequest, McpResponse,
     McpServer, ToolCallResult,
 };
+use engram::realtime::{RealtimeEvent, RealtimeManager, RealtimeServer};
 use engram::search::{hybrid_search, FuzzyEngine, SearchConfig};
 use engram::storage::queries::*;
 use engram::storage::Storage;
+#[cfg(feature = "cloud")]
 use engram::sync::get_sync_status;
 use engram::types::*;
 
@@ -67,6 +69,10 @@ struct Args {
     /// When enabled, expired memories are automatically cleaned up at this interval
     #[arg(long, env = "ENGRAM_CLEANUP_INTERVAL", default_value = "3600")]
     cleanup_interval_seconds: u64,
+
+    /// WebSocket server port for real-time events (0 = disabled)
+    #[arg(long, env = "ENGRAM_WS_PORT", default_value = "0")]
+    ws_port: u16,
 }
 
 /// MCP request handler
@@ -75,6 +81,10 @@ struct EngramHandler {
     embedder: Arc<dyn engram::embedding::Embedder>,
     fuzzy_engine: Arc<Mutex<FuzzyEngine>>,
     search_config: SearchConfig,
+    /// Real-time event manager for WebSocket broadcasting
+    realtime: Option<RealtimeManager>,
+    /// Embedding cache for performance optimization
+    embedding_cache: Arc<engram::embedding::EmbeddingCache>,
 }
 
 impl EngramHandler {
@@ -84,6 +94,20 @@ impl EngramHandler {
             embedder,
             fuzzy_engine: Arc::new(Mutex::new(FuzzyEngine::new())),
             search_config: SearchConfig::default(),
+            realtime: None,
+            embedding_cache: Arc::new(engram::embedding::EmbeddingCache::default()),
+        }
+    }
+
+    fn with_realtime(mut self, manager: RealtimeManager) -> Self {
+        self.realtime = Some(manager);
+        self
+    }
+
+    /// Broadcast a real-time event if manager is configured
+    fn broadcast_event(&self, event: RealtimeEvent) {
+        if let Some(ref manager) = self.realtime {
+            manager.broadcast(event);
         }
     }
 
@@ -121,6 +145,77 @@ impl EngramHandler {
             "memory_cleanup_expired" => self.tool_cleanup_expired(params),
             // Deduplication tools (RML-931)
             "memory_find_duplicates" => self.tool_find_duplicates(params),
+            // Workspace management tools
+            "workspace_list" => self.tool_workspace_list(params),
+            "workspace_stats" => self.tool_workspace_stats(params),
+            "workspace_move" => self.tool_workspace_move(params),
+            "workspace_delete" => self.tool_workspace_delete(params),
+            // Memory tiering tools
+            "memory_create_daily" => self.tool_memory_create_daily(params),
+            "memory_promote_to_permanent" => self.tool_memory_promote_to_permanent(params),
+            // Embedding cache tools
+            "embedding_cache_stats" => self.tool_embedding_cache_stats(params),
+            "embedding_cache_clear" => self.tool_embedding_cache_clear(params),
+            // Session indexing tools
+            "session_index" => self.tool_session_index(params),
+            "session_index_delta" => self.tool_session_index_delta(params),
+            "session_get" => self.tool_session_get(params),
+            "session_list" => self.tool_session_list(params),
+            "session_delete" => self.tool_session_delete(params),
+            // Identity management tools
+            "identity_create" => self.tool_identity_create(params),
+            "identity_get" => self.tool_identity_get(params),
+            "identity_update" => self.tool_identity_update(params),
+            "identity_delete" => self.tool_identity_delete(params),
+            "identity_add_alias" => self.tool_identity_add_alias(params),
+            "identity_remove_alias" => self.tool_identity_remove_alias(params),
+            "identity_resolve" => self.tool_identity_resolve(params),
+            "identity_list" => self.tool_identity_list(params),
+            "identity_search" => self.tool_identity_search(params),
+            "identity_link" => self.tool_identity_link(params),
+            "identity_unlink" => self.tool_identity_unlink(params),
+            // Content utility tools
+            "memory_soft_trim" => self.tool_memory_soft_trim(params),
+            "memory_list_compact" => self.tool_memory_list_compact(params),
+            "memory_content_stats" => self.tool_memory_content_stats(params),
+            // Batch operations
+            "memory_create_batch" => self.tool_memory_create_batch(params),
+            "memory_delete_batch" => self.tool_memory_delete_batch(params),
+            // Tag utilities
+            "memory_tags" => self.tool_memory_tags(params),
+            "memory_tag_hierarchy" => self.tool_memory_tag_hierarchy(params),
+            "memory_validate_tags" => self.tool_memory_validate_tags(params),
+            // Import/Export
+            "memory_export" => self.tool_memory_export(params),
+            "memory_import" => self.tool_memory_import(params),
+            // Maintenance
+            "memory_rebuild_embeddings" => self.tool_memory_rebuild_embeddings(params),
+            "memory_rebuild_crossrefs" => self.tool_memory_rebuild_crossrefs(params),
+            // Special memory types
+            "memory_create_section" => self.tool_memory_create_section(params),
+            "memory_checkpoint" => self.tool_memory_checkpoint(params),
+            "memory_boost" => self.tool_memory_boost(params),
+            // Event system
+            "memory_events_poll" => self.tool_memory_events_poll(params),
+            "memory_events_clear" => self.tool_memory_events_clear(params),
+            // Advanced sync
+            "sync_version" => self.tool_sync_version(params),
+            "sync_delta" => self.tool_sync_delta(params),
+            "sync_state" => self.tool_sync_state(params),
+            "sync_cleanup" => self.tool_sync_cleanup(params),
+            // Multi-agent sharing
+            "memory_share" => self.tool_memory_share(params),
+            "memory_shared_poll" => self.tool_memory_shared_poll(params),
+            "memory_share_ack" => self.tool_memory_share_ack(params),
+            // Search variants
+            "memory_search_by_identity" => self.tool_memory_search_by_identity(params),
+            "memory_session_search" => self.tool_memory_session_search(params),
+            // Image handling
+            "memory_upload_image" => self.tool_memory_upload_image(params),
+            "memory_migrate_images" => self.tool_memory_migrate_images(params),
+            // Auto-tagging tools
+            "memory_suggest_tags" => self.tool_memory_suggest_tags(params),
+            "memory_auto_tag" => self.tool_memory_auto_tag(params),
             _ => json!({"error": format!("Unknown tool: {}", name)}),
         }
     }
@@ -139,9 +234,16 @@ impl EngramHandler {
             if let Some(threshold) = input.dedup_threshold {
                 // Generate embedding for new content
                 if let Ok(query_embedding) = self.embedder.embed(&input.content) {
-                    // Check for similar memories
+                    // Check for similar memories (scoped to same workspace)
+                    let workspace = input.workspace.as_deref();
                     let similar_result = self.storage.with_connection(|conn| {
-                        find_similar_by_embedding(conn, &query_embedding, &input.scope, threshold)
+                        find_similar_by_embedding(
+                            conn,
+                            &query_embedding,
+                            &input.scope,
+                            workspace,
+                            threshold,
+                        )
                     });
 
                     if let Ok(Some((existing, similarity))) = similar_result {
@@ -201,17 +303,27 @@ impl EngramHandler {
             }
         }
 
-        self.storage
-            .with_transaction(|conn| {
-                let memory = create_memory(conn, &input)?;
+        let result = self.storage.with_transaction(|conn| {
+            let memory = create_memory(conn, &input)?;
 
-                // Add to fuzzy engine vocabulary
-                let mut fuzzy = self.fuzzy_engine.lock();
-                fuzzy.add_to_vocabulary(&memory.content);
+            // Add to fuzzy engine vocabulary
+            let mut fuzzy = self.fuzzy_engine.lock();
+            fuzzy.add_to_vocabulary(&memory.content);
 
-                Ok(json!(memory))
-            })
-            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+            Ok(memory)
+        });
+
+        match result {
+            Ok(memory) => {
+                // Broadcast real-time event
+                self.broadcast_event(RealtimeEvent::memory_created(
+                    memory.id,
+                    memory.content.clone(),
+                ));
+                json!(memory)
+            }
+            Err(e) => json!({"error": e.to_string()}),
+        }
     }
 
     fn tool_memory_get(&self, params: Value) -> Value {
@@ -227,28 +339,60 @@ impl EngramHandler {
 
     fn tool_memory_update(&self, params: Value) -> Value {
         let id = params.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
-        let input: UpdateMemoryInput = match serde_json::from_value(params) {
+        let input: UpdateMemoryInput = match serde_json::from_value(params.clone()) {
             Ok(i) => i,
             Err(e) => return json!({"error": e.to_string()}),
         };
 
-        self.storage
-            .with_transaction(|conn| {
-                let memory = update_memory(conn, id, &input)?;
-                Ok(json!(memory))
-            })
-            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+        // Track which fields are being changed
+        let mut changes = Vec::new();
+        if input.content.is_some() {
+            changes.push("content".to_string());
+        }
+        if input.memory_type.is_some() {
+            changes.push("memory_type".to_string());
+        }
+        if input.tags.is_some() {
+            changes.push("tags".to_string());
+        }
+        if input.metadata.is_some() {
+            changes.push("metadata".to_string());
+        }
+        if input.importance.is_some() {
+            changes.push("importance".to_string());
+        }
+
+        let result = self.storage.with_transaction(|conn| {
+            let memory = update_memory(conn, id, &input)?;
+            Ok(memory)
+        });
+
+        match result {
+            Ok(memory) => {
+                // Broadcast real-time event
+                self.broadcast_event(RealtimeEvent::memory_updated(memory.id, changes));
+                json!(memory)
+            }
+            Err(e) => json!({"error": e.to_string()}),
+        }
     }
 
     fn tool_memory_delete(&self, params: Value) -> Value {
         let id = params.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
 
-        self.storage
-            .with_transaction(|conn| {
-                delete_memory(conn, id)?;
-                Ok(json!({"deleted": id}))
-            })
-            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+        let result = self.storage.with_transaction(|conn| {
+            delete_memory(conn, id)?;
+            Ok(id)
+        });
+
+        match result {
+            Ok(deleted_id) => {
+                // Broadcast real-time event
+                self.broadcast_event(RealtimeEvent::memory_deleted(deleted_id));
+                json!({"deleted": deleted_id})
+            }
+            Err(e) => json!({"error": e.to_string()}),
+        }
     }
 
     fn tool_memory_list(&self, params: Value) -> Value {
@@ -531,6 +675,8 @@ impl EngramHandler {
             metadata,
             importance: Some(importance),
             scope: Default::default(),
+            workspace: None,
+            tier: Default::default(),
             defer_embedding: false,
             ttl_seconds: None,
             dedup_mode: Default::default(),
@@ -585,6 +731,8 @@ impl EngramHandler {
             metadata,
             importance: Some(importance),
             scope: Default::default(),
+            workspace: None,
+            tier: Default::default(),
             defer_embedding: false,
             ttl_seconds: None,
             dedup_mode: Default::default(),
@@ -595,12 +743,19 @@ impl EngramHandler {
     }
 
     fn tool_sync_status(&self, _params: Value) -> Value {
-        self.storage
-            .with_connection(|conn| {
-                let status = get_sync_status(conn)?;
-                Ok(json!(status))
-            })
-            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+        #[cfg(feature = "cloud")]
+        {
+            self.storage
+                .with_connection(|conn| {
+                    let status = get_sync_status(conn)?;
+                    Ok(json!(status))
+                })
+                .unwrap_or_else(|e| json!({"error": e.to_string()}))
+        }
+        #[cfg(not(feature = "cloud"))]
+        {
+            json!({"error": "Cloud sync requires the 'cloud' feature to be enabled"})
+        }
     }
 
     fn tool_scan_project(&self, params: Value) -> Value {
@@ -780,6 +935,8 @@ impl EngramHandler {
                         metadata,
                         importance: Some(memory.importance),
                         scope: Default::default(),
+                        workspace: None,
+                        tier: Default::default(),
                         defer_embedding: false,
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
@@ -920,6 +1077,8 @@ impl EngramHandler {
                             metadata,
                             importance: Some(section_memory.importance),
                             scope: Default::default(),
+                            workspace: None,
+                            tier: Default::default(),
                             defer_embedding: false,
                             ttl_seconds: None,
                             dedup_mode: Default::default(),
@@ -1430,6 +1589,1478 @@ impl EngramHandler {
             })
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }
+
+    // Workspace management tools
+
+    fn tool_workspace_list(&self, _params: Value) -> Value {
+        use engram::storage::queries::list_workspaces;
+
+        self.storage
+            .with_connection(|conn| {
+                let workspaces = list_workspaces(conn)?;
+                Ok(json!({
+                    "count": workspaces.len(),
+                    "workspaces": workspaces
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_workspace_stats(&self, params: Value) -> Value {
+        use engram::storage::queries::get_workspace_stats;
+
+        let workspace = match params.get("workspace").and_then(|v| v.as_str()) {
+            Some(ws) => ws,
+            None => return json!({"error": "workspace is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let stats = get_workspace_stats(conn, workspace)?;
+                Ok(json!(stats))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_workspace_move(&self, params: Value) -> Value {
+        use engram::storage::queries::move_to_workspace;
+
+        let id = match params.get("id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "id is required"}),
+        };
+        let workspace = match params.get("workspace").and_then(|v| v.as_str()) {
+            Some(ws) => ws,
+            None => return json!({"error": "workspace is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let memory = move_to_workspace(conn, id, workspace)?;
+                Ok(json!({
+                    "success": true,
+                    "memory": memory
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_workspace_delete(&self, params: Value) -> Value {
+        use engram::storage::queries::delete_workspace;
+
+        let workspace = match params.get("workspace").and_then(|v| v.as_str()) {
+            Some(ws) => ws,
+            None => return json!({"error": "workspace is required"}),
+        };
+        let move_to_default = params
+            .get("move_to_default")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        self.storage
+            .with_connection(|conn| {
+                let affected = delete_workspace(conn, workspace, move_to_default)?;
+                Ok(json!({
+                    "success": true,
+                    "affected": affected,
+                    "move_to_default": move_to_default
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // Memory tiering tools
+
+    fn tool_memory_create_daily(&self, params: Value) -> Value {
+        use engram::storage::queries::create_memory;
+        use engram::types::{CreateMemoryInput, MemoryTier, MemoryType};
+
+        let content = match params.get("content").and_then(|v| v.as_str()) {
+            Some(c) => c.to_string(),
+            None => return json!({"error": "content is required"}),
+        };
+
+        let memory_type = params
+            .get("type")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(MemoryType::Note);
+
+        let tags: Vec<String> = params
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let metadata: std::collections::HashMap<String, serde_json::Value> = params
+            .get("metadata")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let importance = params
+            .get("importance")
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32);
+
+        let ttl_seconds = params
+            .get("ttl_seconds")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(86400); // Default: 24 hours
+
+        let workspace = params
+            .get("workspace")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let input = CreateMemoryInput {
+            content,
+            memory_type,
+            tags,
+            metadata,
+            importance,
+            scope: Default::default(),
+            workspace,
+            tier: MemoryTier::Daily,
+            defer_embedding: false,
+            ttl_seconds: Some(ttl_seconds),
+            dedup_mode: Default::default(),
+            dedup_threshold: None,
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let memory = create_memory(conn, &input)?;
+                Ok(json!(memory))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_memory_promote_to_permanent(&self, params: Value) -> Value {
+        use engram::storage::queries::promote_to_permanent;
+
+        let id = match params.get("id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "id is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let memory = promote_to_permanent(conn, id)?;
+                Ok(json!({
+                    "success": true,
+                    "memory": memory
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // Embedding cache tools
+
+    fn tool_embedding_cache_stats(&self, _params: Value) -> Value {
+        let stats = self.embedding_cache.stats();
+        json!({
+            "hits": stats.hits,
+            "misses": stats.misses,
+            "entries": stats.entries,
+            "bytes_used": stats.bytes_used,
+            "max_bytes": stats.max_bytes,
+            "hit_rate": stats.hit_rate,
+            "bytes_used_mb": stats.bytes_used as f64 / (1024.0 * 1024.0),
+            "max_bytes_mb": stats.max_bytes as f64 / (1024.0 * 1024.0)
+        })
+    }
+
+    fn tool_embedding_cache_clear(&self, _params: Value) -> Value {
+        let stats_before = self.embedding_cache.stats();
+        self.embedding_cache.clear();
+        let stats_after = self.embedding_cache.stats();
+        json!({
+            "success": true,
+            "entries_cleared": stats_before.entries,
+            "bytes_freed": stats_before.bytes_used,
+            "bytes_freed_mb": stats_before.bytes_used as f64 / (1024.0 * 1024.0),
+            "entries_after": stats_after.entries
+        })
+    }
+
+    // Session indexing tools
+
+    fn tool_session_index(&self, params: Value) -> Value {
+        use engram::intelligence::session_indexing::{index_conversation, ChunkingConfig, Message};
+
+        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+            Some(id) => id,
+            None => return json!({"error": "session_id is required"}),
+        };
+
+        let messages: Vec<Message> = match params.get("messages").and_then(|v| v.as_array()) {
+            Some(arr) => arr
+                .iter()
+                .filter_map(|m| {
+                    let role = m.get("role")?.as_str()?.to_string();
+                    let content = m.get("content")?.as_str()?.to_string();
+                    let timestamp = m
+                        .get("timestamp")
+                        .and_then(|t| t.as_str())
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(chrono::Utc::now);
+                    let id = m.get("id").and_then(|i| i.as_str()).map(String::from);
+                    Some(Message {
+                        role,
+                        content,
+                        timestamp,
+                        id,
+                    })
+                })
+                .collect(),
+            None => return json!({"error": "messages array is required"}),
+        };
+
+        if messages.is_empty() {
+            return json!({"error": "messages array cannot be empty"});
+        }
+
+        let title = params.get("title").and_then(|v| v.as_str());
+        let workspace = params.get("workspace").and_then(|v| v.as_str());
+        let agent_id = params.get("agent_id").and_then(|v| v.as_str());
+
+        let config = ChunkingConfig {
+            max_messages: params
+                .get("max_messages")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(10) as usize,
+            overlap_messages: params.get("overlap").and_then(|v| v.as_i64()).unwrap_or(2) as usize,
+            max_chars: params
+                .get("max_chars")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(8000) as usize,
+            default_ttl_seconds: params.get("ttl_days").and_then(|v| v.as_i64()).unwrap_or(7)
+                * 24
+                * 60
+                * 60,
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let session = index_conversation(
+                    conn, session_id, &messages, &config, workspace, title, agent_id,
+                )?;
+                Ok(json!({
+                    "success": true,
+                    "session": session
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_session_index_delta(&self, params: Value) -> Value {
+        use engram::intelligence::session_indexing::{
+            index_conversation_delta, ChunkingConfig, Message,
+        };
+
+        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+            Some(id) => id,
+            None => return json!({"error": "session_id is required"}),
+        };
+
+        let messages: Vec<Message> = match params.get("messages").and_then(|v| v.as_array()) {
+            Some(arr) => arr
+                .iter()
+                .filter_map(|m| {
+                    let role = m.get("role")?.as_str()?.to_string();
+                    let content = m.get("content")?.as_str()?.to_string();
+                    let timestamp = m
+                        .get("timestamp")
+                        .and_then(|t| t.as_str())
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(chrono::Utc::now);
+                    let id = m.get("id").and_then(|i| i.as_str()).map(String::from);
+                    Some(Message {
+                        role,
+                        content,
+                        timestamp,
+                        id,
+                    })
+                })
+                .collect(),
+            None => return json!({"error": "messages array is required"}),
+        };
+
+        let config = ChunkingConfig::default();
+
+        self.storage
+            .with_connection(|conn| {
+                let session = index_conversation_delta(conn, session_id, &messages, &config)?;
+                Ok(json!({
+                    "success": true,
+                    "session": session
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_session_get(&self, params: Value) -> Value {
+        use engram::intelligence::session_indexing::get_session;
+
+        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+            Some(id) => id,
+            None => return json!({"error": "session_id is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let session = get_session(conn, session_id)?;
+                Ok(json!(session))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_session_list(&self, params: Value) -> Value {
+        use engram::intelligence::session_indexing::list_sessions;
+
+        let workspace = params.get("workspace").and_then(|v| v.as_str());
+        let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(20);
+
+        self.storage
+            .with_connection(|conn| {
+                let sessions = list_sessions(conn, workspace, limit)?;
+                Ok(json!({
+                    "count": sessions.len(),
+                    "sessions": sessions
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_session_delete(&self, params: Value) -> Value {
+        use engram::intelligence::session_indexing::delete_session;
+
+        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+            Some(id) => id,
+            None => return json!({"error": "session_id is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                delete_session(conn, session_id)?;
+                Ok(json!({
+                    "success": true,
+                    "session_id": session_id
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // Identity management tools
+
+    fn tool_identity_create(&self, params: Value) -> Value {
+        use engram::storage::identity_links::{create_identity, CreateIdentityInput, IdentityType};
+
+        let canonical_id = match params.get("canonical_id").and_then(|v| v.as_str()) {
+            Some(id) => id.to_string(),
+            None => return json!({"error": "canonical_id is required"}),
+        };
+
+        let display_name = match params.get("display_name").and_then(|v| v.as_str()) {
+            Some(name) => name.to_string(),
+            None => return json!({"error": "display_name is required"}),
+        };
+
+        let entity_type = params
+            .get("entity_type")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(IdentityType::Person);
+
+        let description = params
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let aliases: Vec<String> = params
+            .get("aliases")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let metadata: std::collections::HashMap<String, serde_json::Value> = params
+            .get("metadata")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let input = CreateIdentityInput {
+            canonical_id,
+            display_name,
+            entity_type,
+            description,
+            metadata,
+            aliases,
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let identity = create_identity(conn, &input)?;
+                Ok(json!(identity))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_identity_get(&self, params: Value) -> Value {
+        use engram::storage::identity_links::get_identity;
+
+        let canonical_id = match params.get("canonical_id").and_then(|v| v.as_str()) {
+            Some(id) => id,
+            None => return json!({"error": "canonical_id is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let identity = get_identity(conn, canonical_id)?;
+                Ok(json!(identity))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_identity_update(&self, params: Value) -> Value {
+        use engram::storage::identity_links::{update_identity, IdentityType};
+
+        let canonical_id = match params.get("canonical_id").and_then(|v| v.as_str()) {
+            Some(id) => id,
+            None => return json!({"error": "canonical_id is required"}),
+        };
+
+        let display_name = params.get("display_name").and_then(|v| v.as_str());
+        let description = params.get("description").and_then(|v| v.as_str());
+        let entity_type: Option<IdentityType> = params
+            .get("entity_type")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse().ok());
+
+        self.storage
+            .with_connection(|conn| {
+                let identity =
+                    update_identity(conn, canonical_id, display_name, description, entity_type)?;
+                Ok(json!(identity))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_identity_delete(&self, params: Value) -> Value {
+        use engram::storage::identity_links::delete_identity;
+
+        let canonical_id = match params.get("canonical_id").and_then(|v| v.as_str()) {
+            Some(id) => id,
+            None => return json!({"error": "canonical_id is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                delete_identity(conn, canonical_id)?;
+                Ok(json!({
+                    "success": true,
+                    "canonical_id": canonical_id
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_identity_add_alias(&self, params: Value) -> Value {
+        use engram::storage::identity_links::add_alias;
+
+        let canonical_id = match params.get("canonical_id").and_then(|v| v.as_str()) {
+            Some(id) => id,
+            None => return json!({"error": "canonical_id is required"}),
+        };
+
+        let alias = match params.get("alias").and_then(|v| v.as_str()) {
+            Some(a) => a,
+            None => return json!({"error": "alias is required"}),
+        };
+
+        let source = params.get("source").and_then(|v| v.as_str());
+
+        self.storage
+            .with_connection(|conn| {
+                let alias_obj = add_alias(conn, canonical_id, alias, source)?;
+                Ok(json!(alias_obj))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_identity_remove_alias(&self, params: Value) -> Value {
+        use engram::storage::identity_links::remove_alias;
+
+        let alias = match params.get("alias").and_then(|v| v.as_str()) {
+            Some(a) => a,
+            None => return json!({"error": "alias is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                remove_alias(conn, alias)?;
+                Ok(json!({
+                    "success": true,
+                    "alias": alias
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_identity_resolve(&self, params: Value) -> Value {
+        use engram::storage::identity_links::resolve_alias;
+
+        let alias = match params.get("alias").and_then(|v| v.as_str()) {
+            Some(a) => a,
+            None => return json!({"error": "alias is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let identity = resolve_alias(conn, alias)?;
+                Ok(json!({
+                    "found": identity.is_some(),
+                    "identity": identity
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_identity_list(&self, params: Value) -> Value {
+        use engram::storage::identity_links::{list_identities, IdentityType};
+
+        let entity_type: Option<IdentityType> = params
+            .get("entity_type")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse().ok());
+
+        let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(50);
+
+        self.storage
+            .with_connection(|conn| {
+                let identities = list_identities(conn, entity_type, limit)?;
+                Ok(json!({
+                    "count": identities.len(),
+                    "identities": identities
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_identity_search(&self, params: Value) -> Value {
+        use engram::storage::identity_links::search_identities_by_alias;
+
+        let query = match params.get("query").and_then(|v| v.as_str()) {
+            Some(q) => q,
+            None => return json!({"error": "query is required"}),
+        };
+
+        let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(20);
+
+        self.storage
+            .with_connection(|conn| {
+                let identities = search_identities_by_alias(conn, query, limit)?;
+                Ok(json!({
+                    "count": identities.len(),
+                    "identities": identities
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_identity_link(&self, params: Value) -> Value {
+        use engram::storage::identity_links::link_identity_to_memory;
+
+        let memory_id = match params.get("memory_id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "memory_id is required"}),
+        };
+
+        let canonical_id = match params.get("canonical_id").and_then(|v| v.as_str()) {
+            Some(id) => id,
+            None => return json!({"error": "canonical_id is required"}),
+        };
+
+        let mention_text = params.get("mention_text").and_then(|v| v.as_str());
+
+        self.storage
+            .with_connection(|conn| {
+                let link = link_identity_to_memory(conn, memory_id, canonical_id, mention_text)?;
+                Ok(json!(link))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_identity_unlink(&self, params: Value) -> Value {
+        use engram::storage::identity_links::unlink_identity_from_memory;
+
+        let memory_id = match params.get("memory_id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "memory_id is required"}),
+        };
+
+        let canonical_id = match params.get("canonical_id").and_then(|v| v.as_str()) {
+            Some(id) => id,
+            None => return json!({"error": "canonical_id is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                unlink_identity_from_memory(conn, memory_id, canonical_id)?;
+                Ok(json!({
+                    "success": true,
+                    "memory_id": memory_id,
+                    "canonical_id": canonical_id
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // Content utility tools
+
+    fn tool_memory_soft_trim(&self, params: Value) -> Value {
+        use engram::intelligence::{soft_trim, SoftTrimConfig};
+
+        let id = match params.get("id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "id is required"}),
+        };
+
+        let max_chars = params
+            .get("max_chars")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(500) as usize;
+        let head_percent = params
+            .get("head_percent")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(60) as usize;
+        let tail_percent = params
+            .get("tail_percent")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(30) as usize;
+        let ellipsis = params
+            .get("ellipsis")
+            .and_then(|v| v.as_str())
+            .unwrap_or("\n...\n")
+            .to_string();
+        let preserve_words = params
+            .get("preserve_words")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        let config = SoftTrimConfig {
+            max_chars,
+            head_percent,
+            tail_percent,
+            ellipsis,
+            preserve_words,
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let memory = get_memory(conn, id)?;
+                let result = soft_trim(&memory.content, &config);
+                Ok(json!({
+                    "id": id,
+                    "trimmed_content": result.content,
+                    "was_trimmed": result.was_trimmed,
+                    "original_chars": result.original_chars,
+                    "trimmed_chars": result.trimmed_chars,
+                    "chars_removed": result.chars_removed
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_memory_list_compact(&self, params: Value) -> Value {
+        use engram::storage::list_memories_compact;
+
+        let options: ListOptions = serde_json::from_value(params.clone()).unwrap_or_default();
+        let preview_chars = params
+            .get("preview_chars")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize);
+
+        self.storage
+            .with_connection(|conn| {
+                let memories = list_memories_compact(conn, &options, preview_chars)?;
+                Ok(json!({
+                    "count": memories.len(),
+                    "memories": memories
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_memory_content_stats(&self, params: Value) -> Value {
+        use engram::intelligence::content_stats;
+
+        let id = match params.get("id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "id is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let memory = get_memory(conn, id)?;
+                let stats = content_stats(&memory.content);
+                Ok(json!({
+                    "id": id,
+                    "stats": stats
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // =========================================================================
+    // Batch Operations
+    // =========================================================================
+
+    fn tool_memory_create_batch(&self, params: Value) -> Value {
+        use engram::storage::create_memory_batch;
+
+        let memories = match params.get("memories").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => return json!({"error": "memories array is required"}),
+        };
+
+        let inputs: Vec<CreateMemoryInput> = memories
+            .iter()
+            .filter_map(|m| serde_json::from_value(m.clone()).ok())
+            .collect();
+
+        if inputs.is_empty() {
+            return json!({"error": "No valid memory inputs provided"});
+        }
+
+        self.storage
+            .with_connection(|conn| {
+                let result = create_memory_batch(conn, &inputs)?;
+                Ok(json!(result))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_memory_delete_batch(&self, params: Value) -> Value {
+        use engram::storage::delete_memory_batch;
+
+        let ids: Vec<i64> = match params.get("ids").and_then(|v| v.as_array()) {
+            Some(arr) => arr.iter().filter_map(|v| v.as_i64()).collect(),
+            None => return json!({"error": "ids array is required"}),
+        };
+
+        if ids.is_empty() {
+            return json!({"error": "No valid IDs provided"});
+        }
+
+        self.storage
+            .with_connection(|conn| {
+                let result = delete_memory_batch(conn, &ids)?;
+                Ok(json!(result))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // =========================================================================
+    // Tag Utilities
+    // =========================================================================
+
+    fn tool_memory_tags(&self, _params: Value) -> Value {
+        use engram::storage::list_tags;
+
+        self.storage
+            .with_connection(|conn| {
+                let tags = list_tags(conn)?;
+                Ok(json!({"tags": tags}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_memory_tag_hierarchy(&self, _params: Value) -> Value {
+        use engram::storage::get_tag_hierarchy;
+
+        self.storage
+            .with_connection(|conn| {
+                let hierarchy = get_tag_hierarchy(conn)?;
+                Ok(json!({"hierarchy": hierarchy}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_memory_validate_tags(&self, _params: Value) -> Value {
+        use engram::storage::validate_tags;
+
+        self.storage
+            .with_connection(|conn| {
+                let result = validate_tags(conn)?;
+                Ok(json!(result))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // =========================================================================
+    // Import/Export
+    // =========================================================================
+
+    fn tool_memory_export(&self, _params: Value) -> Value {
+        use engram::storage::export_memories;
+
+        self.storage
+            .with_connection(|conn| {
+                let data = export_memories(conn)?;
+                Ok(json!(data))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_memory_import(&self, params: Value) -> Value {
+        use engram::storage::{import_memories, ExportData};
+
+        let data: ExportData = match params
+            .get("data")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+        {
+            Some(d) => d,
+            None => return json!({"error": "data object is required"}),
+        };
+
+        let skip_duplicates = params
+            .get("skip_duplicates")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        self.storage
+            .with_connection(|conn| {
+                let result = import_memories(conn, &data, skip_duplicates)?;
+                Ok(json!(result))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // =========================================================================
+    // Maintenance
+    // =========================================================================
+
+    fn tool_memory_rebuild_embeddings(&self, _params: Value) -> Value {
+        use engram::storage::rebuild_embeddings;
+
+        self.storage
+            .with_connection(|conn| {
+                let count = rebuild_embeddings(conn)?;
+                Ok(json!({"rebuilt": count}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_memory_rebuild_crossrefs(&self, _params: Value) -> Value {
+        use engram::storage::rebuild_crossrefs;
+
+        self.storage
+            .with_connection(|conn| {
+                let count = rebuild_crossrefs(conn)?;
+                Ok(json!({"rebuilt": count}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // =========================================================================
+    // Special Memory Types
+    // =========================================================================
+
+    fn tool_memory_create_section(&self, params: Value) -> Value {
+        use engram::storage::create_section_memory;
+
+        let title = match params.get("title").and_then(|v| v.as_str()) {
+            Some(t) => t,
+            None => return json!({"error": "title is required"}),
+        };
+
+        let content = params.get("content").and_then(|v| v.as_str()).unwrap_or("");
+        let parent_id = params.get("parent_id").and_then(|v| v.as_i64());
+        let level = params.get("level").and_then(|v| v.as_i64()).unwrap_or(1) as i32;
+        let workspace = params.get("workspace").and_then(|v| v.as_str());
+
+        self.storage
+            .with_connection(|conn| {
+                let memory =
+                    create_section_memory(conn, title, content, parent_id, level, workspace)?;
+                Ok(json!(memory))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_memory_checkpoint(&self, params: Value) -> Value {
+        use engram::storage::create_checkpoint;
+        use std::collections::HashMap;
+
+        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+            Some(s) => s,
+            None => return json!({"error": "session_id is required"}),
+        };
+
+        let summary = match params.get("summary").and_then(|v| v.as_str()) {
+            Some(s) => s,
+            None => return json!({"error": "summary is required"}),
+        };
+
+        let context: HashMap<String, Value> = params
+            .get("context")
+            .and_then(|v| v.as_object())
+            .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+        let workspace = params.get("workspace").and_then(|v| v.as_str());
+
+        self.storage
+            .with_connection(|conn| {
+                let memory = create_checkpoint(conn, session_id, summary, &context, workspace)?;
+                Ok(json!(memory))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_memory_boost(&self, params: Value) -> Value {
+        use engram::storage::boost_memory;
+
+        let id = match params.get("id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "id is required"}),
+        };
+
+        let boost_amount = params
+            .get("boost_amount")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.2) as f32;
+        let duration_seconds = params.get("duration_seconds").and_then(|v| v.as_i64());
+
+        self.storage
+            .with_connection(|conn| {
+                let memory = boost_memory(conn, id, boost_amount, duration_seconds)?;
+                Ok(json!(memory))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // =========================================================================
+    // Event System
+    // =========================================================================
+
+    fn tool_memory_events_poll(&self, params: Value) -> Value {
+        use chrono::DateTime;
+        use engram::storage::poll_events;
+
+        let since_id = params.get("since_id").and_then(|v| v.as_i64());
+        let since_time = params
+            .get("since_time")
+            .and_then(|v| v.as_str())
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&chrono::Utc));
+        let agent_id = params.get("agent_id").and_then(|v| v.as_str());
+        let limit = params
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize);
+
+        self.storage
+            .with_connection(|conn| {
+                let events = poll_events(conn, since_id, since_time, agent_id, limit)?;
+                Ok(json!({"events": events}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_memory_events_clear(&self, params: Value) -> Value {
+        use chrono::DateTime;
+        use engram::storage::clear_events;
+
+        let before_id = params.get("before_id").and_then(|v| v.as_i64());
+        let before_time = params
+            .get("before_time")
+            .and_then(|v| v.as_str())
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&chrono::Utc));
+        let keep_recent = params
+            .get("keep_recent")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize);
+
+        self.storage
+            .with_connection(|conn| {
+                let deleted = clear_events(conn, before_id, before_time, keep_recent)?;
+                Ok(json!({"deleted": deleted}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // =========================================================================
+    // Advanced Sync
+    // =========================================================================
+
+    fn tool_sync_version(&self, _params: Value) -> Value {
+        use engram::storage::get_sync_version;
+
+        self.storage
+            .with_connection(|conn| {
+                let version = get_sync_version(conn)?;
+                Ok(json!(version))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_sync_delta(&self, params: Value) -> Value {
+        use engram::storage::get_sync_delta;
+
+        let since_version = match params.get("since_version").and_then(|v| v.as_i64()) {
+            Some(v) => v,
+            None => return json!({"error": "since_version is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let delta = get_sync_delta(conn, since_version)?;
+                Ok(json!(delta))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_sync_state(&self, params: Value) -> Value {
+        use engram::storage::{get_agent_sync_state, update_agent_sync_state};
+
+        let agent_id = match params.get("agent_id").and_then(|v| v.as_str()) {
+            Some(a) => a,
+            None => return json!({"error": "agent_id is required"}),
+        };
+
+        // If update_version is provided, update the state first
+        if let Some(version) = params.get("update_version").and_then(|v| v.as_i64()) {
+            if let Err(e) = self
+                .storage
+                .with_connection(|conn| update_agent_sync_state(conn, agent_id, version))
+            {
+                return json!({"error": e.to_string()});
+            }
+        }
+
+        self.storage
+            .with_connection(|conn| {
+                let state = get_agent_sync_state(conn, agent_id)?;
+                Ok(json!(state))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_sync_cleanup(&self, params: Value) -> Value {
+        use engram::storage::cleanup_sync_data;
+
+        let older_than_days = params
+            .get("older_than_days")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(30);
+
+        self.storage
+            .with_connection(|conn| {
+                let deleted = cleanup_sync_data(conn, older_than_days)?;
+                Ok(json!({"deleted": deleted}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // =========================================================================
+    // Multi-Agent Sharing
+    // =========================================================================
+
+    fn tool_memory_share(&self, params: Value) -> Value {
+        use engram::storage::share_memory;
+
+        let memory_id = match params.get("memory_id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "memory_id is required"}),
+        };
+
+        let from_agent = match params.get("from_agent").and_then(|v| v.as_str()) {
+            Some(a) => a,
+            None => return json!({"error": "from_agent is required"}),
+        };
+
+        let to_agent = match params.get("to_agent").and_then(|v| v.as_str()) {
+            Some(a) => a,
+            None => return json!({"error": "to_agent is required"}),
+        };
+
+        let message = params.get("message").and_then(|v| v.as_str());
+
+        self.storage
+            .with_connection(|conn| {
+                let share_id = share_memory(conn, memory_id, from_agent, to_agent, message)?;
+                Ok(json!({"share_id": share_id}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_memory_shared_poll(&self, params: Value) -> Value {
+        use engram::storage::poll_shared_memories;
+
+        let agent_id = match params.get("agent_id").and_then(|v| v.as_str()) {
+            Some(a) => a,
+            None => return json!({"error": "agent_id is required"}),
+        };
+
+        let include_acknowledged = params
+            .get("include_acknowledged")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        self.storage
+            .with_connection(|conn| {
+                let shares = poll_shared_memories(conn, agent_id, include_acknowledged)?;
+                Ok(json!({"shares": shares}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_memory_share_ack(&self, params: Value) -> Value {
+        use engram::storage::acknowledge_share;
+
+        let share_id = match params.get("share_id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "share_id is required"}),
+        };
+
+        let agent_id = match params.get("agent_id").and_then(|v| v.as_str()) {
+            Some(a) => a,
+            None => return json!({"error": "agent_id is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                acknowledge_share(conn, share_id, agent_id)?;
+                Ok(json!({"acknowledged": true}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // =========================================================================
+    // Search Variants
+    // =========================================================================
+
+    fn tool_memory_search_by_identity(&self, params: Value) -> Value {
+        use engram::storage::search_by_identity;
+
+        let identity = match params.get("identity").and_then(|v| v.as_str()) {
+            Some(i) => i,
+            None => return json!({"error": "identity is required"}),
+        };
+
+        let workspace = params.get("workspace").and_then(|v| v.as_str());
+        let limit = params
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize);
+
+        self.storage
+            .with_connection(|conn| {
+                let memories = search_by_identity(conn, identity, workspace, limit)?;
+                Ok(json!({"memories": memories}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_memory_session_search(&self, params: Value) -> Value {
+        use engram::storage::search_sessions;
+
+        let query = match params.get("query").and_then(|v| v.as_str()) {
+            Some(q) => q,
+            None => return json!({"error": "query is required"}),
+        };
+
+        let session_id = params.get("session_id").and_then(|v| v.as_str());
+        let workspace = params.get("workspace").and_then(|v| v.as_str());
+        let limit = params
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize);
+
+        self.storage
+            .with_connection(|conn| {
+                let memories = search_sessions(conn, query, session_id, workspace, limit)?;
+                Ok(json!({"memories": memories}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // =========================================================================
+    // Image Handling
+    // =========================================================================
+
+    fn tool_memory_upload_image(&self, params: Value) -> Value {
+        use engram::storage::{upload_image, ImageStorageConfig, LocalImageStorage};
+
+        let memory_id = match params.get("memory_id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "memory_id is required"}),
+        };
+
+        let file_path = match params.get("file_path").and_then(|v| v.as_str()) {
+            Some(p) => p,
+            None => return json!({"error": "file_path is required"}),
+        };
+
+        let image_index = params
+            .get("image_index")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
+        let caption = params.get("caption").and_then(|v| v.as_str());
+
+        // Initialize local image storage
+        let config = ImageStorageConfig::default();
+        let image_storage = match LocalImageStorage::new(config.local_dir) {
+            Ok(s) => s,
+            Err(e) => return json!({"error": format!("Failed to initialize image storage: {}", e)}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let image_ref = upload_image(
+                    conn,
+                    &image_storage,
+                    memory_id,
+                    file_path,
+                    image_index,
+                    caption,
+                )?;
+                Ok(json!({
+                    "success": true,
+                    "image": image_ref
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_memory_migrate_images(&self, params: Value) -> Value {
+        use engram::storage::{migrate_images, ImageStorageConfig, LocalImageStorage};
+
+        let dry_run = params
+            .get("dry_run")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        // Initialize local image storage
+        let config = ImageStorageConfig::default();
+        let image_storage = match LocalImageStorage::new(config.local_dir) {
+            Ok(s) => s,
+            Err(e) => return json!({"error": format!("Failed to initialize image storage: {}", e)}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let result = migrate_images(conn, &image_storage, dry_run)?;
+                Ok(json!(result))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // =========================================================================
+    // Auto-Tagging Tools
+    // =========================================================================
+
+    /// Suggest tags for a memory based on content analysis
+    fn tool_memory_suggest_tags(&self, params: Value) -> Value {
+        use engram::intelligence::{AutoTagConfig, AutoTagger};
+
+        // Can either provide memory_id to analyze existing memory
+        // or provide content directly for analysis
+        let (content, memory_type, existing_tags) = if let Some(id) = params
+            .get("id")
+            .or_else(|| params.get("memory_id"))
+            .and_then(|v| v.as_i64())
+        {
+            // Get memory from storage
+            match self.storage.with_connection(|conn| get_memory(conn, id)) {
+                Ok(memory) => (memory.content, Some(memory.memory_type), memory.tags),
+                Err(e) => return json!({"error": e.to_string()}),
+            }
+        } else if let Some(content) = params.get("content").and_then(|v| v.as_str()) {
+            let memory_type = params
+                .get("type")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse().ok());
+            let existing: Vec<String> = params
+                .get("existing_tags")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            (content.to_string(), memory_type, existing)
+        } else {
+            return json!({"error": "Either 'id'/'memory_id' or 'content' is required"});
+        };
+
+        // Build config from params
+        let mut config = AutoTagConfig::default();
+
+        if let Some(min_conf) = params.get("min_confidence").and_then(|v| v.as_f64()) {
+            config.min_confidence = min_conf as f32;
+        }
+        if let Some(max) = params.get("max_tags").and_then(|v| v.as_u64()) {
+            config.max_tags = max as usize;
+        }
+        if let Some(v) = params.get("enable_patterns").and_then(|v| v.as_bool()) {
+            config.enable_patterns = v;
+        }
+        if let Some(v) = params.get("enable_keywords").and_then(|v| v.as_bool()) {
+            config.enable_keywords = v;
+        }
+        if let Some(v) = params.get("enable_entities").and_then(|v| v.as_bool()) {
+            config.enable_entities = v;
+        }
+        if let Some(v) = params.get("enable_type_tags").and_then(|v| v.as_bool()) {
+            config.enable_type_tags = v;
+        }
+
+        // Add custom keyword mappings if provided
+        if let Some(mappings) = params.get("keyword_mappings").and_then(|v| v.as_object()) {
+            for (keyword, tag) in mappings {
+                if let Some(tag_str) = tag.as_str() {
+                    config
+                        .keyword_mappings
+                        .insert(keyword.clone(), tag_str.to_string());
+                }
+            }
+        }
+
+        let tagger = AutoTagger::new(config);
+        let result = tagger.suggest_tags(&content, memory_type, &existing_tags);
+
+        json!({
+            "suggestions": result.suggestions,
+            "analysis_count": result.analysis_count
+        })
+    }
+
+    /// Automatically tag a memory - suggests and optionally applies tags
+    fn tool_memory_auto_tag(&self, params: Value) -> Value {
+        use engram::intelligence::{AutoTagConfig, AutoTagger};
+
+        let id = match params
+            .get("id")
+            .or_else(|| params.get("memory_id"))
+            .and_then(|v| v.as_i64())
+        {
+            Some(id) => id,
+            None => return json!({"error": "id or memory_id is required"}),
+        };
+
+        let apply = params
+            .get("apply")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let merge = params
+            .get("merge")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        // Build config from params
+        let mut config = AutoTagConfig::default();
+
+        if let Some(min_conf) = params.get("min_confidence").and_then(|v| v.as_f64()) {
+            config.min_confidence = min_conf as f32;
+        }
+        if let Some(max) = params.get("max_tags").and_then(|v| v.as_u64()) {
+            config.max_tags = max as usize;
+        }
+
+        // Add custom keyword mappings if provided
+        if let Some(mappings) = params.get("keyword_mappings").and_then(|v| v.as_object()) {
+            for (keyword, tag) in mappings {
+                if let Some(tag_str) = tag.as_str() {
+                    config
+                        .keyword_mappings
+                        .insert(keyword.clone(), tag_str.to_string());
+                }
+            }
+        }
+
+        // Get memory and suggest tags
+        let (memory, suggestions) = match self.storage.with_connection(|conn| {
+            let memory = get_memory(conn, id)?;
+            let tagger = AutoTagger::new(config);
+            let result = tagger.suggest_for_memory(&memory);
+            Ok((memory, result))
+        }) {
+            Ok(r) => r,
+            Err(e) => return json!({"error": e.to_string()}),
+        };
+
+        // If not applying, just return suggestions
+        if !apply {
+            return json!({
+                "memory_id": id,
+                "suggestions": suggestions.suggestions,
+                "applied": false,
+                "message": "Tags suggested but not applied. Set apply=true to apply them."
+            });
+        }
+
+        // Apply tags
+        let suggested_tags: Vec<String> = suggestions
+            .suggestions
+            .iter()
+            .map(|s| s.tag.clone())
+            .collect();
+
+        let new_tags = if merge {
+            // Merge with existing tags
+            let mut tags = memory.tags.clone();
+            for tag in suggested_tags.iter() {
+                if !tags.iter().any(|t| t.to_lowercase() == tag.to_lowercase()) {
+                    tags.push(tag.clone());
+                }
+            }
+            tags
+        } else {
+            // Replace with suggested tags
+            suggested_tags.clone()
+        };
+
+        let update_input = UpdateMemoryInput {
+            content: None,
+            memory_type: None,
+            tags: Some(new_tags.clone()),
+            metadata: None,
+            importance: None,
+            scope: None,
+            ttl_seconds: None,
+        };
+
+        match self
+            .storage
+            .with_transaction(|conn| update_memory(conn, id, &update_input))
+        {
+            Ok(updated_memory) => {
+                json!({
+                    "memory_id": id,
+                    "suggestions": suggestions.suggestions,
+                    "applied": true,
+                    "applied_tags": suggested_tags,
+                    "final_tags": updated_memory.tags,
+                    "merged": merge
+                })
+            }
+            Err(e) => json!({"error": e.to_string()}),
+        }
+    }
 }
 
 impl McpHandler for EngramHandler {
@@ -1522,8 +3153,18 @@ fn main() -> Result<()> {
     };
     let embedder = create_embedder(&embedding_config)?;
 
+    // Create real-time manager if WebSocket port is specified
+    let realtime_manager = if args.ws_port > 0 {
+        Some(RealtimeManager::new())
+    } else {
+        None
+    };
+
     // Create handler and server
-    let handler = EngramHandler::new(storage.clone(), embedder);
+    let mut handler = EngramHandler::new(storage.clone(), embedder);
+    if let Some(ref manager) = realtime_manager {
+        handler = handler.with_realtime(manager.clone());
+    }
     let server = McpServer::new(handler);
 
     // Start background cleanup thread if enabled
@@ -1556,6 +3197,21 @@ fn main() -> Result<()> {
         });
     }
 
+    // Start WebSocket server in background if port is specified
+    if let Some(manager) = realtime_manager {
+        let ws_port = args.ws_port;
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            rt.block_on(async {
+                let ws_server = RealtimeServer::new(manager, ws_port);
+                tracing::info!("WebSocket server starting on port {}...", ws_port);
+                if let Err(e) = ws_server.start().await {
+                    tracing::error!("WebSocket server error: {}", e);
+                }
+            });
+        });
+    }
+
     tracing::info!("Engram MCP server starting...");
     server.run()?;
 
@@ -1575,6 +3231,7 @@ mod tests {
             embedder,
             fuzzy_engine: Arc::new(Mutex::new(FuzzyEngine::new())),
             search_config: SearchConfig::default(),
+            realtime: None,
         }
     }
 

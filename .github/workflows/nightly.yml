@@ -1,0 +1,137 @@
+name: Nightly
+
+on:
+  schedule:
+    # Run at 3 AM UTC daily
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # =============================================================================
+  # Fuzz Testing (critical for parsers + entity extraction)
+  # =============================================================================
+
+  fuzz:
+    name: Fuzz Testing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+
+      - name: Run fuzz targets (60s each)
+        run: |
+          for target in $(cargo fuzz list 2>/dev/null || echo ""); do
+            echo "Fuzzing: $target"
+            cargo +nightly fuzz run "$target" -- -max_total_time=60 || true
+          done
+        continue-on-error: true
+
+  # =============================================================================
+  # Mutation Testing (weekly quality check)
+  # =============================================================================
+
+  mutants:
+    name: Mutation Testing
+    runs-on: ubuntu-latest
+    # Only run on Sundays
+    if: github.event.schedule == '0 3 * * 0' || github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants
+
+      - name: Run mutation testing
+        run: cargo mutants --timeout 300 --jobs 2 -- --lib
+        continue-on-error: true
+
+      - name: Upload mutation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: mutants.out/
+
+  # =============================================================================
+  # Extended Property Tests
+  # =============================================================================
+
+  property-tests-extended:
+    name: Extended Property Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run extended property tests
+        run: cargo test --test property_tests -- --test-threads=1
+        env:
+          PROPTEST_CASES: 10000
+
+  # =============================================================================
+  # Sanitizers (if unsafe code exists)
+  # =============================================================================
+
+  miri:
+    name: Miri (Undefined Behavior Check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run Miri on critical modules
+        run: |
+          cargo +nightly miri test --lib -- workspace:: tier:: || true
+        continue-on-error: true
+
+  # =============================================================================
+  # Dependency freshness
+  # =============================================================================
+
+  outdated:
+    name: Check Outdated Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-outdated
+        run: cargo install cargo-outdated
+
+      - name: Check outdated
+        run: cargo outdated --root-deps-only
+        continue-on-error: true
+
+  # =============================================================================
+  # Full benchmark suite
+  # =============================================================================
+
+  bench-full:
+    name: Full Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run all benchmarks
+        run: cargo bench
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-benchmarks
+          path: target/criterion/

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use chrono::Utc;
 use rusqlite::Connection;
 
-use super::bm25::bm25_search_with_filter;
+use super::bm25::bm25_search_full;
 use super::{select_search_strategy, SearchConfig};
 use crate::embedding::{cosine_similarity, get_embedding};
 use crate::error::Result;
@@ -57,6 +57,7 @@ pub fn hybrid_search(
             config,
             options.scope.as_ref(),
             options.filter.as_ref(),
+            options.include_transcripts,
         ),
         SearchStrategy::SemanticOnly => {
             if let Some(embedding) = query_embedding {
@@ -72,6 +73,7 @@ pub fn hybrid_search(
                     config,
                     options.scope.as_ref(),
                     options.filter.as_ref(),
+                    options.include_transcripts,
                 )
             }
         }
@@ -87,6 +89,7 @@ pub fn hybrid_search(
                     options.explain,
                     options.scope.as_ref(),
                     options.filter.as_ref(),
+                    options.include_transcripts,
                 )
             } else {
                 keyword_only_search(
@@ -98,6 +101,7 @@ pub fn hybrid_search(
                     config,
                     options.scope.as_ref(),
                     options.filter.as_ref(),
+                    options.include_transcripts,
                 )
             }
         }
@@ -114,8 +118,17 @@ fn keyword_only_search(
     config: &SearchConfig,
     scope: Option<&MemoryScope>,
     filter: Option<&serde_json::Value>,
+    include_transcripts: bool,
 ) -> Result<Vec<SearchResult>> {
-    let bm25_results = bm25_search_with_filter(conn, query, limit * 2, explain, scope, filter)?;
+    let bm25_results = bm25_search_full(
+        conn,
+        query,
+        limit * 2,
+        explain,
+        scope,
+        filter,
+        include_transcripts,
+    )?;
 
     let mut results: Vec<SearchResult> = bm25_results
         .into_iter()
@@ -170,6 +183,11 @@ fn semantic_only_search(
     );
 
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
+
+    // Exclude transcript chunks by default (unless include_transcripts is true)
+    if !options.include_transcripts {
+        sql.push_str(" AND m.memory_type != 'transcript_chunk'");
+    }
 
     // Advanced filter (RML-932) - takes precedence over legacy tags/memory_type
     if let Some(ref filter_json) = options.filter {
@@ -277,9 +295,18 @@ fn rrf_hybrid_search(
     explain: bool,
     scope: Option<&MemoryScope>,
     filter: Option<&serde_json::Value>,
+    include_transcripts: bool,
 ) -> Result<Vec<SearchResult>> {
-    // Get keyword results (with filter applied)
-    let keyword_results = bm25_search_with_filter(conn, query, limit * 2, explain, scope, filter)?;
+    // Get keyword results (with filter applied and transcript exclusion)
+    let keyword_results = bm25_search_full(
+        conn,
+        query,
+        limit * 2,
+        explain,
+        scope,
+        filter,
+        include_transcripts,
+    )?;
 
     // Get semantic results (without boost - we'll apply it to the final RRF score)
     let semantic_options = SearchOptions {
@@ -287,6 +314,7 @@ fn rrf_hybrid_search(
         min_score: Some(0.0), // We'll filter after fusion
         scope: scope.cloned(),
         filter: filter.cloned(),
+        include_transcripts, // Pass through transcript inclusion setting
         ..Default::default()
     };
     // Create a config without project boost for sub-search (we'll apply boost to final RRF)

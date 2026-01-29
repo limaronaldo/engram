@@ -49,6 +49,19 @@ pub fn bm25_search_with_filter(
     scope: Option<&MemoryScope>,
     filter: Option<&serde_json::Value>,
 ) -> Result<Vec<Bm25Result>> {
+    bm25_search_full(conn, query, limit, explain, scope, filter, false)
+}
+
+/// Perform BM25 search with all options including transcript exclusion
+pub fn bm25_search_full(
+    conn: &Connection,
+    query: &str,
+    limit: i64,
+    explain: bool,
+    scope: Option<&MemoryScope>,
+    filter: Option<&serde_json::Value>,
+    include_transcripts: bool,
+) -> Result<Vec<Bm25Result>> {
     // Escape special FTS5 characters
     let escaped_query = escape_fts5_query(query);
     let now = Utc::now().to_rfc3339();
@@ -71,6 +84,11 @@ pub fn bm25_search_with_filter(
     );
 
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(escaped_query), Box::new(now)];
+
+    // Exclude transcript chunks by default (unless include_transcripts is true)
+    if !include_transcripts {
+        sql.push_str(" AND m.memory_type != 'transcript_chunk'");
+    }
 
     // Add advanced filter (RML-932)
     if let Some(filter_json) = filter {
@@ -181,31 +199,74 @@ pub fn field_search(
 }
 
 /// Escape special FTS5 characters in query
+///
+/// FTS5 has several special characters and operators:
+/// - Quotes: `"phrase"` for exact phrase matching
+/// - Operators: `AND`, `OR`, `NOT` (case-sensitive in FTS5)
+/// - Prefix: `term*` for prefix matching
+/// - Column filter: `column:term`
+/// - NEAR: `NEAR(term1 term2, distance)`
+/// - Special chars: `(){}[]^~+-`
+///
+/// This function safely escapes user input to prevent FTS5 injection.
 fn escape_fts5_query(query: &str) -> String {
-    // Handle quoted phrases
-    if query.starts_with('"') && query.ends_with('"') {
-        return query.to_string();
+    // Handle empty or whitespace-only input
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    // Handle quoted phrases - but validate they're properly closed
+    if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() > 2 {
+        // Escape any internal quotes
+        let inner = &trimmed[1..trimmed.len() - 1];
+        let escaped_inner = inner.replace('"', "\"\"");
+        return format!("\"{}\"", escaped_inner);
     }
 
     // Split into terms and escape each
-    query
+    trimmed
         .split_whitespace()
+        .filter(|t| !t.is_empty())
         .map(escape_fts5_term)
         .collect::<Vec<_>>()
         .join(" ")
 }
 
 /// Escape a single FTS5 term
+///
+/// Handles all FTS5 special characters:
+/// - `"` - quote (escaped by doubling)
+/// - `*` - prefix wildcard
+/// - `()` - grouping
+/// - `{}[]` - column filter syntax
+/// - `^` - boost operator
+/// - `~` - NOT operator (in some contexts)
+/// - `:` - column prefix
+/// - `+` - required term
+/// - `-` - excluded term
 fn escape_fts5_term(term: &str) -> String {
-    // FTS5 special characters that need escaping
-    let special = ['"', '*', '(', ')', '{', '}', '[', ']', '^', '~', ':'];
+    // Empty term check
+    if term.is_empty() {
+        return String::new();
+    }
 
-    let mut escaped = String::with_capacity(term.len() + 4);
+    // FTS5 special characters that need quoting
+    // Note: We include all chars that have special meaning in FTS5
+    let special = [
+        '"', '*', '(', ')', '{', '}', '[', ']', '^', '~', ':', '+', '-',
+    ];
+
+    // Check if term needs quoting
     let needs_quotes = term
         .chars()
         .any(|c| special.contains(&c) || c.is_whitespace());
 
-    if needs_quotes {
+    // Also check for FTS5 boolean operators (case-sensitive)
+    let is_operator = matches!(term, "AND" | "OR" | "NOT" | "NEAR");
+
+    if needs_quotes || is_operator {
+        let mut escaped = String::with_capacity(term.len() + 4);
         escaped.push('"');
         for c in term.chars() {
             if c == '"' {
@@ -215,11 +276,10 @@ fn escape_fts5_term(term: &str) -> String {
             }
         }
         escaped.push('"');
+        escaped
     } else {
-        escaped.push_str(term);
+        term.to_string()
     }
-
-    escaped
 }
 
 /// Extract which query terms matched in the content
@@ -294,23 +354,160 @@ impl Bm25Result {
 mod tests {
     use super::*;
 
+    // =========================================================================
+    // FTS5 Term Escaping Tests
+    // =========================================================================
+
     #[test]
-    fn test_escape_fts5_term() {
+    fn test_escape_fts5_term_simple() {
         assert_eq!(escape_fts5_term("hello"), "hello");
-        assert_eq!(escape_fts5_term("hello world"), "\"hello world\"");
-        assert_eq!(escape_fts5_term("test\"quote"), "\"test\"\"quote\"");
+        assert_eq!(escape_fts5_term("world"), "world");
+        assert_eq!(escape_fts5_term("rust123"), "rust123");
     }
 
     #[test]
-    fn test_escape_fts5_query() {
-        assert_eq!(escape_fts5_query("hello world"), "hello world");
-        assert_eq!(escape_fts5_query("\"exact phrase\""), "\"exact phrase\"");
+    fn test_escape_fts5_term_with_spaces() {
+        assert_eq!(escape_fts5_term("hello world"), "\"hello world\"");
+        assert_eq!(escape_fts5_term("  spaces  "), "\"  spaces  \"");
     }
+
+    #[test]
+    fn test_escape_fts5_term_with_quotes() {
+        assert_eq!(escape_fts5_term("test\"quote"), "\"test\"\"quote\"");
+        assert_eq!(escape_fts5_term("\"quoted\""), "\"\"\"quoted\"\"\"");
+    }
+
+    #[test]
+    fn test_escape_fts5_term_special_chars() {
+        // Prefix wildcard
+        assert_eq!(escape_fts5_term("test*"), "\"test*\"");
+        // Grouping
+        assert_eq!(escape_fts5_term("(group)"), "\"(group)\"");
+        // Column filter
+        assert_eq!(escape_fts5_term("content:term"), "\"content:term\"");
+        // Boost
+        assert_eq!(escape_fts5_term("term^2"), "\"term^2\"");
+        // Plus/minus
+        assert_eq!(escape_fts5_term("+required"), "\"+required\"");
+        assert_eq!(escape_fts5_term("-excluded"), "\"-excluded\"");
+    }
+
+    #[test]
+    fn test_escape_fts5_term_operators() {
+        // FTS5 boolean operators should be quoted to be treated as literals
+        assert_eq!(escape_fts5_term("AND"), "\"AND\"");
+        assert_eq!(escape_fts5_term("OR"), "\"OR\"");
+        assert_eq!(escape_fts5_term("NOT"), "\"NOT\"");
+        assert_eq!(escape_fts5_term("NEAR"), "\"NEAR\"");
+        // Lowercase versions are not operators
+        assert_eq!(escape_fts5_term("and"), "and");
+        assert_eq!(escape_fts5_term("or"), "or");
+    }
+
+    #[test]
+    fn test_escape_fts5_term_empty() {
+        assert_eq!(escape_fts5_term(""), "");
+    }
+
+    // =========================================================================
+    // FTS5 Query Escaping Tests
+    // =========================================================================
+
+    #[test]
+    fn test_escape_fts5_query_simple() {
+        assert_eq!(escape_fts5_query("hello world"), "hello world");
+        assert_eq!(escape_fts5_query("single"), "single");
+    }
+
+    #[test]
+    fn test_escape_fts5_query_quoted_phrase() {
+        assert_eq!(escape_fts5_query("\"exact phrase\""), "\"exact phrase\"");
+        // Internal quotes are escaped
+        assert_eq!(
+            escape_fts5_query("\"phrase with \"quotes\"\""),
+            "\"phrase with \"\"quotes\"\"\""
+        );
+    }
+
+    #[test]
+    fn test_escape_fts5_query_whitespace() {
+        assert_eq!(escape_fts5_query(""), "");
+        assert_eq!(escape_fts5_query("   "), "");
+        assert_eq!(escape_fts5_query("  hello  world  "), "hello world");
+    }
+
+    #[test]
+    fn test_escape_fts5_query_injection_attempts() {
+        // Attempt to inject FTS5 operators - OR gets quoted, parens in terms get quoted
+        assert_eq!(
+            escape_fts5_query("hello OR (drop table)"),
+            "hello \"OR\" \"(drop\" \"table)\""
+        );
+        // Attempt to inject column filter - colon causes quoting
+        assert_eq!(
+            escape_fts5_query("content:malicious"),
+            "\"content:malicious\""
+        );
+        // Attempt to use NEAR operator - NEAR( is one token, gets quoted
+        assert_eq!(
+            escape_fts5_query("NEAR(term1 term2, 5)"),
+            "\"NEAR(term1\" term2, \"5)\""
+        );
+    }
+
+    #[test]
+    fn test_escape_fts5_query_real_world() {
+        // Common search patterns users might enter
+        assert_eq!(escape_fts5_query("user@example.com"), "user@example.com");
+        assert_eq!(escape_fts5_query("file.rs"), "file.rs");
+        assert_eq!(escape_fts5_query("C++"), "\"C++\"");
+        assert_eq!(escape_fts5_query("node.js"), "node.js");
+        assert_eq!(escape_fts5_query("@username"), "@username");
+        // URL-like patterns - colon causes entire term to be quoted
+        assert_eq!(
+            escape_fts5_query("https://example.com"),
+            "\"https://example.com\""
+        );
+    }
+
+    // =========================================================================
+    // Match Extraction Tests
+    // =========================================================================
 
     #[test]
     fn test_extract_matched_terms() {
         let terms = extract_matched_terms("hello world", "Hello there, World!");
         assert!(terms.contains(&"hello".to_string()));
         assert!(terms.contains(&"world".to_string()));
+    }
+
+    #[test]
+    fn test_extract_matched_terms_partial() {
+        let terms = extract_matched_terms("rust programming", "Rust is a programming language");
+        assert!(terms.contains(&"rust".to_string()));
+        assert!(terms.contains(&"programming".to_string()));
+    }
+
+    #[test]
+    fn test_extract_matched_terms_no_match() {
+        let terms = extract_matched_terms("xyz abc", "Hello world");
+        assert!(terms.is_empty());
+    }
+
+    // =========================================================================
+    // Highlight Generation Tests
+    // =========================================================================
+
+    #[test]
+    fn test_generate_highlights() {
+        let highlights = generate_highlights("test", "This is a test string for testing");
+        assert!(!highlights.is_empty());
+        assert!(highlights[0].contains("test"));
+    }
+
+    #[test]
+    fn test_generate_highlights_no_match() {
+        let highlights = generate_highlights("xyz", "Hello world");
+        assert!(highlights.is_empty());
     }
 }

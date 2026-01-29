@@ -430,6 +430,7 @@ impl Reranker {
             MemoryType::Issue => 0.03,
             MemoryType::Credential => 0.02,
             MemoryType::Custom => 0.04,
+            MemoryType::TranscriptChunk => 0.02, // Lower relevance for transcript chunks
         }
     }
 
@@ -501,6 +502,8 @@ mod tests {
             has_embedding: false,
             metadata: HashMap::new(),
             scope: MemoryScope::Global,
+            workspace: "default".to_string(),
+            tier: crate::types::MemoryTier::Permanent,
             expires_at: None,
             content_hash: None,
         }

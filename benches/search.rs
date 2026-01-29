@@ -43,6 +43,8 @@ fn setup_storage_with_data(count: usize) -> Storage {
                     ttl_seconds: None,
                     dedup_mode: DedupMode::Allow,
                     dedup_threshold: None,
+                    workspace: Some("default".to_string()),
+                    tier: MemoryTier::Permanent,
                 };
                 create_memory(conn, &input)
             })

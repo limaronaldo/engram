@@ -1,0 +1,64 @@
+{
+  "test_cases": [
+    {
+      "name": "simple_valid",
+      "input": "my-project",
+      "expected": {"ok": "my-project"}
+    },
+    {
+      "name": "uppercase_normalized",
+      "input": "My-Project",
+      "expected": {"ok": "my-project"}
+    },
+    {
+      "name": "with_underscores",
+      "input": "my_project_2024",
+      "expected": {"ok": "my_project_2024"}
+    },
+    {
+      "name": "trim_whitespace",
+      "input": "  my-project  ",
+      "expected": {"ok": "my-project"}
+    },
+    {
+      "name": "default_workspace",
+      "input": "default",
+      "expected": {"ok": "default"}
+    },
+    {
+      "name": "empty_fails",
+      "input": "",
+      "expected": {"err": "Empty"}
+    },
+    {
+      "name": "whitespace_only_fails",
+      "input": "   ",
+      "expected": {"err": "Empty"}
+    },
+    {
+      "name": "reserved_system",
+      "input": "_system",
+      "expected": {"err": "Reserved"}
+    },
+    {
+      "name": "reserved_underscore_prefix",
+      "input": "_private",
+      "expected": {"err": "Reserved"}
+    },
+    {
+      "name": "invalid_chars_space",
+      "input": "my project",
+      "expected": {"err": "InvalidChars"}
+    },
+    {
+      "name": "invalid_chars_special",
+      "input": "my@project",
+      "expected": {"err": "InvalidChars"}
+    },
+    {
+      "name": "too_long",
+      "input": "a-very-long-workspace-name-that-exceeds-the-maximum-allowed-length-of-64-characters",
+      "expected": {"err": "TooLong"}
+    }
+  ]
+}

@@ -42,7 +42,12 @@ pub enum EngramError {
     Io(#[from] std::io::Error),
 
     #[error("HTTP request error: {0}")]
+    #[cfg(feature = "openai")]
     Http(#[from] reqwest::Error),
+
+    #[error("HTTP request error: {0}")]
+    #[cfg(not(feature = "openai"))]
+    Http(String),
 
     #[error("Configuration error: {0}")]
     Config(String),
@@ -69,13 +74,13 @@ pub enum EngramError {
 impl EngramError {
     /// Check if error is retryable
     pub fn is_retryable(&self) -> bool {
-        matches!(
-            self,
-            EngramError::Sync(_)
-                | EngramError::CloudStorage(_)
-                | EngramError::Http(_)
-                | EngramError::RateLimited(_)
-        )
+        match self {
+            EngramError::Sync(_) => true,
+            EngramError::CloudStorage(_) => true,
+            EngramError::Http(_) => true,
+            EngramError::RateLimited(_) => true,
+            _ => false,
+        }
     }
 
     /// Get error code for MCP protocol

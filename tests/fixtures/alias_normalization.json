@@ -1,0 +1,54 @@
+{
+  "test_cases": [
+    {
+      "name": "simple_lowercase",
+      "input": "Alice",
+      "expected": "alice"
+    },
+    {
+      "name": "trim_whitespace",
+      "input": "  bob  ",
+      "expected": "bob"
+    },
+    {
+      "name": "collapse_spaces",
+      "input": "John   Smith",
+      "expected": "john smith"
+    },
+    {
+      "name": "strip_at_prefix",
+      "input": "@username",
+      "expected": "username"
+    },
+    {
+      "name": "strip_hash_prefix",
+      "input": "#channel",
+      "expected": "channel"
+    },
+    {
+      "name": "mixed_case_and_spaces",
+      "input": "  @MyUserName  ",
+      "expected": "myusername"
+    },
+    {
+      "name": "email_preserved",
+      "input": "User@Example.COM",
+      "expected": "user@example.com"
+    },
+    {
+      "name": "empty_input",
+      "input": "",
+      "expected": ""
+    },
+    {
+      "name": "whitespace_only",
+      "input": "   ",
+      "expected": ""
+    },
+    {
+      "name": "unicode_preserved",
+      "input": "Ronaldo Lima",
+      "expected": "ronaldo lima"
+    }
+  ]
+}
