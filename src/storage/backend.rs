@@ -1,452 +1,201 @@
-//! Storage backend trait for abstracting storage implementations (ENG-14)
-//!
-//! This module defines the `StorageBackend` trait that all storage backends
-//! must implement. This allows for swapping out the underlying storage engine
-//! (SQLite, Turso, Meilisearch, etc.) without changing the application logic.
-
-use crate::error::Result;
+use crate::error::EngramError;
+pub use crate::types::StorageStats;
 use crate::types::{
-    CreateMemoryInput, CrossReference, EdgeType, ListOptions, Memory, MemoryId, MemoryScope,
-    SearchOptions, SearchResult, UpdateMemoryInput,
+    CreateMemoryInput, CrossReference, EdgeType, ListOptions, Memory, MemoryId, SearchOptions,
+    SearchResult, UpdateMemoryInput,
 };
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Statistics about the storage backend
-#[derive(Debug, Clone, Default)]
-pub struct StorageStats {
-    /// Total number of memories
-    pub memory_count: i64,
-    /// Total number of cross-references
-    pub crossref_count: i64,
-    /// Total number of unique tags
-    pub tag_count: i64,
-    /// Total number of identities
-    pub identity_count: i64,
-    /// Total number of entities
-    pub entity_count: i64,
-    /// Database size in bytes (if applicable)
-    pub db_size_bytes: Option<i64>,
-    /// Storage mode (e.g., "sqlite-wal", "sqlite-delete", "turso", "meilisearch")
-    pub storage_mode: String,
-    /// Schema version
-    pub schema_version: i32,
-    /// Memories per workspace
-    pub workspace_counts: HashMap<String, i64>,
-    /// Memories per memory type
-    pub type_counts: HashMap<String, i64>,
-    /// Memories per tier
-    pub tier_counts: HashMap<String, i64>,
-}
-
-/// Health status of the storage backend
-#[derive(Debug, Clone)]
-pub struct HealthStatus {
-    /// Whether the backend is healthy
-    pub healthy: bool,
-    /// Latency of a simple query in milliseconds
-    pub latency_ms: f64,
-    /// Optional error message if unhealthy
-    pub error: Option<String>,
-    /// Additional health details
-    pub details: HashMap<String, String>,
-}
-
-impl Default for HealthStatus {
-    fn default() -> Self {
-        Self {
-            healthy: true,
-            latency_ms: 0.0,
-            error: None,
-            details: HashMap::new(),
-        }
-    }
-}
-
-/// Result of a batch create operation
-#[derive(Debug, Clone)]
+/// Result of a batch creation operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchCreateResult {
-    /// Successfully created memories
     pub created: Vec<Memory>,
-    /// Indices of inputs that failed (with error messages)
     pub failed: Vec<(usize, String)>,
-    /// Total time taken in milliseconds
     pub elapsed_ms: f64,
 }
 
-/// Result of a batch delete operation
-#[derive(Debug, Clone)]
+/// Result of a batch deletion operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchDeleteResult {
-    /// Number of memories deleted
     pub deleted_count: usize,
-    /// IDs that were not found
     pub not_found: Vec<MemoryId>,
-    /// IDs that failed to delete (with error messages)
     pub failed: Vec<(MemoryId, String)>,
 }
 
-/// Options for listing memories
-#[derive(Debug, Clone, Default)]
-pub struct ListMemoriesOptions {
-    /// Maximum number of results
-    pub limit: Option<usize>,
-    /// Offset for pagination
-    pub offset: Option<usize>,
-    /// Filter by workspace
-    pub workspace: Option<String>,
-    /// Filter by memory scope
-    pub scope: Option<MemoryScope>,
-    /// Filter by tags (AND)
-    pub tags: Option<Vec<String>>,
-    /// Filter by memory type
-    pub memory_type: Option<String>,
-    /// Include archived memories
-    pub include_archived: bool,
-    /// Sort by field
-    pub sort_by: Option<String>,
-    /// Sort descending
-    pub sort_desc: bool,
+/// Result of a sync operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncResult {
+    pub success: bool,
+    pub pushed_count: usize,
+    pub pulled_count: usize,
+    pub conflicts_resolved: usize,
+    pub error: Option<String>,
+    pub new_version: i64,
 }
 
-/// The core storage backend trait (ENG-14)
+/// Delta of changes for synchronization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncDelta {
+    pub created: Vec<Memory>,
+    pub updated: Vec<Memory>,
+    pub deleted: Vec<MemoryId>,
+    pub version: u64,
+}
+
+/// Current state of synchronization
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncState {
+    pub local_version: u64,
+    pub remote_version: Option<u64>,
+    pub last_sync: Option<chrono::DateTime<chrono::Utc>>,
+    pub has_pending_changes: bool,
+    pub pending_count: usize,
+}
+
+/// Health status of the storage backend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthStatus {
+    pub healthy: bool,
+    pub latency_ms: f64,
+    pub error: Option<String>,
+    pub details: HashMap<String, String>,
+}
+
+/// Core storage backend trait for Engram (ENG-14)
 ///
-/// All storage implementations must implement this trait to be usable
-/// with the Engram memory system. This includes:
-/// - SQLite (current implementation)
-/// - Turso (Phase 6)
-/// - Meilisearch (Phase 7)
-/// - PostgreSQL (future)
-///
-/// # Design Principles
-///
-/// 1. **Sync Interface**: All methods are synchronous. Async wrappers can be
-///    added at a higher level if needed (e.g., with tokio::spawn_blocking).
-///
-/// 2. **Error Handling**: All methods return `Result<T>` using the crate's
-///    error type for consistent error handling.
-///
-/// 3. **Immutable Self**: Methods take `&self` to allow for connection pooling
-///    and internal mutability patterns.
-///
-/// 4. **Minimal Dependencies**: The trait uses only types from `crate::types`
-///    to avoid coupling to specific implementations.
+/// This trait defines the interface for all storage operations, allowing
+/// for multiple backend implementations (SQLite, Turso, Meilisearch).
 pub trait StorageBackend: Send + Sync {
-    // ========================================================================
-    // Core CRUD Operations
-    // ========================================================================
+    // --- Memory CRUD ---
 
     /// Create a new memory
-    ///
-    /// # Arguments
-    /// * `input` - The memory creation input
-    ///
-    /// # Returns
-    /// The created memory with assigned ID and timestamps
-    fn create_memory(&self, input: CreateMemoryInput) -> Result<Memory>;
+    fn create_memory(&self, input: CreateMemoryInput) -> Result<Memory, EngramError>;
 
     /// Get a memory by ID
-    ///
-    /// # Arguments
-    /// * `id` - The memory ID
-    ///
-    /// # Returns
-    /// The memory if found, None otherwise
-    fn get_memory(&self, id: MemoryId) -> Result<Option<Memory>>;
+    fn get_memory(&self, id: MemoryId) -> Result<Option<Memory>, EngramError>;
 
-    /// Update an existing memory
-    ///
-    /// # Arguments
-    /// * `id` - The memory ID to update
-    /// * `input` - The update input (only non-None fields are updated)
-    ///
-    /// # Returns
-    /// The updated memory
-    fn update_memory(&self, id: MemoryId, input: UpdateMemoryInput) -> Result<Memory>;
+    /// Update a memory
+    fn update_memory(&self, id: MemoryId, input: UpdateMemoryInput) -> Result<Memory, EngramError>;
 
-    /// Delete a memory by ID
-    ///
-    /// # Arguments
-    /// * `id` - The memory ID to delete
-    ///
-    /// # Returns
-    /// Ok(()) if deleted, error if not found or deletion failed
-    fn delete_memory(&self, id: MemoryId) -> Result<()>;
+    /// Delete a memory (soft delete)
+    fn delete_memory(&self, id: MemoryId) -> Result<(), EngramError>;
 
-    // ========================================================================
-    // Batch Operations (ENG-17)
-    // ========================================================================
+    // --- Batch Operations ---
 
-    /// Create multiple memories in a single operation
-    ///
-    /// # Arguments
-    /// * `inputs` - Vector of memory creation inputs
-    ///
-    /// # Returns
-    /// Result containing created memories and any failures
-    fn create_memories_batch(&self, inputs: Vec<CreateMemoryInput>) -> Result<BatchCreateResult> {
-        // Default implementation: create one by one
-        let start = std::time::Instant::now();
-        let mut created = Vec::new();
-        let mut failed = Vec::new();
+    /// Create multiple memories in a single transaction
+    fn create_memories_batch(
+        &self,
+        inputs: Vec<CreateMemoryInput>,
+    ) -> Result<BatchCreateResult, EngramError>;
 
-        for (idx, input) in inputs.into_iter().enumerate() {
-            match self.create_memory(input) {
-                Ok(memory) => created.push(memory),
-                Err(e) => failed.push((idx, e.to_string())),
-            }
-        }
+    /// Delete multiple memories in a single transaction
+    fn delete_memories_batch(&self, ids: Vec<MemoryId>) -> Result<BatchDeleteResult, EngramError>;
 
-        Ok(BatchCreateResult {
-            created,
-            failed,
-            elapsed_ms: start.elapsed().as_secs_f64() * 1000.0,
-        })
-    }
+    // --- Query Operations ---
 
-    /// Delete multiple memories in a single operation
-    ///
-    /// # Arguments
-    /// * `ids` - Vector of memory IDs to delete
-    ///
-    /// # Returns
-    /// Result containing deletion counts and failures
-    fn delete_memories_batch(&self, ids: Vec<MemoryId>) -> Result<BatchDeleteResult> {
-        // Default implementation: delete one by one
-        let mut deleted_count = 0;
-        let mut not_found = Vec::new();
-        let mut failed = Vec::new();
+    /// List memories with filters
+    fn list_memories(&self, options: ListOptions) -> Result<Vec<Memory>, EngramError>;
 
-        for id in ids {
-            match self.delete_memory(id) {
-                Ok(()) => deleted_count += 1,
-                Err(e) => {
-                    let err_str = e.to_string();
-                    if err_str.contains("not found") {
-                        not_found.push(id);
-                    } else {
-                        failed.push((id, err_str));
-                    }
-                }
-            }
-        }
+    /// Count memories matching filters
+    fn count_memories(&self, options: ListOptions) -> Result<i64, EngramError>;
 
-        Ok(BatchDeleteResult {
-            deleted_count,
-            not_found,
-            failed,
-        })
-    }
+    /// Search memories using hybrid search
+    fn search_memories(
+        &self,
+        query: &str,
+        options: SearchOptions,
+    ) -> Result<Vec<SearchResult>, EngramError>;
 
-    // ========================================================================
-    // Query Operations
-    // ========================================================================
+    // --- Graph Operations ---
 
-    /// List memories with filtering and pagination
-    ///
-    /// # Arguments
-    /// * `options` - List options for filtering, sorting, pagination
-    ///
-    /// # Returns
-    /// Vector of memories matching the criteria
-    fn list_memories(&self, options: ListOptions) -> Result<Vec<Memory>>;
-
-    /// Search memories using hybrid search (keyword + semantic)
-    ///
-    /// # Arguments
-    /// * `query` - The search query string
-    /// * `options` - Search options (limit, filters, etc.)
-    ///
-    /// # Returns
-    /// Vector of search results with scores
-    fn search_memories(&self, query: &str, options: SearchOptions) -> Result<Vec<SearchResult>>;
-
-    /// Count memories matching criteria
-    ///
-    /// # Arguments
-    /// * `options` - List options for filtering (limit/offset ignored)
-    ///
-    /// # Returns
-    /// Count of matching memories
-    fn count_memories(&self, options: ListOptions) -> Result<i64> {
-        // Default: list and count (inefficient, backends should override)
-        let memories = self.list_memories(ListOptions {
-            limit: None,
-            offset: None,
-            ..options
-        })?;
-        Ok(memories.len() as i64)
-    }
-
-    // ========================================================================
-    // Cross-Reference Operations
-    // ========================================================================
-
-    /// Create a cross-reference between two memories
+    /// Create a cross-reference between memories
     fn create_crossref(
         &self,
         from_id: MemoryId,
         to_id: MemoryId,
         edge_type: EdgeType,
         score: f32,
-    ) -> Result<CrossReference>;
+    ) -> Result<CrossReference, EngramError>;
 
     /// Get cross-references for a memory
-    fn get_crossrefs(&self, memory_id: MemoryId) -> Result<Vec<CrossReference>>;
+    fn get_crossrefs(&self, memory_id: MemoryId) -> Result<Vec<CrossReference>, EngramError>;
 
     /// Delete a cross-reference
-    fn delete_crossref(&self, from_id: MemoryId, to_id: MemoryId) -> Result<()>;
+    fn delete_crossref(&self, from_id: MemoryId, to_id: MemoryId) -> Result<(), EngramError>;
 
-    // ========================================================================
-    // Tag Operations
-    // ========================================================================
+    // --- Tag Operations ---
 
-    /// Get all tags with counts
-    fn list_tags(&self) -> Result<Vec<(String, i64)>>;
+    /// List all tags with usage counts
+    fn list_tags(&self) -> Result<Vec<(String, i64)>, EngramError>;
 
-    /// Get memories by tag
-    fn get_memories_by_tag(&self, tag: &str, limit: Option<usize>) -> Result<Vec<Memory>>;
+    /// Get memories with a specific tag
+    fn get_memories_by_tag(
+        &self,
+        tag: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<Memory>, EngramError>;
 
-    // ========================================================================
-    // Workspace Operations
-    // ========================================================================
+    // --- Workspace Operations ---
 
     /// List all workspaces with memory counts
-    fn list_workspaces(&self) -> Result<Vec<(String, i64)>>;
+    fn list_workspaces(&self) -> Result<Vec<(String, i64)>, EngramError>;
 
-    /// Get statistics for a specific workspace
-    fn get_workspace_stats(&self, workspace: &str) -> Result<HashMap<String, i64>>;
+    /// Get detailed statistics for a workspace
+    fn get_workspace_stats(&self, workspace: &str) -> Result<HashMap<String, i64>, EngramError>;
 
     /// Move memories to a different workspace
-    fn move_to_workspace(&self, ids: Vec<MemoryId>, workspace: &str) -> Result<usize>;
+    fn move_to_workspace(&self, ids: Vec<MemoryId>, workspace: &str) -> Result<usize, EngramError>;
 
-    // ========================================================================
-    // Maintenance Operations
-    // ========================================================================
+    // --- Maintenance & Metadata ---
 
     /// Get storage statistics
-    fn get_stats(&self) -> Result<StorageStats>;
+    fn get_stats(&self) -> Result<StorageStats, EngramError>;
 
-    /// Perform health check
-    fn health_check(&self) -> Result<HealthStatus>;
+    /// Check storage health
+    fn health_check(&self) -> Result<HealthStatus, EngramError>;
 
-    /// Optimize storage (vacuum, reindex, etc.)
-    fn optimize(&self) -> Result<()>;
+    /// Run optimization (e.g., VACUUM)
+    fn optimize(&self) -> Result<(), EngramError>;
 
-    /// Get the backend name/type
+    /// Get backend name identifier
     fn backend_name(&self) -> &'static str;
 
-    /// Get the schema version
-    fn schema_version(&self) -> Result<i32>;
+    /// Get current schema version
+    fn schema_version(&self) -> Result<i32, EngramError>;
 }
 
-/// Extension trait for transaction support (ENG-18)
-///
-/// Not all backends support transactions (e.g., Meilisearch), so this is
-/// a separate trait that can be optionally implemented.
+/// Extension trait for backends that support transactions (ENG-18)
 pub trait TransactionalBackend: StorageBackend {
-    /// Execute a function within a transaction
-    ///
-    /// The transaction is committed if the function returns Ok,
-    /// and rolled back if it returns Err.
-    fn with_transaction<F, T>(&self, f: F) -> Result<T>
+    /// Execute a closure within a transaction
+    fn with_transaction<F, T>(&self, f: F) -> Result<T, EngramError>
     where
-        F: FnOnce(&dyn StorageBackend) -> Result<T>;
+        F: FnOnce(&dyn StorageBackend) -> Result<T, EngramError>;
 
-    /// Begin a savepoint (nested transaction)
-    fn savepoint(&self, name: &str) -> Result<()>;
+    /// create a savepoint
+    fn savepoint(&self, name: &str) -> Result<(), EngramError>;
 
-    /// Release a savepoint
-    fn release_savepoint(&self, name: &str) -> Result<()>;
+    /// release a savepoint
+    fn release_savepoint(&self, name: &str) -> Result<(), EngramError>;
 
-    /// Rollback to a savepoint
-    fn rollback_to_savepoint(&self, name: &str) -> Result<()>;
+    /// rollback to a savepoint
+    fn rollback_to_savepoint(&self, name: &str) -> Result<(), EngramError>;
 }
 
-/// Extension trait for cloud sync operations (ENG-16)
+/// Extension trait for backends that support cloud synchronization (ENG-16)
 pub trait CloudSyncBackend: StorageBackend {
-    /// Push local changes to cloud storage
-    fn push(&self) -> Result<SyncResult>;
+    /// Pull changes from cloud
+    fn pull(&self) -> Result<SyncResult, EngramError>;
 
-    /// Pull remote changes from cloud storage
-    fn pull(&self) -> Result<SyncResult>;
+    /// Push changes to cloud
+    fn push(&self) -> Result<SyncResult, EngramError>;
 
-    /// Get changes since a version number
-    fn sync_delta(&self, since_version: u64) -> Result<SyncDelta>;
+    /// Get delta changes since version
+    fn sync_delta(&self, since_version: u64) -> Result<SyncDelta, EngramError>;
 
     /// Get current sync state
-    fn sync_state(&self) -> Result<SyncState>;
+    fn sync_state(&self) -> Result<SyncState, EngramError>;
 
-    /// Force full sync (push then pull)
-    fn force_sync(&self) -> Result<SyncResult>;
-}
-
-/// Result of a sync operation
-#[derive(Debug, Clone, Default)]
-pub struct SyncResult {
-    /// Whether the sync was successful
-    pub success: bool,
-    /// Number of items pushed
-    pub pushed_count: usize,
-    /// Number of items pulled
-    pub pulled_count: usize,
-    /// Number of conflicts resolved
-    pub conflicts_resolved: usize,
-    /// Error message if failed
-    pub error: Option<String>,
-    /// New sync version after operation
-    pub new_version: u64,
-}
-
-/// Delta changes for incremental sync
-#[derive(Debug, Clone, Default)]
-pub struct SyncDelta {
-    /// Created memories since version
-    pub created: Vec<Memory>,
-    /// Updated memories since version
-    pub updated: Vec<Memory>,
-    /// Deleted memory IDs since version
-    pub deleted: Vec<MemoryId>,
-    /// Version number of this delta
-    pub version: u64,
-}
-
-/// Current sync state
-#[derive(Debug, Clone, Default)]
-pub struct SyncState {
-    /// Local version number
-    pub local_version: u64,
-    /// Remote version number (if known)
-    pub remote_version: Option<u64>,
-    /// Last sync timestamp
-    pub last_sync: Option<chrono::DateTime<chrono::Utc>>,
-    /// Whether there are pending local changes
-    pub has_pending_changes: bool,
-    /// Number of pending changes
-    pub pending_count: usize,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_storage_stats_default() {
-        let stats = StorageStats::default();
-        assert_eq!(stats.memory_count, 0);
-        assert_eq!(stats.crossref_count, 0);
-        assert_eq!(stats.schema_version, 0);
-    }
-
-    #[test]
-    fn test_health_status_default() {
-        let status = HealthStatus::default();
-        assert!(status.healthy);
-        assert!(status.error.is_none());
-    }
-
-    #[test]
-    fn test_sync_result_default() {
-        let result = SyncResult::default();
-        assert!(!result.success);
-        assert_eq!(result.pushed_count, 0);
-    }
+    /// Force a full sync (push then pull)
+    fn force_sync(&self) -> Result<SyncResult, EngramError>;
 }

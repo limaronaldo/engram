@@ -579,7 +579,7 @@ pub fn create_memory(conn: &Connection, input: &CreateMemoryInput) -> Result<Mem
                         importance: input.importance, // Use new importance if provided
                         scope: None,
                         ttl_seconds: input.ttl_seconds, // Apply new TTL if provided
-                    
+
                         event_time: None,
                         trigger_pattern: None,
                     };
@@ -1850,11 +1850,53 @@ pub fn get_stats(conn: &Connection) -> Result<StorageStats> {
     let total_versions: i64 =
         conn.query_row("SELECT COUNT(*) FROM memory_versions", [], |row| row.get(0))?;
 
+    let _total_identities: i64 =
+        conn.query_row("SELECT COUNT(*) FROM identities", [], |row| row.get(0))?;
+
+    let _total_entities: i64 =
+        conn.query_row("SELECT COUNT(*) FROM entities", [], |row| row.get(0))?;
+
     let db_size_bytes: i64 = conn.query_row(
         "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
         [],
         |row| row.get(0),
     )?;
+
+    let _schema_version: i32 = conn
+        .query_row("SELECT MAX(version) FROM schema_version", [], |row| {
+            row.get(0)
+        })
+        .unwrap_or(0);
+
+    let mut workspace_stmt = conn.prepare(
+        "SELECT workspace, COUNT(*) FROM memories WHERE valid_to IS NULL GROUP BY workspace",
+    )?;
+    let workspaces: HashMap<String, i64> = workspace_stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let mut type_stmt = conn.prepare(
+        "SELECT memory_type, COUNT(*) FROM memories WHERE valid_to IS NULL GROUP BY memory_type",
+    )?;
+    let type_counts: HashMap<String, i64> = type_stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let mut tier_stmt = conn.prepare(
+        "SELECT COALESCE(tier, 'permanent'), COUNT(*) FROM memories GROUP BY COALESCE(tier, 'permanent')",
+    )?;
+    let tier_counts: HashMap<String, i64> = tier_stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
 
     let memories_with_embeddings: i64 = conn.query_row(
         "SELECT COUNT(*) FROM memories WHERE has_embedding = 1 AND valid_to IS NULL",
@@ -1879,6 +1921,8 @@ pub fn get_stats(conn: &Connection) -> Result<StorageStats> {
         total_tags,
         total_crossrefs,
         total_versions,
+        total_identities: 0,
+        total_entities: 0,
         db_size_bytes,
         memories_with_embeddings,
         memories_pending_embedding,
@@ -1888,6 +1932,11 @@ pub fn get_stats(conn: &Connection) -> Result<StorageStats> {
                 .ok()
         }),
         sync_pending: sync_pending > 0,
+        storage_mode: "sqlite".to_string(),
+        schema_version: 0,
+        workspaces,
+        type_counts,
+        tier_counts,
     })
 }
 
@@ -3173,11 +3222,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
                 let memory2 = create_memory(
                     conn,
@@ -3194,11 +3243,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 let mut filter = HashMap::new();
@@ -3278,11 +3327,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Create memory with different user scope
@@ -3301,11 +3350,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Create memory with session scope
@@ -3324,11 +3373,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Create memory with global scope
@@ -3347,11 +3396,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Test: List all memories (no scope filter) should return all 4
@@ -3464,11 +3513,11 @@ mod tests {
                         ttl_seconds: Some(3600), // 1 hour
                         dedup_mode: Default::default(),
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Verify expires_at is set and tier is daily
@@ -3501,11 +3550,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Verify expires_at is None for permanent memory
@@ -3538,11 +3587,11 @@ mod tests {
                         ttl_seconds: Some(3600), // 1 hour TTL
                         dedup_mode: Default::default(),
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Create a permanent memory
@@ -3561,11 +3610,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Both should be visible initially
@@ -3619,11 +3668,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 assert!(memory.expires_at.is_none());
@@ -3778,11 +3827,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow, // First one allows
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Try to create duplicate with reject mode
@@ -3801,11 +3850,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Reject,
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 );
 
                 // Should fail with Duplicate error
@@ -3842,11 +3891,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Try to create duplicate with skip mode
@@ -3865,11 +3914,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Skip,
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Should return existing memory unchanged
@@ -3994,11 +4043,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Create duplicate with allow mode (default)
@@ -4017,11 +4066,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Should create separate memory
@@ -4063,11 +4112,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 let _memory2 = create_memory(
@@ -4085,11 +4134,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Create a unique memory (not a duplicate)
@@ -4108,11 +4157,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Find duplicates
@@ -4151,11 +4200,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Content hash should be set
@@ -4194,11 +4243,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 let original_hash = memory.content_hash.clone();
@@ -4257,11 +4306,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Create same content in user-2 scope with Reject mode
@@ -4281,11 +4330,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Reject, // Should not reject - different scope
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 );
 
                 // Should succeed - different scopes are not considered duplicates
@@ -4308,11 +4357,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Reject, // Should reject - same scope
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 );
 
                 // Should fail - same scope with same content
@@ -4372,11 +4421,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Store an embedding for it (simple test embedding)
@@ -4399,11 +4448,11 @@ mod tests {
                         ttl_seconds: None,
                         dedup_mode: DedupMode::Allow,
                         dedup_threshold: None,
-            event_time: None,
-            event_duration_seconds: None,
-            trigger_pattern: None,
-            summary_of_id: None,
-        },
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    },
                 )?;
 
                 // Store a very different embedding

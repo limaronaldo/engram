@@ -31,11 +31,14 @@ pub mod queries;
 pub mod sqlite_backend;
 pub mod temporal;
 
+#[cfg(feature = "turso")]
+pub mod turso_backend;
+
 pub use audit::*;
 pub use backend::{
     BatchCreateResult as BackendBatchCreateResult, BatchDeleteResult as BackendBatchDeleteResult,
-    CloudSyncBackend, HealthStatus, ListMemoriesOptions, StorageBackend, StorageStats,
-    SyncDelta as BackendSyncDelta, SyncResult, SyncState, TransactionalBackend,
+    CloudSyncBackend, HealthStatus, StorageBackend, StorageStats, SyncDelta as BackendSyncDelta,
+    SyncResult, SyncState, TransactionalBackend,
 };
 pub use confidence::*;
 pub use connection::{Storage, StoragePool};
@@ -115,3 +118,5 @@ pub use sqlite_backend::SqliteBackend;
 pub use temporal::{
     MemorySnapshot, StateDiff, TemporalMemory, TemporalQueryEngine, TemporalQueryOptions,
 };
+#[cfg(feature = "turso")]
+pub use turso_backend::{TursoBackend, TursoConfig};

@@ -640,17 +640,24 @@ pub struct MemoryVersion {
 }
 
 /// Statistics about the memory store
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StorageStats {
     pub total_memories: i64,
     pub total_tags: i64,
     pub total_crossrefs: i64,
     pub total_versions: i64,
+    pub total_identities: i64,
+    pub total_entities: i64,
     pub db_size_bytes: i64,
     pub memories_with_embeddings: i64,
     pub memories_pending_embedding: i64,
     pub last_sync: Option<DateTime<Utc>>,
     pub sync_pending: bool,
+    pub storage_mode: String,
+    pub schema_version: i32,
+    pub workspaces: HashMap<String, i64>,
+    pub type_counts: HashMap<String, i64>,
+    pub tier_counts: HashMap<String, i64>,
 }
 
 /// Configuration for the storage engine

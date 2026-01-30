@@ -242,11 +242,10 @@ impl EngramHandler {
             "memory_checkpoint" => self.tool_memory_checkpoint(params),
             "memory_boost" => self.tool_memory_boost(params),
             // Phase 1: Cognitive memory types (ENG-33)
-            // TODO: Implement cognitive memory tools once query functions are ready
-            // "memory_create_episodic" => self.tool_memory_create_episodic(params),
-            // "memory_create_procedural" => self.tool_memory_create_procedural(params),
-            // "memory_get_timeline" => self.tool_memory_get_timeline(params),
-            // "memory_get_procedures" => self.tool_memory_get_procedures(params),
+            "memory_create_episodic" => self.tool_memory_create_episodic(params),
+            "memory_create_procedural" => self.tool_memory_create_procedural(params),
+            "memory_get_timeline" => self.tool_memory_get_timeline(params),
+            "memory_get_procedures" => self.tool_memory_get_procedures(params),
             // Phase 2: Context Compression Engine (ENG-34)
             "memory_summarize" => self.tool_memory_summarize(params),
             "memory_get_full" => self.tool_memory_get_full(params),
@@ -363,9 +362,9 @@ impl EngramHandler {
                                         importance: input.importance,
                                         scope: None,
                                         ttl_seconds: input.ttl_seconds,
-                event_time: None,
-                trigger_pattern: None,
-            };
+                                        event_time: None,
+                                        trigger_pattern: None,
+                                    };
 
                                     update_memory(conn, existing.id, &update_input)
                                 });
@@ -475,7 +474,9 @@ impl EngramHandler {
             }
         }
 
-        let mut entity_context = input.entity_context.unwrap_or_else(|| "General".to_string());
+        let mut entity_context = input
+            .entity_context
+            .unwrap_or_else(|| "General".to_string());
         if entity_context.len() > 200 {
             entity_context.truncate(200);
         }
@@ -540,7 +541,10 @@ impl EngramHandler {
             metadata.insert("confidence".to_string(), json!(confidence));
             metadata.insert("entity_context".to_string(), json!(entity_context));
             metadata.insert("category".to_string(), json!(category));
-            metadata.insert("seeded_at".to_string(), json!(chrono::Utc::now().to_rfc3339()));
+            metadata.insert(
+                "seeded_at".to_string(),
+                json!(chrono::Utc::now().to_rfc3339()),
+            );
 
             inputs.push(CreateMemoryInput {
                 content: rich_content,
@@ -566,7 +570,9 @@ impl EngramHandler {
             return json!({"error": "facts must contain at least one non-empty content"});
         }
 
-        let result = self.storage.with_transaction(|conn| create_memory_batch(conn, &inputs));
+        let result = self
+            .storage
+            .with_transaction(|conn| create_memory_batch(conn, &inputs));
 
         match result {
             Ok(batch) => {
@@ -1001,11 +1007,11 @@ impl EngramHandler {
             ttl_seconds: None,
             dedup_mode: Default::default(),
             dedup_threshold: None,
-                event_time: None,
-                event_duration_seconds: None,
-                trigger_pattern: None,
-                summary_of_id: None,
-            };
+            event_time: None,
+            event_duration_seconds: None,
+            trigger_pattern: None,
+            summary_of_id: None,
+        };
 
         self.tool_memory_create(json!(input))
     }
@@ -1061,11 +1067,11 @@ impl EngramHandler {
             ttl_seconds: None,
             dedup_mode: Default::default(),
             dedup_threshold: None,
-                event_time: None,
-                event_duration_seconds: None,
-                trigger_pattern: None,
-                summary_of_id: None,
-            };
+            event_time: None,
+            event_duration_seconds: None,
+            trigger_pattern: None,
+            summary_of_id: None,
+        };
 
         self.tool_memory_create(json!(input))
     }
@@ -1271,11 +1277,11 @@ impl EngramHandler {
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
                         dedup_threshold: None,
-                event_time: None,
-                event_duration_seconds: None,
-                trigger_pattern: None,
-                summary_of_id: None,
-            };
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
+                    };
 
                     match self
                         .storage
@@ -1378,9 +1384,9 @@ impl EngramHandler {
                             importance: Some(section_memory.importance),
                             scope: None,
                             ttl_seconds: None,
-                event_time: None,
-                trigger_pattern: None,
-            };
+                            event_time: None,
+                            trigger_pattern: None,
+                        };
 
                         match self.storage.with_transaction(|conn| {
                             update_memory(conn, existing.id, &update_input)
@@ -1419,11 +1425,11 @@ impl EngramHandler {
                             ttl_seconds: None,
                             dedup_mode: Default::default(),
                             dedup_threshold: None,
-                event_time: None,
-                event_duration_seconds: None,
-                trigger_pattern: None,
-                summary_of_id: None,
-            };
+                            event_time: None,
+                            event_duration_seconds: None,
+                            trigger_pattern: None,
+                            summary_of_id: None,
+                        };
 
                         match self
                             .storage
@@ -2142,11 +2148,11 @@ impl EngramHandler {
             ttl_seconds: Some(ttl_seconds),
             dedup_mode: Default::default(),
             dedup_threshold: None,
-                event_time: None,
-                event_duration_seconds: None,
-                trigger_pattern: None,
-                summary_of_id: None,
-            };
+            event_time: None,
+            event_duration_seconds: None,
+            trigger_pattern: None,
+            summary_of_id: None,
+        };
 
         self.storage
             .with_connection(|conn| {
@@ -3234,7 +3240,10 @@ impl EngramHandler {
                             }
                         }
                         Err(e) => {
-                            return Err(engram::error::EngramError::Internal(format!("Memory {} not found: {}", id, e)));
+                            return Err(engram::error::EngramError::Internal(format!(
+                                "Memory {} not found: {}",
+                                id, e
+                            )));
                         }
                     }
                 }
@@ -4026,7 +4035,8 @@ impl EngramHandler {
                                 .unwrap_or_else(|| "active".to_string()),
                             row.get::<_, i64>(1)?,
                         ))
-                    })?.collect::<rusqlite::Result<Vec<_>>>()?
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
                 } else {
                     stmt.query_map([], |row| {
                         Ok((
@@ -4034,7 +4044,8 @@ impl EngramHandler {
                                 .unwrap_or_else(|| "active".to_string()),
                             row.get::<_, i64>(1)?,
                         ))
-                    })?.collect::<rusqlite::Result<Vec<_>>>()?
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
                 };
 
                 let mut active = 0i64;
@@ -4744,9 +4755,9 @@ impl EngramHandler {
             importance: None,
             scope: None,
             ttl_seconds: None,
-                event_time: None,
-                trigger_pattern: None,
-            };
+            event_time: None,
+            trigger_pattern: None,
+        };
 
         match self
             .storage
@@ -4947,12 +4958,17 @@ mod tests {
         let embedder = create_embedder(&EmbeddingConfig::default()).unwrap();
         EngramHandler {
             storage: storage.clone(),
-            search_cache: Arc::new(engram::search::result_cache::SearchResultCache::new(Default::default())),
+            search_cache: Arc::new(engram::search::result_cache::SearchResultCache::new(
+                Default::default(),
+            )),
             embedder,
             fuzzy_engine: Arc::new(Mutex::new(FuzzyEngine::new())),
             search_config: SearchConfig::default(),
             realtime: None,
             embedding_cache: Arc::new(engram::embedding::EmbeddingCache::default()),
+            #[cfg(feature = "langfuse")]
+            langfuse_runtime: tokio::runtime::Runtime::new()
+                .expect("Failed to create Langfuse runtime"),
         }
     }
 
