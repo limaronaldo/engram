@@ -2649,6 +2649,20 @@ pub struct SyncVersion {
     pub checksum: String,
 }
 
+/// Sync task status record (Phase 3 - Langfuse integration)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncTask {
+    pub task_id: String,
+    pub task_type: String,
+    pub status: String,
+    pub progress_percent: i32,
+    pub traces_processed: i64,
+    pub memories_created: i64,
+    pub error_message: Option<String>,
+    pub started_at: String,
+    pub completed_at: Option<String>,
+}
+
 /// Get the current sync version
 pub fn get_sync_version(conn: &Connection) -> Result<SyncVersion> {
     let memory_count: i64 =
@@ -2679,6 +2693,70 @@ pub fn get_sync_version(conn: &Connection) -> Result<SyncVersion> {
         memory_count,
         checksum,
     })
+}
+
+/// Insert or update a sync task record
+pub fn upsert_sync_task(conn: &Connection, task: &SyncTask) -> Result<()> {
+    conn.execute(
+        r#"
+        INSERT INTO sync_tasks (
+            task_id, task_type, status, progress_percent, traces_processed, memories_created,
+            error_message, started_at, completed_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(task_id) DO UPDATE SET
+            task_type = excluded.task_type,
+            status = excluded.status,
+            progress_percent = excluded.progress_percent,
+            traces_processed = excluded.traces_processed,
+            memories_created = excluded.memories_created,
+            error_message = excluded.error_message,
+            started_at = excluded.started_at,
+            completed_at = excluded.completed_at
+        "#,
+        params![
+            task.task_id,
+            task.task_type,
+            task.status,
+            task.progress_percent,
+            task.traces_processed,
+            task.memories_created,
+            task.error_message,
+            task.started_at,
+            task.completed_at
+        ],
+    )?;
+
+    Ok(())
+}
+
+/// Get a sync task by ID
+pub fn get_sync_task(conn: &Connection, task_id: &str) -> Result<Option<SyncTask>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT task_id, task_type, status, progress_percent, traces_processed, memories_created,
+               error_message, started_at, completed_at
+        FROM sync_tasks
+        WHERE task_id = ?
+        "#,
+    )?;
+
+    let mut rows = stmt.query(params![task_id])?;
+    if let Some(row) = rows.next()? {
+        Ok(Some(SyncTask {
+            task_id: row.get("task_id")?,
+            task_type: row.get("task_type")?,
+            status: row.get("status")?,
+            progress_percent: row.get("progress_percent")?,
+            traces_processed: row.get("traces_processed")?,
+            memories_created: row.get("memories_created")?,
+            error_message: row.get("error_message")?,
+            started_at: row.get("started_at")?,
+            completed_at: row.get("completed_at")?,
+        }))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Delta entry for sync

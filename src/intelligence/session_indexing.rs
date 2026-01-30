@@ -340,6 +340,10 @@ pub fn index_conversation(
             ttl_seconds: Some(config.default_ttl_seconds),
             dedup_mode: Default::default(),
             dedup_threshold: None,
+            event_time: None,
+            event_duration_seconds: None,
+            trigger_pattern: None,
+            summary_of_id: None,
         };
 
         let memory = create_memory(conn, &input)?;
@@ -536,6 +540,10 @@ pub fn index_conversation_delta(
                     ttl_seconds: Some(config.default_ttl_seconds),
                     dedup_mode: Default::default(),
                     dedup_threshold: None,
+                    event_time: None,
+                    event_duration_seconds: None,
+                    trigger_pattern: None,
+                    summary_of_id: None,
                 };
 
                 let memory = create_memory(conn, &input)?;

@@ -513,6 +513,73 @@ pub fn get_memory_identities(conn: &Connection, memory_id: i64) -> Result<Vec<Id
     Ok(identities)
 }
 
+/// Identity with mention information from the link table
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdentityWithMention {
+    #[serde(flatten)]
+    pub identity: Identity,
+    pub mention_text: Option<String>,
+    pub mention_count: i32,
+}
+
+/// Get all identities linked to a memory with mention information.
+/// Uses a single JOIN query to avoid N+1 queries.
+pub fn get_memory_identities_with_mentions(
+    conn: &Connection,
+    memory_id: i64,
+) -> Result<Vec<IdentityWithMention>> {
+    let mut stmt = conn.prepare(
+        r#"
+        SELECT i.canonical_id, i.display_name, i.entity_type, i.description,
+               i.metadata, i.created_at, i.updated_at,
+               mil.mention_text, mil.mention_count
+        FROM identities i
+        JOIN memory_identity_links mil ON i.canonical_id = mil.canonical_id
+        WHERE mil.memory_id = ?
+        "#,
+    )?;
+
+    let results: Vec<IdentityWithMention> = stmt
+        .query_map(params![memory_id], |row| {
+            let canonical_id: String = row.get(0)?;
+            let display_name: String = row.get(1)?;
+            let entity_type: String = row.get(2)?;
+            let description: Option<String> = row.get(3)?;
+            let metadata_str: String = row.get(4)?;
+            let created_at: String = row.get(5)?;
+            let updated_at: String = row.get(6)?;
+            let mention_text: Option<String> = row.get(7)?;
+            let mention_count: i32 = row.get(8)?;
+
+            let metadata: std::collections::HashMap<String, serde_json::Value> =
+                serde_json::from_str(&metadata_str).unwrap_or_default();
+
+            Ok(IdentityWithMention {
+                identity: Identity {
+                    id: 0, // ID is not stored separately, canonical_id is the primary key
+                    canonical_id,
+                    display_name,
+                    entity_type: entity_type.parse().unwrap_or(IdentityType::Other),
+                    description,
+                    metadata,
+                    created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                    updated_at: chrono::DateTime::parse_from_rfc3339(&updated_at)
+                        .map(|dt| dt.with_timezone(&chrono::Utc))
+                        .unwrap_or_else(|_| chrono::Utc::now()),
+                    aliases: vec![], // Aliases loaded separately if needed
+                },
+                mention_text,
+                mention_count,
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(results)
+}
+
 /// Get all memories linked to an identity.
 pub fn get_identity_memories(conn: &Connection, canonical_id: &str) -> Result<Vec<i64>> {
     let mut stmt =

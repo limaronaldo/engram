@@ -11,9 +11,11 @@
 //! - Document ingestion (RML-928)
 //! - Session transcript indexing with dual-limiter chunking
 //! - AI auto-tagging for memories
+//! - Context compression and token counting (ENG-34)
 
 pub mod auto_capture;
 pub mod auto_tagging;
+pub mod compression;
 pub mod consolidation;
 pub mod content_utils;
 pub mod document_ingest;
@@ -57,3 +59,9 @@ pub use session_indexing::{
     list_sessions, ChunkingConfig, ConversationChunk, Message, Session,
 };
 pub use suggestions::{Suggestion, SuggestionEngine, SuggestionType};
+
+// Phase 2: Context Compression Engine (ENG-34)
+pub use compression::{
+    check_context_budget, count_tokens, detect_encoding, parse_encoding, CompressionStrategy,
+    ContextBudgetInput, ContextBudgetResult, MemoryTokenCount, TokenEncoding,
+};

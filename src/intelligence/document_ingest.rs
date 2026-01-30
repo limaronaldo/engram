@@ -289,6 +289,7 @@ impl<'a> DocumentIngestor<'a> {
                     tier: None,
                     metadata_filter: Some(filter),
                     filter: None,
+                    include_archived: false,
                 };
 
                 let results = list_memories(conn, &options)?;
@@ -362,6 +363,10 @@ impl<'a> DocumentIngestor<'a> {
             ttl_seconds: None,
             dedup_mode: Default::default(),
             dedup_threshold: None,
+            event_time: None,
+            event_duration_seconds: None,
+            trigger_pattern: None,
+            summary_of_id: None,
         };
 
         self.storage.with_connection(|conn| {

@@ -8,6 +8,7 @@
 //! - Hybrid search with RRF
 //! - Aggregation queries (RML-880)
 //! - Search result reranking (RML-927)
+//! - Search result caching with adaptive thresholds (ENG-36)
 
 mod aggregation;
 mod bm25;
@@ -15,6 +16,7 @@ mod fuzzy;
 mod hybrid;
 mod metadata;
 mod rerank;
+pub mod result_cache;
 
 pub use aggregation::*;
 pub use bm25::*;
@@ -22,6 +24,7 @@ pub use fuzzy::*;
 pub use hybrid::*;
 pub use metadata::*;
 pub use rerank::*;
+pub use result_cache::*;
 
 use crate::types::SearchStrategy;
 

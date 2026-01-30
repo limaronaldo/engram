@@ -45,40 +45,74 @@ pub trait Embedder: Send + Sync {
 /// OpenAI embedding client
 ///
 /// Requires the `openai` feature to be enabled.
+/// Supports OpenAI, OpenRouter, Azure OpenAI, and other OpenAI-compatible APIs.
 #[cfg(feature = "openai")]
 pub struct OpenAIEmbedder {
     client: reqwest::Client,
     api_key: String,
+    base_url: String,
     model: String,
     dimensions: usize,
 }
 
 #[cfg(feature = "openai")]
 impl OpenAIEmbedder {
+    /// Create a new OpenAI embedder with default settings
     pub fn new(api_key: String) -> Self {
         Self {
             client: reqwest::Client::new(),
             api_key,
+            base_url: "https://api.openai.com/v1".to_string(),
             model: "text-embedding-3-small".to_string(),
             dimensions: 1536,
         }
     }
 
+    /// Create a new OpenAI embedder with custom settings
+    ///
+    /// # Arguments
+    /// * `api_key` - API key for authentication
+    /// * `base_url` - API base URL (e.g., "https://openrouter.ai/api/v1" for OpenRouter)
+    /// * `model` - Model name (e.g., "openai/text-embedding-3-small" for OpenRouter)
+    /// * `dimensions` - Expected embedding dimensions (must match model output)
+    pub fn with_config(
+        api_key: String,
+        base_url: Option<String>,
+        model: Option<String>,
+        dimensions: Option<usize>,
+    ) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            api_key,
+            base_url: base_url.unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
+            model: model.unwrap_or_else(|| "text-embedding-3-small".to_string()),
+            dimensions: dimensions.unwrap_or(1536),
+        }
+    }
+
+    /// Legacy constructor for backwards compatibility
     pub fn with_model(api_key: String, model: String, dimensions: usize) -> Self {
         Self {
             client: reqwest::Client::new(),
             api_key,
+            base_url: "https://api.openai.com/v1".to_string(),
             model,
             dimensions,
         }
     }
 
-    /// Async embedding call to OpenAI API
+    /// Async embedding call to OpenAI-compatible API
     pub async fn embed_async(&self, text: &str) -> Result<Vec<f32>> {
+        let url = format!("{}/embeddings", self.base_url);
+
         let response = self
             .client
-            .post("https://api.openai.com/v1/embeddings")
+            .post(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
+            // OpenRouter requires HTTP-Referer header
+            .header("HTTP-Referer", "https://github.com/engram")
+            // Optional: helps OpenRouter track usage
+            .header("X-Title", "Engram Memory")
             .json(&serde_json::json!({
                 "input": text,
                 "model": self.model,
@@ -90,18 +124,26 @@ impl OpenAIEmbedder {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
             return Err(EngramError::Embedding(format!(
-                "OpenAI API error {}: {}",
+                "Embedding API error {}: {}",
                 status, text
             )));
         }
 
         let data: serde_json::Value = response.json().await?;
-        let embedding = data["data"][0]["embedding"]
+        let embedding: Vec<f32> = data["data"][0]["embedding"]
             .as_array()
             .ok_or_else(|| EngramError::Embedding("Invalid response format".to_string()))?
             .iter()
             .filter_map(|v| v.as_f64().map(|f| f as f32))
             .collect();
+
+        // Validate dimensions match configuration
+        if embedding.len() != self.dimensions {
+            return Err(EngramError::Embedding(format!(
+                "Embedding dimensions mismatch: expected {}, got {}. Set OPENAI_EMBEDDING_DIMENSIONS={} to match your model.",
+                self.dimensions, embedding.len(), embedding.len()
+            )));
+        }
 
         Ok(embedding)
     }
@@ -112,14 +154,19 @@ impl OpenAIEmbedder {
             return Ok(vec![]);
         }
 
+        let url = format!("{}/embeddings", self.base_url);
+
         // OpenAI allows up to 2048 inputs per batch
         let mut all_embeddings = Vec::with_capacity(texts.len());
 
         for chunk in texts.chunks(2048) {
             let response = self
                 .client
-                .post("https://api.openai.com/v1/embeddings")
+                .post(&url)
                 .header("Authorization", format!("Bearer {}", self.api_key))
+                // OpenRouter requires HTTP-Referer header
+                .header("HTTP-Referer", "https://github.com/engram")
+                .header("X-Title", "Engram Memory")
                 .json(&serde_json::json!({
                     "input": chunk,
                     "model": self.model,
@@ -131,7 +178,7 @@ impl OpenAIEmbedder {
                 let status = response.status();
                 let text = response.text().await.unwrap_or_default();
                 return Err(EngramError::Embedding(format!(
-                    "OpenAI API error {}: {}",
+                    "Embedding API error {}: {}",
                     status, text
                 )));
             }
@@ -152,6 +199,14 @@ impl OpenAIEmbedder {
                         .unwrap_or_default()
                 })
                 .collect();
+
+            // Validate dimensions on first batch
+            if !embeddings.is_empty() && embeddings[0].len() != self.dimensions {
+                return Err(EngramError::Embedding(format!(
+                    "Embedding dimensions mismatch: expected {}, got {}. Set OPENAI_EMBEDDING_DIMENSIONS={} to match your model.",
+                    self.dimensions, embeddings[0].len(), embeddings[0].len()
+                )));
+            }
 
             all_embeddings.extend(embeddings);
         }
@@ -189,6 +244,11 @@ impl Embedder for OpenAIEmbedder {
 /// Available models depend on enabled features:
 /// - `"tfidf"`: Always available, no external dependencies
 /// - `"openai"`: Requires `openai` feature and API key
+///
+/// For OpenAI-compatible APIs (OpenRouter, Azure, etc.), set:
+/// - `base_url`: API endpoint (e.g., "https://openrouter.ai/api/v1")
+/// - `embedding_model`: Model name (e.g., "openai/text-embedding-3-small")
+/// - `dimensions`: Expected output dimensions
 pub fn create_embedder(config: &EmbeddingConfig) -> Result<Arc<dyn Embedder>> {
     match config.model.as_str() {
         #[cfg(feature = "openai")]
@@ -196,16 +256,23 @@ pub fn create_embedder(config: &EmbeddingConfig) -> Result<Arc<dyn Embedder>> {
             let api_key = config
                 .api_key
                 .clone()
-                .ok_or_else(|| EngramError::Config("OpenAI API key required".to_string()))?;
-            Ok(Arc::new(OpenAIEmbedder::new(api_key)))
+                .ok_or_else(|| EngramError::Config(
+                    "OPENAI_API_KEY required when ENGRAM_EMBEDDING_MODEL=openai".to_string()
+                ))?;
+            Ok(Arc::new(OpenAIEmbedder::with_config(
+                api_key,
+                config.base_url.clone(),
+                config.embedding_model.clone(),
+                Some(config.dimensions),
+            )))
         }
         #[cfg(not(feature = "openai"))]
         "openai" => Err(EngramError::Config(
-            "OpenAI embeddings require the 'openai' feature to be enabled".to_string(),
+            "OpenAI embeddings require the 'openai' feature to be enabled. Build with: cargo build --features openai".to_string(),
         )),
         "tfidf" => Ok(Arc::new(TfIdfEmbedder::new(config.dimensions))),
         _ => Err(EngramError::Config(format!(
-            "Unknown embedding model: {}",
+            "Unknown embedding model: '{}'. Use 'openai' or 'tfidf'",
             config.model
         ))),
     }

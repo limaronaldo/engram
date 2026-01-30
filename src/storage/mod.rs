@@ -1,8 +1,24 @@
 //! Storage engine for Engram
 //!
 //! Handles SQLite database operations, WAL mode, and schema management.
+//!
+//! # Architecture (ENG-14)
+//!
+//! The storage layer is built around the `StorageBackend` trait which defines
+//! the interface for all storage operations. This allows for multiple backend
+//! implementations:
+//!
+//! - `SqliteBackend` - Current default, uses rusqlite with WAL mode
+//! - `TursoBackend` - Planned for Phase 6, distributed SQLite
+//! - `MeilisearchBackend` - Planned for Phase 7, full-text search focused
+//!
+//! ## Extension Traits
+//!
+//! - `TransactionalBackend` - For backends that support ACID transactions
+//! - `CloudSyncBackend` - For backends with cloud synchronization
 
 mod audit;
+pub mod backend;
 mod confidence;
 mod connection;
 pub mod entity_queries;
@@ -12,9 +28,15 @@ pub mod identity_links;
 pub mod image_storage;
 mod migrations;
 pub mod queries;
+pub mod sqlite_backend;
 pub mod temporal;
 
 pub use audit::*;
+pub use backend::{
+    BatchCreateResult as BackendBatchCreateResult, BatchDeleteResult as BackendBatchDeleteResult,
+    CloudSyncBackend, HealthStatus, ListMemoriesOptions, StorageBackend, StorageStats,
+    SyncDelta as BackendSyncDelta, SyncResult, SyncState, TransactionalBackend,
+};
 pub use confidence::*;
 pub use connection::{Storage, StoragePool};
 pub use entity_queries::{
@@ -42,6 +64,7 @@ pub use queries::{
     cleanup_sync_data,
     clear_events,
     create_checkpoint,
+    create_memory,
     // Batch operations
     create_memory_batch,
     // Special types
@@ -88,6 +111,7 @@ pub use queries::{
     TagInfo,
     TagValidationResult,
 };
+pub use sqlite_backend::SqliteBackend;
 pub use temporal::{
     MemorySnapshot, StateDiff, TemporalMemory, TemporalQueryEngine, TemporalQueryOptions,
 };

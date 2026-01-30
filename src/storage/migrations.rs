@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 11;
+pub const SCHEMA_VERSION: i32 = 13;
 
 /// Run all migrations
 pub fn run_migrations(conn: &Connection) -> Result<()> {
@@ -66,8 +66,16 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         migrate_v10(conn)?;
     }
 
-    if current_version < SCHEMA_VERSION {
+    if current_version < 11 {
         migrate_v11(conn)?;
+    }
+
+    if current_version < 12 {
+        migrate_v12(conn)?;
+    }
+
+    if current_version < SCHEMA_VERSION {
+        migrate_v13(conn)?;
     }
 
     Ok(())
@@ -706,6 +714,97 @@ fn migrate_v11(conn: &Connection) -> Result<()> {
     conn.execute("INSERT INTO schema_version (version) VALUES (11)", [])?;
 
     tracing::info!("Migration v11 complete: memory_events.agent_id ensured");
+
+    Ok(())
+}
+
+/// Migration v12: Cognitive memory types (Phase 1 - ENG-33)
+///
+/// Adds columns for episodic, procedural, summary, and checkpoint memory types:
+/// - event_time: ISO8601 timestamp for episodic memories (when the event occurred)
+/// - event_duration_seconds: Duration of the event in seconds
+/// - trigger_pattern: Pattern that triggers procedural memories
+/// - procedure_success_count: Times this procedure succeeded
+/// - procedure_failure_count: Times this procedure failed
+/// - summary_of_id: References the original memory for summaries
+///
+/// Also creates the sync_tasks table for Phase 3 (Langfuse integration)
+fn migrate_v12(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v12: Adding cognitive memory type columns...");
+
+    conn.execute_batch(
+        r#"
+        -- Episodic memory: temporal indexing
+        ALTER TABLE memories ADD COLUMN event_time TEXT;
+        ALTER TABLE memories ADD COLUMN event_duration_seconds INTEGER;
+
+        -- Procedural memory: pattern tracking
+        ALTER TABLE memories ADD COLUMN trigger_pattern TEXT;
+        ALTER TABLE memories ADD COLUMN procedure_success_count INTEGER DEFAULT 0;
+        ALTER TABLE memories ADD COLUMN procedure_failure_count INTEGER DEFAULT 0;
+
+        -- Summary memory: reference to source
+        ALTER TABLE memories ADD COLUMN summary_of_id INTEGER REFERENCES memories(id) ON DELETE SET NULL;
+
+        -- Index for episodic memory queries by event time
+        CREATE INDEX IF NOT EXISTS idx_memories_event_time
+            ON memories(event_time) WHERE event_time IS NOT NULL;
+
+        -- Index for finding summaries of a specific memory
+        CREATE INDEX IF NOT EXISTS idx_memories_summary_of
+            ON memories(summary_of_id) WHERE summary_of_id IS NOT NULL;
+
+        -- Sync tasks table for Phase 3 (Langfuse integration)
+        -- Added now to avoid another migration for Phase 3
+        CREATE TABLE IF NOT EXISTS sync_tasks (
+            task_id TEXT PRIMARY KEY,
+            task_type TEXT NOT NULL,
+            status TEXT NOT NULL,
+            progress_percent INTEGER DEFAULT 0,
+            traces_processed INTEGER DEFAULT 0,
+            memories_created INTEGER DEFAULT 0,
+            error_message TEXT,
+            started_at TEXT NOT NULL,
+            completed_at TEXT
+        );
+
+        -- Record migration
+        INSERT INTO schema_version (version) VALUES (12);
+        "#,
+    )?;
+
+    tracing::info!("Migration v12 complete: cognitive memory type columns added");
+
+    Ok(())
+}
+
+/// Migration v13: Memory lifecycle management (Phase 5 - ENG-37)
+///
+/// Adds:
+/// - lifecycle_state: active/stale/archived state tracking
+/// - Index for lifecycle-based queries
+///
+/// Note: last_accessed_at and access_count already exist in v1
+fn migrate_v13(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v13: Adding lifecycle state column...");
+
+    conn.execute_batch(
+        r#"
+        -- Lifecycle state for memory management
+        -- Values: 'active' (default), 'stale', 'archived'
+        ALTER TABLE memories ADD COLUMN lifecycle_state TEXT DEFAULT 'active';
+
+        -- Index for filtering by lifecycle state
+        CREATE INDEX IF NOT EXISTS idx_memories_lifecycle
+            ON memories(lifecycle_state)
+            WHERE lifecycle_state IS NOT NULL;
+
+        -- Record migration
+        INSERT INTO schema_version (version) VALUES (13);
+        "#,
+    )?;
+
+    tracing::info!("Migration v13 complete: lifecycle state column added");
 
     Ok(())
 }

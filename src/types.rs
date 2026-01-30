@@ -1,7 +1,7 @@
 //! Core types for Engram
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
 /// Unique identifier for a memory
@@ -59,6 +59,61 @@ pub struct Memory {
     pub expires_at: Option<DateTime<Utc>>,
     /// Content hash for deduplication (SHA256 of normalized content)
     pub content_hash: Option<String>,
+    // Phase 1 - Cognitive memory fields (ENG-33)
+    /// Timestamp when the event occurred (for Episodic memories)
+    pub event_time: Option<DateTime<Utc>>,
+    /// Duration of the event in seconds (for Episodic memories)
+    pub event_duration_seconds: Option<i64>,
+    /// Pattern that triggers this procedure (for Procedural memories)
+    pub trigger_pattern: Option<String>,
+    /// Number of times this procedure succeeded (for Procedural memories)
+    #[serde(default)]
+    pub procedure_success_count: i32,
+    /// Number of times this procedure failed (for Procedural memories)
+    #[serde(default)]
+    pub procedure_failure_count: i32,
+    /// ID of the memory this is a summary of (for Summary memories)
+    pub summary_of_id: Option<MemoryId>,
+    // Phase 5 - Lifecycle management (ENG-37)
+    /// Lifecycle state for memory management (active, stale, archived)
+    #[serde(default)]
+    pub lifecycle_state: LifecycleState,
+}
+
+/// Lifecycle state for memory management (Phase 5 - ENG-37)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum LifecycleState {
+    /// Normal state - included in search/list by default
+    #[default]
+    Active,
+    /// Not accessed recently - included in search/list by default
+    Stale,
+    /// Compressed/summarized - EXCLUDED from search/list by default
+    Archived,
+}
+
+impl std::fmt::Display for LifecycleState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LifecycleState::Active => write!(f, "active"),
+            LifecycleState::Stale => write!(f, "stale"),
+            LifecycleState::Archived => write!(f, "archived"),
+        }
+    }
+}
+
+impl std::str::FromStr for LifecycleState {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "active" => Ok(LifecycleState::Active),
+            "stale" => Ok(LifecycleState::Stale),
+            "archived" => Ok(LifecycleState::Archived),
+            _ => Err(format!("Unknown lifecycle state: {}", s)),
+        }
+    }
 }
 
 fn default_workspace() -> String {
@@ -157,7 +212,7 @@ fn default_version() -> i32 {
 }
 
 /// Memory type classification
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum MemoryType {
     #[default]
@@ -173,6 +228,19 @@ pub enum MemoryType {
     /// Session transcript chunk (for conversation indexing)
     /// Default tier: Daily with 7-day TTL
     TranscriptChunk,
+    // Cognitive memory types (Phase 1 - ENG-33)
+    /// Events with temporal context (e.g., "User deployed v2.0 on Jan 15")
+    /// Tracks when things happened and how long they took
+    Episodic,
+    /// Learned patterns and workflows (e.g., "When user asks about auth, check JWT first")
+    /// Tracks success/failure counts for pattern effectiveness
+    Procedural,
+    /// Compressed summaries of other memories
+    /// References the original via summary_of_id
+    Summary,
+    /// Conversation state snapshots for session resumption
+    /// Replaces Context type for checkpoint-specific use
+    Checkpoint,
 }
 
 /// Memory tier for tiered storage (permanent vs ephemeral)
@@ -236,6 +304,10 @@ impl MemoryType {
             MemoryType::Credential => "credential",
             MemoryType::Custom => "custom",
             MemoryType::TranscriptChunk => "transcript_chunk",
+            MemoryType::Episodic => "episodic",
+            MemoryType::Procedural => "procedural",
+            MemoryType::Summary => "summary",
+            MemoryType::Checkpoint => "checkpoint",
         }
     }
 
@@ -260,6 +332,10 @@ impl std::str::FromStr for MemoryType {
             "credential" => Ok(MemoryType::Credential),
             "custom" => Ok(MemoryType::Custom),
             "transcript_chunk" => Ok(MemoryType::TranscriptChunk),
+            "episodic" => Ok(MemoryType::Episodic),
+            "procedural" => Ok(MemoryType::Procedural),
+            "summary" => Ok(MemoryType::Summary),
+            "checkpoint" => Ok(MemoryType::Checkpoint),
             _ => Err(format!("Unknown memory type: {}", s)),
         }
     }
@@ -509,10 +585,39 @@ pub struct MatchInfo {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SearchStrategy {
+    #[serde(alias = "keyword")]
     KeywordOnly,
+    #[serde(alias = "semantic")]
     SemanticOnly,
     #[default]
     Hybrid,
+}
+
+impl SearchStrategy {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "keyword" | "keyword_only" => Some(SearchStrategy::KeywordOnly),
+            "semantic" | "semantic_only" => Some(SearchStrategy::SemanticOnly),
+            "hybrid" => Some(SearchStrategy::Hybrid),
+            _ => None,
+        }
+    }
+}
+
+fn deserialize_search_strategy_opt<'de, D>(
+    deserializer: D,
+) -> Result<Option<SearchStrategy>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt = Option::<String>::deserialize(deserializer)?;
+    match opt.as_deref() {
+        None => Ok(None),
+        Some("auto") => Ok(None),
+        Some(other) => SearchStrategy::from_str(other).map(Some).ok_or_else(|| {
+            <D::Error as serde::de::Error>::custom(format!("Invalid search strategy: {}", other))
+        }),
+    }
 }
 
 /// Memory version for history tracking
@@ -600,9 +705,15 @@ pub struct EmbeddingConfig {
     pub model: String,
     /// OpenAI API key (for openai model)
     pub api_key: Option<String>,
+    /// OpenAI-compatible API base URL (for OpenRouter, Azure, etc.)
+    /// Default: https://api.openai.com/v1
+    pub base_url: Option<String>,
+    /// Embedding model name override (e.g., "text-embedding-3-small", "openai/text-embedding-3-small")
+    pub embedding_model: Option<String>,
     /// Local model path (for local model)
     pub model_path: Option<String>,
-    /// Embedding dimensions
+    /// Embedding dimensions (must match model output)
+    /// Default: 384 for TF-IDF, 1536 for text-embedding-3-small
     pub dimensions: usize,
     /// Batch size for async queue
     #[serde(default = "default_batch_size")]
@@ -618,6 +729,8 @@ impl Default for EmbeddingConfig {
         Self {
             model: "tfidf".to_string(),
             api_key: None,
+            base_url: None,
+            embedding_model: None,
             model_path: None,
             dimensions: 384,
             batch_size: 100,
@@ -641,10 +754,10 @@ pub enum DedupMode {
 }
 
 /// Input for creating a new memory
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CreateMemoryInput {
     pub content: String,
-    #[serde(default)]
+    #[serde(default, alias = "type")]
     pub memory_type: MemoryType,
     #[serde(default)]
     pub tags: Vec<String>,
@@ -671,12 +784,22 @@ pub struct CreateMemoryInput {
     pub dedup_mode: DedupMode,
     /// Similarity threshold for semantic deduplication (0.0-1.0, default: 0.95)
     pub dedup_threshold: Option<f32>,
+    // Phase 1 - Cognitive memory fields (ENG-33)
+    /// Timestamp when the event occurred (for Episodic memories)
+    pub event_time: Option<DateTime<Utc>>,
+    /// Duration of the event in seconds (for Episodic memories)
+    pub event_duration_seconds: Option<i64>,
+    /// Pattern that triggers this procedure (for Procedural memories)
+    pub trigger_pattern: Option<String>,
+    /// ID of the memory this is a summary of (for Summary memories)
+    pub summary_of_id: Option<MemoryId>,
 }
 
 /// Input for updating a memory
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateMemoryInput {
     pub content: Option<String>,
+    #[serde(alias = "type")]
     pub memory_type: Option<MemoryType>,
     pub tags: Option<Vec<String>>,
     pub metadata: Option<HashMap<String, serde_json::Value>>,
@@ -685,6 +808,13 @@ pub struct UpdateMemoryInput {
     pub scope: Option<MemoryScope>,
     /// Time-to-live in seconds (None = no change, Some(0) = remove expiration, Some(n) = set to n seconds from now)
     pub ttl_seconds: Option<i64>,
+    // Phase 1 - Cognitive memory fields (ENG-33)
+    /// Timestamp when the event occurred (for Episodic memories)
+    /// Use Some(None) to clear the value
+    pub event_time: Option<Option<DateTime<Utc>>>,
+    /// Pattern that triggers this procedure (for Procedural memories)
+    /// Use Some(None) to clear the value
+    pub trigger_pattern: Option<Option<String>>,
 }
 
 /// Input for creating a cross-reference
@@ -706,6 +836,7 @@ pub struct ListOptions {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
     pub tags: Option<Vec<String>>,
+    #[serde(alias = "type")]
     pub memory_type: Option<MemoryType>,
     pub sort_by: Option<SortField>,
     pub sort_order: Option<SortOrder>,
@@ -723,6 +854,10 @@ pub struct ListOptions {
     /// Advanced filter expression with AND/OR/comparison operators (RML-932)
     /// Example: {"AND": [{"metadata.project": {"eq": "engram"}}, {"importance": {"gte": 0.5}}]}
     pub filter: Option<serde_json::Value>,
+    // Phase 5 - Lifecycle management (ENG-37)
+    /// Include archived memories in results (default: false)
+    #[serde(default)]
+    pub include_archived: bool,
 }
 
 /// Fields to sort by
@@ -752,8 +887,10 @@ pub struct SearchOptions {
     pub limit: Option<i64>,
     pub min_score: Option<f32>,
     pub tags: Option<Vec<String>>,
+    #[serde(alias = "type")]
     pub memory_type: Option<MemoryType>,
     /// Force a specific search strategy
+    #[serde(default, deserialize_with = "deserialize_search_strategy_opt")]
     pub strategy: Option<SearchStrategy>,
     /// Include match explanations
     #[serde(default)]
@@ -773,6 +910,10 @@ pub struct SearchOptions {
     /// Advanced filter expression with AND/OR/comparison operators (RML-932)
     /// Takes precedence over `tags` and `memory_type` if specified
     pub filter: Option<serde_json::Value>,
+    // Phase 5 - Lifecycle management (ENG-37)
+    /// Include archived memories in search results (default: false)
+    #[serde(default)]
+    pub include_archived: bool,
 }
 
 /// Sync status information

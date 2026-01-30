@@ -367,6 +367,13 @@ mod tests {
             has_embedding: false,
             expires_at: None,
             content_hash: None,
+            event_time: None,
+            event_duration_seconds: None,
+            trigger_pattern: None,
+            procedure_success_count: 0,
+            procedure_failure_count: 0,
+            summary_of_id: None,
+            lifecycle_state: crate::types::LifecycleState::Active,
         }
     }
 

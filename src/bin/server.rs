@@ -3911,7 +3911,7 @@ impl EngramHandler {
                 let input = CreateMemoryInput {
                     content,
                     memory_type,
-                    importance: 0.6,
+                    importance: Some(0.6),
                     tags,
                     workspace,
                     event_time: Some(trace.timestamp),

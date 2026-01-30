@@ -11,6 +11,8 @@ pub mod auth;
 pub mod embedding;
 pub mod error;
 pub mod graph;
+#[cfg(feature = "langfuse")]
+pub mod integrations;
 pub mod intelligence;
 pub mod mcp;
 pub mod realtime;

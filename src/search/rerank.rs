@@ -431,6 +431,10 @@ impl Reranker {
             MemoryType::Credential => 0.02,
             MemoryType::Custom => 0.04,
             MemoryType::TranscriptChunk => 0.02, // Lower relevance for transcript chunks
+            MemoryType::Episodic => 0.07,
+            MemoryType::Procedural => 0.06,
+            MemoryType::Summary => 0.05,
+            MemoryType::Checkpoint => 0.04,
         }
     }
 
@@ -506,6 +510,13 @@ mod tests {
             tier: crate::types::MemoryTier::Permanent,
             expires_at: None,
             content_hash: None,
+            event_time: None,
+            event_duration_seconds: None,
+            trigger_pattern: None,
+            procedure_success_count: 0,
+            procedure_failure_count: 0,
+            summary_of_id: None,
+            lifecycle_state: crate::types::LifecycleState::Active,
         }
     }
 

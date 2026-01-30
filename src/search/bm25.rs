@@ -70,6 +70,7 @@ pub fn bm25_search_full(
         scope,
         filter,
         include_transcripts,
+        false, // include_archived defaults to false
         None,
         None,
         None,
@@ -85,6 +86,7 @@ pub fn bm25_search_complete(
     scope: Option<&MemoryScope>,
     filter: Option<&serde_json::Value>,
     include_transcripts: bool,
+    include_archived: bool,
     workspace: Option<&str>,
     workspaces: Option<&[String]>,
     tier: Option<&crate::types::MemoryTier>,
@@ -115,6 +117,11 @@ pub fn bm25_search_complete(
     // Exclude transcript chunks by default (unless include_transcripts is true)
     if !include_transcripts {
         sql.push_str(" AND m.memory_type != 'transcript_chunk'");
+    }
+
+    // Exclude archived memories unless include_archived is true
+    if !include_archived {
+        sql.push_str(" AND (m.lifecycle_state IS NULL OR m.lifecycle_state != 'archived')");
     }
 
     // Add advanced filter (RML-932)

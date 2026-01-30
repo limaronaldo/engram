@@ -84,6 +84,7 @@ fn keyword_only_search(
         options.scope.as_ref(),
         options.filter.as_ref(),
         options.include_transcripts,
+        options.include_archived,
         options.workspace.as_deref(),
         options.workspaces.as_deref(),
         options.tier.as_ref(),
@@ -146,6 +147,11 @@ fn semantic_only_search(
     // Exclude transcript chunks by default (unless include_transcripts is true)
     if !options.include_transcripts {
         sql.push_str(" AND m.memory_type != 'transcript_chunk'");
+    }
+
+    // Exclude archived memories unless include_archived is true
+    if !options.include_archived {
+        sql.push_str(" AND (m.lifecycle_state IS NULL OR m.lifecycle_state != 'archived')");
     }
 
     // Advanced filter (RML-932) - takes precedence over legacy tags/memory_type
@@ -284,6 +290,7 @@ fn rrf_hybrid_search(
         options.scope.as_ref(),
         options.filter.as_ref(),
         options.include_transcripts,
+        options.include_archived,
         options.workspace.as_deref(),
         options.workspaces.as_deref(),
         options.tier.as_ref(),
@@ -296,6 +303,7 @@ fn rrf_hybrid_search(
         scope: options.scope.clone(),
         filter: options.filter.clone(),
         include_transcripts: options.include_transcripts,
+        include_archived: options.include_archived,
         workspace: options.workspace.clone(),
         workspaces: options.workspaces.clone(),
         tier: options.tier,

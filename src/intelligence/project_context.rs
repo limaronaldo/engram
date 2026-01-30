@@ -173,6 +173,15 @@ impl FileFormat {
             Self::PlainText
         }
     }
+
+    /// Get stable API-friendly string representation
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Markdown => "markdown",
+            Self::Yaml => "yaml",
+            Self::PlainText => "plaintext",
+        }
+    }
 }
 
 /// A discovered instruction file
@@ -568,6 +577,13 @@ impl ProjectContextEngine {
             has_embedding: false,
             expires_at: None,
             content_hash: None, // Will be computed on storage
+            event_time: None,
+            event_duration_seconds: None,
+            trigger_pattern: None,
+            procedure_success_count: 0,
+            procedure_failure_count: 0,
+            summary_of_id: None,
+            lifecycle_state: crate::types::LifecycleState::Active,
         }
     }
 
@@ -636,6 +652,13 @@ impl ProjectContextEngine {
             has_embedding: false,
             expires_at: None,
             content_hash: None, // Will be computed on storage
+            event_time: None,
+            event_duration_seconds: None,
+            trigger_pattern: None,
+            procedure_success_count: 0,
+            procedure_failure_count: 0,
+            summary_of_id: None,
+            lifecycle_state: crate::types::LifecycleState::Active,
         }
     }
 

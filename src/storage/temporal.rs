@@ -212,13 +212,20 @@ impl<'a> TemporalQueryEngine<'a> {
                             "public" => Visibility::Public,
                             _ => Visibility::Private,
                         },
-                        scope: MemoryScope::Global, // Temporal queries default to global
+                        scope: MemoryScope::Global,
                         workspace: "default".to_string(),
                         tier: MemoryTier::Permanent,
                         version: row.get(10)?,
                         has_embedding: row.get(11)?,
-                        expires_at: None, // Temporal queries don't track expiration
-                        content_hash: None, // Temporal queries don't track content hash
+                        expires_at: None,
+                        content_hash: None,
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        procedure_success_count: 0,
+                        procedure_failure_count: 0,
+                        summary_of_id: None,
+                        lifecycle_state: crate::types::LifecycleState::Active,
                     })
                 },
             )
@@ -302,13 +309,20 @@ impl<'a> TemporalQueryEngine<'a> {
                         "public" => Visibility::Public,
                         _ => Visibility::Private,
                     },
-                    scope: MemoryScope::Global,
+                    scope: MemoryScope::Global, // Temporal queries default to global
                     workspace: "default".to_string(),
                     tier: MemoryTier::Permanent,
                     version: row.get(10)?,
                     has_embedding: row.get(11)?,
-                    expires_at: None,
-                    content_hash: None,
+                    expires_at: None, // Temporal queries don't track expiration
+                    content_hash: None, // Temporal queries don't track content hash
+                    event_time: None,
+                    event_duration_seconds: None,
+                    trigger_pattern: None,
+                    procedure_success_count: 0,
+                    procedure_failure_count: 0,
+                    summary_of_id: None,
+                    lifecycle_state: crate::types::LifecycleState::Active,
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;

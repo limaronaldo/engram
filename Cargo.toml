@@ -33,8 +33,11 @@ openai = ["dep:reqwest"]
 # PDF document ingestion
 pdf = ["dep:pdf-extract"]
 
+# Langfuse observability integration (Phase 3 - ENG-35)
+langfuse = ["dep:reqwest"]
+
 # All features
-full = ["cloud", "openai", "pdf"]
+full = ["cloud", "openai", "pdf", "langfuse"]
 
 [dependencies]
 # Async runtime
@@ -96,6 +99,9 @@ regex = "1.10"
 levenshtein = "1.0"
 hex = "0.4"
 sha2 = "0.10"
+
+# Token counting for context compression (Phase 2)
+tiktoken-rs = "0.5"
 
 # Document ingestion (RML-928)
 pulldown-cmark = "0.10"
