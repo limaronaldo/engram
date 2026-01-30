@@ -31,6 +31,11 @@ pub mod queries;
 pub mod sqlite_backend;
 pub mod temporal;
 
+#[cfg(feature = "meilisearch")]
+pub mod meilisearch_backend;
+#[cfg(feature = "meilisearch")]
+pub mod meilisearch_indexer;
+
 #[cfg(feature = "turso")]
 pub mod turso_backend;
 
@@ -61,6 +66,10 @@ pub use image_storage::{
     migrate_images, parse_data_uri, upload_image, ImageRef, ImageStorageConfig, LocalImageStorage,
     MigrationResult, UploadedImage,
 };
+#[cfg(feature = "meilisearch")]
+pub use meilisearch_backend::MeilisearchBackend;
+#[cfg(feature = "meilisearch")]
+pub use meilisearch_indexer::MeilisearchIndexer;
 pub use queries::{
     acknowledge_share,
     boost_memory,

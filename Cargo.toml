@@ -1,6 +1,6 @@
 [package]
 name = "engram"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Ronaldo Lima"]
 description = "AI Memory Infrastructure - Persistent memory for AI agents with semantic search"
@@ -36,8 +36,14 @@ pdf = ["dep:pdf-extract"]
 # Langfuse observability integration (Phase 3 - ENG-35)
 langfuse = ["dep:reqwest"]
 
+# Turso/libSQL support (Phase 6 - ENG-54)
+turso = ["dep:libsql"]
+
+# Meilisearch integration (Phase 7 - ENG-58)
+meilisearch = ["dep:meilisearch-sdk"]
+
 # All features
-full = ["cloud", "openai", "pdf", "langfuse"]
+full = ["cloud", "openai", "pdf", "langfuse", "turso", "meilisearch"]
 
 [dependencies]
 # Async runtime
@@ -77,6 +83,10 @@ aes-gcm = { version = "0.10", optional = true }
 rand = "0.8"
 base64 = "0.21"
 
+# Turso/libSQL (Phase 6 - ENG-54)
+# Enable core + replication + remote for full functionality
+libsql = { version = "0.6", optional = true, features = ["core", "replication", "remote"] }
+
 # Logging & tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
@@ -110,6 +120,7 @@ pdf-extract = { version = "0.7", optional = true }
 # Async channels for embedding queue
 async-channel = "2.1"
 futures = "0.3"
+meilisearch-sdk = { version = "0.32.0", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

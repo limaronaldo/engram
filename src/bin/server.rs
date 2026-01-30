@@ -22,6 +22,8 @@ use engram::realtime::{RealtimeEvent, RealtimeManager, RealtimeServer};
 use engram::search::{hybrid_search, FuzzyEngine, SearchConfig};
 use engram::storage::queries::*;
 use engram::storage::Storage;
+#[cfg(feature = "meilisearch")]
+use engram::storage::{MeilisearchBackend, MeilisearchIndexer, SqliteBackend};
 #[cfg(feature = "cloud")]
 use engram::sync::get_sync_status;
 use engram::types::*;
@@ -94,6 +96,26 @@ struct Args {
     /// WebSocket server port for real-time events (0 = disabled)
     #[arg(long, env = "ENGRAM_WS_PORT", default_value = "0")]
     ws_port: u16,
+
+    /// Meilisearch URL for optional search indexing
+    #[cfg(feature = "meilisearch")]
+    #[arg(long, env = "MEILISEARCH_URL")]
+    meilisearch_url: Option<String>,
+
+    /// Meilisearch API key (optional)
+    #[cfg(feature = "meilisearch")]
+    #[arg(long, env = "MEILISEARCH_API_KEY")]
+    meilisearch_api_key: Option<String>,
+
+    /// Enable Meilisearch indexer service
+    #[cfg(feature = "meilisearch")]
+    #[arg(long, env = "MEILISEARCH_INDEXER", default_value_t = false)]
+    meilisearch_indexer: bool,
+
+    /// Meilisearch sync interval in seconds
+    #[cfg(feature = "meilisearch")]
+    #[arg(long, env = "MEILISEARCH_SYNC_INTERVAL", default_value = "60")]
+    meilisearch_sync_interval: u64,
 }
 
 /// MCP request handler
@@ -4856,6 +4878,32 @@ fn main() -> Result<()> {
     // Check for storage mode warning
     if let Some(warning) = storage.storage_mode_warning() {
         tracing::warn!("{}", warning);
+    }
+
+    #[cfg(feature = "meilisearch")]
+    {
+        if let Some(url) = args.meilisearch_url.as_deref() {
+            if args.meilisearch_indexer {
+                let sqlite_backend = SqliteBackend::new(config.clone())?;
+                let meili_backend =
+                    MeilisearchBackend::new(url, args.meilisearch_api_key.as_deref())?;
+                let indexer = Arc::new(MeilisearchIndexer::new(
+                    Arc::new(sqlite_backend),
+                    Arc::new(meili_backend),
+                    args.meilisearch_sync_interval,
+                ));
+
+                std::thread::spawn(move || {
+                    let rt =
+                        tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+                    rt.block_on(indexer.start());
+                });
+            } else {
+                tracing::info!(
+                    "Meilisearch URL provided but indexer disabled. Set --meilisearch-indexer to enable."
+                );
+            }
+        }
     }
 
     // Create embedder
