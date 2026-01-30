@@ -158,3 +158,9 @@ vendor/
 
 # Private docs (do not commit)
 /docs/private/
+
+# Internal development docs (not for distribution)
+.internal/
+
+# Temporary benchmark results
+benchmark_*.txt

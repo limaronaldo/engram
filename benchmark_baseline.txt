@@ -1,3 +1,0 @@
-Baseline:
-entity_extractor_new/default: 4.9578 ms
-entity_extraction/extract_mixed: 17.144 µs
