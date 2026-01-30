@@ -4819,17 +4819,24 @@ impl EngramHandler {
 
     // Phase 8: Salience Tools (ENG-66 to ENG-68)
     fn tool_salience_get(&self, params: Value) -> Value {
-        use engram::intelligence::{get_memory_salience, SalienceConfig};
+        use engram::intelligence::{get_memory_salience_with_feedback, SalienceConfig};
 
         let id = match params.get("id").and_then(|v| v.as_i64()) {
             Some(id) => id,
             None => return json!({"error": "id is required"}),
         };
 
+        let feedback_signal = params
+            .get("feedback_signal")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+        let feedback_normalized = ((feedback_signal + 1.0) / 2.0).clamp(0.0, 1.0);
+
         self.storage
             .with_connection(|conn| {
                 let config = SalienceConfig::default();
-                let score = get_memory_salience(conn, id, &config)?;
+                let score =
+                    get_memory_salience_with_feedback(conn, id, &config, feedback_normalized)?;
                 Ok(json!(score))
             })
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
@@ -4899,30 +4906,90 @@ impl EngramHandler {
     }
 
     fn tool_salience_decay_run(&self, params: Value) -> Value {
-        use engram::intelligence::{run_salience_decay, SalienceConfig};
+        use engram::intelligence::{run_salience_decay_in_workspace, SalienceConfig};
 
-        let record_history = !params
+        let dry_run = params
             .get("dry_run")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let config = SalienceConfig::default();
+        let record_history = params
+            .get("record_history")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(!dry_run);
+
+        let workspace = params
+            .get("workspace")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let mut config = SalienceConfig::default();
+
+        if let Some(days) = params
+            .get("stale_threshold_days")
+            .and_then(|v| v.as_f64())
+        {
+            config.stale_threshold_days = days.max(1.0).round() as i64;
+        } else if let Some(days) = params
+            .get("stale_threshold")
+            .and_then(|v| v.as_f64())
+        {
+            config.stale_threshold_days = days.max(1.0).round() as i64;
+        }
+
+        if let Some(days) = params
+            .get("archive_threshold_days")
+            .and_then(|v| v.as_f64())
+        {
+            config.archive_threshold_days = days.max(1.0).round() as i64;
+        } else if let Some(days) = params
+            .get("archive_threshold")
+            .and_then(|v| v.as_f64())
+        {
+            config.archive_threshold_days = days.max(1.0).round() as i64;
+        }
+
+        if dry_run {
+            return self
+                .storage
+                .with_connection(|conn| {
+                    conn.execute("BEGIN IMMEDIATE", [])?;
+                    let result = run_salience_decay_in_workspace(
+                        conn,
+                        &config,
+                        false,
+                        workspace.as_deref(),
+                    );
+                    let _ = conn.execute("ROLLBACK", []);
+                    Ok(json!({
+                        "dry_run": true,
+                        "result": result?
+                    }))
+                })
+                .unwrap_or_else(|e| json!({"error": e.to_string()}));
+        }
 
         self.storage
             .with_transaction(|conn| {
-                let result = run_salience_decay(conn, &config, record_history)?;
+                let result =
+                    run_salience_decay_in_workspace(conn, &config, record_history, workspace.as_deref())?;
                 Ok(json!(result))
             })
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }
 
-    fn tool_salience_stats(&self, _params: Value) -> Value {
-        use engram::intelligence::{get_salience_stats, SalienceConfig};
+    fn tool_salience_stats(&self, params: Value) -> Value {
+        use engram::intelligence::{get_salience_stats_in_workspace, SalienceConfig};
+
+        let workspace = params
+            .get("workspace")
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
         self.storage
             .with_connection(|conn| {
                 let config = SalienceConfig::default();
-                let stats = get_salience_stats(conn, &config)?;
+                let stats = get_salience_stats_in_workspace(conn, &config, workspace.as_deref())?;
                 Ok(json!(stats))
             })
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
@@ -5024,6 +5091,9 @@ impl EngramHandler {
             .get("name")
             .and_then(|v| v.as_str())
             .map(String::from);
+        if title.is_none() {
+            return json!({"error": "name is required"});
+        }
 
         let initial_context = params
             .get("description")
@@ -5040,10 +5110,16 @@ impl EngramHandler {
             })
             .unwrap_or_default();
 
+        let workspace = params
+            .get("workspace")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
         let input = CreateSessionInput {
             session_id: None,
             title,
             initial_context,
+            workspace,
             metadata,
         };
 
@@ -5143,12 +5219,18 @@ impl EngramHandler {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        let workspace = params
+            .get("workspace")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
         let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(50);
         let offset = params.get("offset").and_then(|v| v.as_i64()).unwrap_or(0);
 
         self.storage
             .with_connection(|conn| {
-                let sessions = list_sessions_extended(conn, active_only, limit, offset)?;
+                let sessions =
+                    list_sessions_extended(conn, workspace.as_deref(), active_only, limit, offset)?;
                 Ok(json!(sessions))
             })
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
@@ -5199,17 +5281,24 @@ impl EngramHandler {
     }
 
     fn tool_session_context_end(&self, params: Value) -> Value {
-        use engram::intelligence::end_session;
+        use engram::intelligence::{end_session, update_session_summary};
 
         let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
             Some(id) => id.to_string(),
             None => return json!({"error": "session_id is required"}),
         };
 
+        let summary = params.get("summary").and_then(|v| v.as_str());
+
         self.storage
             .with_transaction(|conn| {
-                end_session(conn, &session_id)?;
-                Ok(json!({"session_id": session_id, "ended": true}))
+                if let Some(summary) = summary {
+                    update_session_summary(conn, &session_id, summary)?;
+                    Ok(json!({"session_id": session_id, "summary": summary, "ended": true}))
+                } else {
+                    end_session(conn, &session_id)?;
+                    Ok(json!({"session_id": session_id, "ended": true}))
+                }
             })
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }
@@ -5226,10 +5315,14 @@ impl EngramHandler {
             .get("format")
             .and_then(|v| v.as_str())
             .unwrap_or("json");
+        let include_content = params
+            .get("include_content")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
 
         self.storage
             .with_connection(|conn| {
-                let export = export_session(conn, &session_id)?;
+                let export = export_session(conn, &session_id, include_content)?;
 
                 match format {
                     "markdown" => {

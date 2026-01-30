@@ -95,6 +95,8 @@ pub struct SessionContext {
     pub ended_at: Option<DateTime<Utc>>,
     /// Number of messages in the session
     pub message_count: i32,
+    /// Workspace for the session
+    pub workspace: String,
     /// Summary of the session (auto-generated or manual)
     pub summary: Option<String>,
     /// Active context (JSON-encoded working memory)
@@ -115,6 +117,8 @@ pub struct CreateSessionInput {
     pub title: Option<String>,
     /// Initial context (JSON string)
     pub initial_context: Option<String>,
+    /// Optional workspace (defaults to "default")
+    pub workspace: Option<String>,
     /// Session metadata
     #[serde(default)]
     pub metadata: HashMap<String, serde_json::Value>,
@@ -154,14 +158,16 @@ pub fn create_session(conn: &Connection, input: CreateSessionInput) -> Result<Se
     let now = Utc::now();
     let now_str = now.to_rfc3339();
     let metadata_json = serde_json::to_string(&input.metadata).unwrap_or_else(|_| "{}".to_string());
+    let workspace = input.workspace.unwrap_or_else(|| "default".to_string());
 
     conn.execute(
-        "INSERT INTO sessions (session_id, title, started_at, message_count, metadata, summary, context)
-         VALUES (?, ?, ?, 0, ?, NULL, ?)",
+        "INSERT INTO sessions (session_id, title, started_at, message_count, workspace, metadata, summary, context)
+         VALUES (?, ?, ?, 0, ?, ?, NULL, ?)",
         params![
             session_id,
             input.title,
             now_str,
+            workspace,
             metadata_json,
             input.initial_context
         ],
@@ -173,6 +179,7 @@ pub fn create_session(conn: &Connection, input: CreateSessionInput) -> Result<Se
         created_at: now,
         ended_at: None,
         message_count: 0,
+        workspace,
         summary: None,
         context: input.initial_context,
         metadata: input.metadata,
@@ -290,7 +297,7 @@ fn parse_link(row: &rusqlite::Row) -> rusqlite::Result<SessionMemoryLink> {
 /// Get a session with all its linked memories
 pub fn get_session_context(conn: &Connection, session_id: &str) -> Result<Option<SessionContext>> {
     let row = conn.query_row(
-        "SELECT session_id, title, started_at, ended_at, message_count, metadata, summary, context
+        "SELECT session_id, title, started_at, ended_at, message_count, workspace, metadata, summary, context
          FROM sessions WHERE session_id = ?",
         params![session_id],
         |row| {
@@ -300,9 +307,10 @@ pub fn get_session_context(conn: &Connection, session_id: &str) -> Result<Option
                 row.get::<_, String>(2)?,
                 row.get::<_, Option<String>>(3)?,
                 row.get::<_, i32>(4)?,
-                row.get::<_, Option<String>>(5)?,
+                row.get::<_, String>(5)?,
                 row.get::<_, Option<String>>(6)?,
                 row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
             ))
         },
     );
@@ -314,6 +322,7 @@ pub fn get_session_context(conn: &Connection, session_id: &str) -> Result<Option
             started_at_str,
             ended_at_str,
             message_count,
+            workspace,
             metadata_str,
             summary,
             context,
@@ -346,6 +355,7 @@ pub fn get_session_context(conn: &Connection, session_id: &str) -> Result<Option
                 created_at,
                 ended_at,
                 message_count,
+                workspace,
                 summary,
                 context,
                 metadata,
@@ -593,40 +603,32 @@ pub fn search_session_memories(
 }
 
 /// Export a session with all its data
-pub fn export_session(conn: &Connection, session_id: &str) -> Result<SessionExport> {
+pub fn export_session(
+    conn: &Connection,
+    session_id: &str,
+    include_content: bool,
+) -> Result<SessionExport> {
     let session = get_session_context(conn, session_id)?
         .ok_or_else(|| EngramError::InvalidInput(format!("Session not found: {}", session_id)))?;
 
     // Get all linked memories
     let memory_ids: Vec<MemoryId> = session.memories.iter().map(|m| m.memory_id).collect();
 
-    let memories = if memory_ids.is_empty() {
-        vec![]
-    } else {
-        let placeholders: Vec<String> = memory_ids.iter().map(|_| "?".to_string()).collect();
-        let sql = format!(
-            "SELECT * FROM memories WHERE id IN ({})",
-            placeholders.join(", ")
-        );
-
-        let params: Vec<&dyn rusqlite::ToSql> = memory_ids
-            .iter()
-            .map(|id| id as &dyn rusqlite::ToSql)
-            .collect();
-
-        let mut stmt = conn.prepare(&sql)?;
-        // Simplified - in production, parse full Memory struct
-        let _ = stmt
-            .query_map(params.as_slice(), |_row| {
-                // This would need full memory parsing
-                Ok(())
-            })?
-            .filter_map(|r| r.ok())
-            .collect::<Vec<_>>();
-
-        // For now, return empty - full implementation would fetch memories
-        vec![]
-    };
+    let mut memories = Vec::new();
+    if !memory_ids.is_empty() {
+        for id in memory_ids {
+            match crate::storage::queries::get_memory(conn, id) {
+                Ok(mut memory) => {
+                    if !include_content {
+                        memory.content.clear();
+                    }
+                    memories.push(memory);
+                }
+                Err(EngramError::NotFound(_)) => continue,
+                Err(e) => return Err(e),
+            }
+        }
+    }
 
     Ok(SessionExport {
         session,
@@ -639,38 +641,75 @@ pub fn export_session(conn: &Connection, session_id: &str) -> Result<SessionExpo
 /// List sessions with optional filters
 pub fn list_sessions_extended(
     conn: &Connection,
+    workspace: Option<&str>,
     active_only: bool,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<SessionContext>> {
-    let query = if active_only {
-        "SELECT session_id, title, started_at, ended_at, message_count, metadata, summary, context
-         FROM sessions
-         WHERE ended_at IS NULL
-         ORDER BY started_at DESC
-         LIMIT ? OFFSET ?"
-    } else {
-        "SELECT session_id, title, started_at, ended_at, message_count, metadata, summary, context
-         FROM sessions
-         ORDER BY started_at DESC
-         LIMIT ? OFFSET ?"
-    };
+    let mut query = String::from(
+        "SELECT session_id, title, started_at, ended_at, message_count, workspace, metadata, summary, context
+         FROM sessions",
+    );
 
-    let mut stmt = conn.prepare(query)?;
-    let sessions = stmt
-        .query_map(params![limit, offset], |row| {
+    let mut filters = Vec::new();
+    if active_only {
+        filters.push("ended_at IS NULL");
+    }
+    if workspace.is_some() {
+        filters.push("workspace = ?");
+    }
+    if !filters.is_empty() {
+        query.push_str(" WHERE ");
+        query.push_str(&filters.join(" AND "));
+    }
+
+    query.push_str(" ORDER BY started_at DESC LIMIT ? OFFSET ?");
+
+    let mut stmt = conn.prepare(&query)?;
+    let rows: Vec<(
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+        i32,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = if let Some(workspace) = workspace {
+        let rows = stmt.query_map(params![workspace, limit, offset], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, Option<String>>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, Option<String>>(3)?,
                 row.get::<_, i32>(4)?,
-                row.get::<_, Option<String>>(5)?,
+                row.get::<_, String>(5)?,
                 row.get::<_, Option<String>>(6)?,
                 row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
             ))
-        })?
-        .filter_map(|r| r.ok())
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()?
+    } else {
+        let rows = stmt.query_map(params![limit, offset], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, i32>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
+            ))
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()?
+    };
+
+    let sessions = rows
+        .into_iter()
         .map(
             |(
                 id,
@@ -678,6 +717,7 @@ pub fn list_sessions_extended(
                 started_at_str,
                 ended_at_str,
                 message_count,
+                workspace,
                 metadata_str,
                 summary,
                 context,
@@ -709,6 +749,7 @@ pub fn list_sessions_extended(
                     created_at,
                     ended_at,
                     message_count,
+                    workspace,
                     summary,
                     context,
                     metadata,
@@ -808,6 +849,7 @@ mod tests {
             session_id: Some("test-session-1".to_string()),
             title: Some("Test Session".to_string()),
             initial_context: Some(r#"{"topic": "testing"}"#.to_string()),
+            workspace: None,
             metadata: HashMap::new(),
         };
 
@@ -825,6 +867,7 @@ mod tests {
             session_id: Some("test-session".to_string()),
             title: None,
             initial_context: None,
+            workspace: None,
             metadata: HashMap::new(),
         };
         create_session(&conn, input).unwrap();
@@ -855,6 +898,7 @@ mod tests {
             session_id: Some("context-test".to_string()),
             title: None,
             initial_context: None,
+            workspace: None,
             metadata: HashMap::new(),
         };
         create_session(&conn, input).unwrap();
@@ -893,6 +937,7 @@ mod tests {
             session_id: Some("end-test".to_string()),
             title: None,
             initial_context: None,
+            workspace: None,
             metadata: HashMap::new(),
         };
         create_session(&conn, input).unwrap();

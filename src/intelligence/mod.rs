@@ -60,10 +60,11 @@ pub use project_context::{
 };
 pub use quality::{QualityMetrics, QualityScore, QualityScorer};
 pub use salience::{
-    boost_memory_salience, demote_memory_salience, get_memory_salience, get_salience_history,
-    get_salience_stats, run_salience_decay, set_memory_importance, DecayResult, SalienceCalculator,
-    SalienceConfig, SalienceHistoryEntry, SaliencePercentiles, SalienceScore, SalienceStats,
-    ScoredMemory, StateDistribution,
+    boost_memory_salience, demote_memory_salience, get_memory_salience,
+    get_memory_salience_with_feedback, get_salience_history, get_salience_stats,
+    get_salience_stats_in_workspace, run_salience_decay, run_salience_decay_in_workspace,
+    set_memory_importance, DecayResult, SalienceCalculator, SalienceConfig, SalienceHistoryEntry,
+    SaliencePercentiles, SalienceScore, SalienceStats, ScoredMemory, StateDistribution,
 };
 pub use session_context::{
     add_memory_to_session, create_session, end_session, export_session, get_session_context,

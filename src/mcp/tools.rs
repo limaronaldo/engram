@@ -1663,10 +1663,11 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
         r#"{
             "type": "object",
             "properties": {
-                "dry_run": {"type": "boolean", "default": false, "description": "If true, only report what would change without applying"},
+                "dry_run": {"type": "boolean", "default": false, "description": "If true, compute changes without persisting updates"},
+                "record_history": {"type": "boolean", "default": true, "description": "Record salience history entries while updating"},
                 "workspace": {"type": "string", "description": "Limit to specific workspace"},
-                "stale_threshold": {"type": "number", "minimum": 0, "maximum": 1, "description": "Override stale threshold (default: 0.3)"},
-                "archive_threshold": {"type": "number", "minimum": 0, "maximum": 1, "description": "Override archive threshold (default: 0.1)"}
+                "stale_threshold_days": {"type": "integer", "minimum": 1, "description": "Days of inactivity before marking stale"},
+                "archive_threshold_days": {"type": "integer", "minimum": 1, "description": "Days of inactivity before suggesting archive"}
             }
         }"#,
     ),
@@ -1765,7 +1766,8 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             "properties": {
                 "workspace": {"type": "string", "description": "Filter by workspace"},
                 "active_only": {"type": "boolean", "default": false, "description": "Only return active sessions"},
-                "limit": {"type": "integer", "default": 50, "description": "Maximum sessions to return"}
+                "limit": {"type": "integer", "default": 50, "description": "Maximum sessions to return"},
+                "offset": {"type": "integer", "default": 0, "description": "Offset for pagination"}
             }
         }"#,
     ),

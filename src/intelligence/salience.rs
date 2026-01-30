@@ -320,35 +320,70 @@ pub fn run_salience_decay(
     config: &SalienceConfig,
     record_history: bool,
 ) -> Result<DecayResult> {
+    run_salience_decay_in_workspace(conn, config, record_history, None)
+}
+
+pub fn run_salience_decay_in_workspace(
+    conn: &Connection,
+    config: &SalienceConfig,
+    record_history: bool,
+    workspace: Option<&str>,
+) -> Result<DecayResult> {
     let start = std::time::Instant::now();
     let now = Utc::now();
     let now_str = now.to_rfc3339();
     let _calculator = SalienceCalculator::new(config.clone());
 
     // Get all non-archived memories
-    let mut stmt = conn.prepare(
-        "SELECT id, content, memory_type, importance, access_count,
-                created_at, updated_at, last_accessed_at, lifecycle_state,
-                workspace, tier
-         FROM memories
-         WHERE lifecycle_state != 'archived'
-         AND (expires_at IS NULL OR expires_at > ?)",
-    )?;
+    let memories: Vec<(MemoryId, f32, i32, String, String, Option<String>, String)> =
+        if let Some(workspace) = workspace {
+            let mut stmt = conn.prepare(
+                "SELECT id, content, memory_type, importance, access_count,
+                        created_at, updated_at, last_accessed_at, lifecycle_state,
+                        workspace, tier
+                 FROM memories
+                 WHERE lifecycle_state != 'archived'
+                 AND (expires_at IS NULL OR expires_at > ?)
+                 AND workspace = ?",
+            )?;
 
-    let memories: Vec<(MemoryId, f32, i32, String, String, Option<String>, String)> = stmt
-        .query_map(params![now_str], |row| {
-            Ok((
-                row.get::<_, MemoryId>(0)?,
-                row.get::<_, f32>(3)?,            // importance
-                row.get::<_, i32>(4)?,            // access_count
-                row.get::<_, String>(5)?,         // created_at
-                row.get::<_, String>(6)?,         // updated_at
-                row.get::<_, Option<String>>(7)?, // last_accessed_at
-                row.get::<_, String>(8)?,         // lifecycle_state
-            ))
-        })?
-        .filter_map(|r| r.ok())
-        .collect();
+            let rows = stmt.query_map(params![now_str, workspace], |row| {
+                Ok((
+                    row.get::<_, MemoryId>(0)?,
+                    row.get::<_, f32>(3)?,            // importance
+                    row.get::<_, i32>(4)?,            // access_count
+                    row.get::<_, String>(5)?,         // created_at
+                    row.get::<_, String>(6)?,         // updated_at
+                    row.get::<_, Option<String>>(7)?, // last_accessed_at
+                    row.get::<_, String>(8)?,         // lifecycle_state
+                ))
+            })?;
+
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT id, content, memory_type, importance, access_count,
+                        created_at, updated_at, last_accessed_at, lifecycle_state,
+                        workspace, tier
+                 FROM memories
+                 WHERE lifecycle_state != 'archived'
+                 AND (expires_at IS NULL OR expires_at > ?)",
+            )?;
+
+            let rows = stmt.query_map(params![now_str], |row| {
+                Ok((
+                    row.get::<_, MemoryId>(0)?,
+                    row.get::<_, f32>(3)?,            // importance
+                    row.get::<_, i32>(4)?,            // access_count
+                    row.get::<_, String>(5)?,         // created_at
+                    row.get::<_, String>(6)?,         // updated_at
+                    row.get::<_, Option<String>>(7)?, // last_accessed_at
+                    row.get::<_, String>(8)?,         // lifecycle_state
+                ))
+            })?;
+
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
 
     let mut processed = 0i64;
     let mut marked_stale = 0i64;
@@ -454,6 +489,15 @@ pub fn get_memory_salience(
     memory_id: MemoryId,
     config: &SalienceConfig,
 ) -> Result<Option<SalienceScore>> {
+    get_memory_salience_with_feedback(conn, memory_id, config, 0.5)
+}
+
+pub fn get_memory_salience_with_feedback(
+    conn: &Connection,
+    memory_id: MemoryId,
+    config: &SalienceConfig,
+    feedback_signal: f32,
+) -> Result<Option<SalienceScore>> {
     let row = conn.query_row(
         "SELECT importance, access_count, created_at, updated_at,
                 last_accessed_at, lifecycle_state
@@ -525,7 +569,7 @@ pub fn get_memory_salience(
                 lifecycle_state,
             };
 
-            Ok(Some(calculator.calculate(&memory, 0.5)))
+            Ok(Some(calculator.calculate(&memory, feedback_signal)))
         }
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(e.into()),
@@ -598,33 +642,59 @@ pub fn demote_memory_salience(
 
 /// Get salience statistics for analytics
 pub fn get_salience_stats(conn: &Connection, config: &SalienceConfig) -> Result<SalienceStats> {
+    get_salience_stats_in_workspace(conn, config, None)
+}
+
+pub fn get_salience_stats_in_workspace(
+    conn: &Connection,
+    config: &SalienceConfig,
+    workspace: Option<&str>,
+) -> Result<SalienceStats> {
     let now = Utc::now();
     let now_str = now.to_rfc3339();
 
     // Get all non-expired memories with their scores
-    let mut stmt = conn.prepare(
-        "SELECT importance, access_count, created_at, last_accessed_at, lifecycle_state
-         FROM memories
-         WHERE (expires_at IS NULL OR expires_at > ?)",
-    )?;
-
     let mut scores: Vec<f32> = Vec::new();
     let mut active_count = 0i64;
     let mut stale_count = 0i64;
     let mut archived_count = 0i64;
 
-    let rows = stmt.query_map(params![now_str], |row| {
-        Ok((
-            row.get::<_, f32>(0)?,
-            row.get::<_, i32>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, Option<String>>(3)?,
-            row.get::<_, String>(4)?,
-        ))
-    })?;
+    let rows = if let Some(workspace) = workspace {
+        let mut stmt = conn.prepare(
+            "SELECT importance, access_count, created_at, last_accessed_at, lifecycle_state
+             FROM memories
+             WHERE (expires_at IS NULL OR expires_at > ?)
+             AND workspace = ?",
+        )?;
+        let rows = stmt.query_map(params![now_str, workspace], |row| {
+            Ok((
+                row.get::<_, f32>(0)?,
+                row.get::<_, i32>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()?
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT importance, access_count, created_at, last_accessed_at, lifecycle_state
+             FROM memories
+             WHERE (expires_at IS NULL OR expires_at > ?)",
+        )?;
+        let rows = stmt.query_map(params![now_str], |row| {
+            Ok((
+                row.get::<_, f32>(0)?,
+                row.get::<_, i32>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()?
+    };
 
-    for row in rows {
-        let (importance, access_count, created_at_str, last_accessed_str, state_str) = row?;
+    for (importance, access_count, created_at_str, last_accessed_str, state_str) in rows {
 
         // Calculate score
         let created_at = DateTime::parse_from_rfc3339(&created_at_str)
