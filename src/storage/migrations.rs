@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 14;
+pub const SCHEMA_VERSION: i32 = 15;
 
 /// Run all migrations
 pub fn run_migrations(conn: &Connection) -> Result<()> {
@@ -82,6 +82,9 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         migrate_v14(conn)?;
     }
 
+    if current_version < SCHEMA_VERSION {
+        migrate_v15(conn)?;
+    }
 
     Ok(())
 }
@@ -887,6 +890,189 @@ fn migrate_v14(conn: &Connection) -> Result<()> {
     )?;
 
     tracing::info!("Migration v14 complete: salience history and session memory tables added");
+
+    Ok(())
+}
+
+/// Phase 9: Context Quality (ENG-48 to ENG-66)
+fn migrate_v15(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v15: Adding quality scoring and conflict detection tables...");
+
+    conn.execute_batch(
+        r#"
+        -- Quality score column on memories table
+        -- Overall quality score (0.0 - 1.0)
+        ALTER TABLE memories ADD COLUMN quality_score REAL DEFAULT 0.5;
+
+        -- Validation status: unverified, verified, disputed, stale
+        ALTER TABLE memories ADD COLUMN validation_status TEXT DEFAULT 'unverified';
+
+        -- Content hash for fast duplicate detection (SimHash)
+        -- Note: content_hash may already exist from earlier migration, so we use IF NOT EXISTS pattern
+        -- SQLite doesn't support IF NOT EXISTS for ALTER TABLE, so we catch errors
+
+        -- Quality history for trend tracking
+        CREATE TABLE IF NOT EXISTS quality_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+            quality_score REAL NOT NULL,
+            clarity_score REAL,
+            completeness_score REAL,
+            freshness_score REAL,
+            consistency_score REAL,
+            source_trust_score REAL,
+            recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_quality_history_memory
+            ON quality_history(memory_id, recorded_at DESC);
+
+        -- Memory conflicts table for tracking contradictions
+        CREATE TABLE IF NOT EXISTS memory_conflicts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            memory_a_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+            memory_b_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+            conflict_type TEXT NOT NULL DEFAULT 'contradiction',
+            severity TEXT NOT NULL DEFAULT 'medium',
+            description TEXT,
+            detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            resolved_at TEXT,
+            resolution_type TEXT,
+            resolution_notes TEXT,
+            auto_detected INTEGER NOT NULL DEFAULT 1,
+            UNIQUE(memory_a_id, memory_b_id, conflict_type)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_memory_conflicts_a
+            ON memory_conflicts(memory_a_id);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_conflicts_b
+            ON memory_conflicts(memory_b_id);
+
+        CREATE INDEX IF NOT EXISTS idx_memory_conflicts_unresolved
+            ON memory_conflicts(resolved_at) WHERE resolved_at IS NULL;
+
+        -- Source trust scores for credibility tracking
+        CREATE TABLE IF NOT EXISTS source_trust_scores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_type TEXT NOT NULL,
+            source_identifier TEXT,
+            trust_score REAL NOT NULL DEFAULT 0.7,
+            verification_count INTEGER DEFAULT 0,
+            last_verified_at TEXT,
+            notes TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(source_type, source_identifier)
+        );
+
+        -- Default source trust scores
+        INSERT OR IGNORE INTO source_trust_scores (source_type, source_identifier, trust_score, notes)
+        VALUES
+            ('user', 'default', 0.9, 'Direct user input'),
+            ('seed', 'default', 0.7, 'Seeded/imported data'),
+            ('extraction', 'default', 0.6, 'Auto-extracted from documents'),
+            ('inference', 'default', 0.5, 'AI-inferred data'),
+            ('external', 'default', 0.5, 'External API data');
+
+        -- Duplicate detection cache
+        CREATE TABLE IF NOT EXISTS duplicate_candidates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            memory_a_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+            memory_b_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+            similarity_score REAL NOT NULL,
+            similarity_type TEXT NOT NULL DEFAULT 'content',
+            detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            status TEXT NOT NULL DEFAULT 'pending',
+            resolved_at TEXT,
+            resolution_type TEXT,
+            UNIQUE(memory_a_id, memory_b_id, similarity_type)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_duplicate_candidates_pending
+            ON duplicate_candidates(status) WHERE status = 'pending';
+
+        CREATE INDEX IF NOT EXISTS idx_duplicate_candidates_score
+            ON duplicate_candidates(similarity_score DESC);
+        "#,
+    )?;
+
+    ensure_session_context_schema(conn)?;
+
+    // Record migration
+    conn.execute("INSERT INTO schema_version (version) VALUES (15)", [])?;
+
+    tracing::info!("Migration v15 complete: quality scoring and conflict detection tables added");
+
+    Ok(())
+}
+
+fn ensure_session_context_schema(conn: &Connection) -> Result<()> {
+    let has_ended_at: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('sessions') WHERE name = 'ended_at'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+
+    if !has_ended_at {
+        conn.execute("ALTER TABLE sessions ADD COLUMN ended_at TEXT", [])?;
+        tracing::info!("  ✓ Added sessions.ended_at column");
+    }
+
+    let session_memories_exists: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'session_memories'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+
+    if !session_memories_exists {
+        return Ok(());
+    }
+
+    let needs_fk_fix: bool = conn
+        .query_row(
+            "SELECT COUNT(*) > 0
+             FROM pragma_foreign_key_list('session_memories')
+             WHERE \"table\" = 'sessions' AND \"from\" = 'session_id' AND \"to\" = 'id'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+
+    if needs_fk_fix {
+        conn.execute_batch(
+            r#"
+            ALTER TABLE session_memories RENAME TO session_memories_old;
+
+            CREATE TABLE session_memories (
+                session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+                memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+                added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                relevance_score REAL DEFAULT 1.0,
+                context_role TEXT DEFAULT 'referenced',
+                PRIMARY KEY (session_id, memory_id)
+            );
+
+            INSERT INTO session_memories (session_id, memory_id, added_at, relevance_score, context_role)
+            SELECT session_id, memory_id, added_at, relevance_score, context_role
+            FROM session_memories_old;
+
+            DROP TABLE session_memories_old;
+
+            CREATE INDEX IF NOT EXISTS idx_session_memories_session
+                ON session_memories(session_id);
+
+            CREATE INDEX IF NOT EXISTS idx_session_memories_memory
+                ON session_memories(memory_id);
+            "#,
+        )?;
+
+        tracing::info!("  ✓ Rebuilt session_memories with sessions(session_id) foreign key");
+    }
 
     Ok(())
 }

@@ -21,6 +21,7 @@ pub mod auto_tagging;
 pub mod compression;
 pub mod consolidation;
 pub mod content_utils;
+pub mod context_quality;
 pub mod document_ingest;
 pub mod entities;
 pub mod entity_extraction;

@@ -332,6 +332,16 @@ impl EngramHandler {
             "session_context_update_summary" => self.tool_session_context_update_summary(params),
             "session_context_end" => self.tool_session_context_end(params),
             "session_context_export" => self.tool_session_context_export(params),
+            // Phase 9: Context Quality (ENG-48 to ENG-66)
+            "quality_score" => self.tool_quality_score(params),
+            "quality_report" => self.tool_quality_report(params),
+            "quality_find_duplicates" => self.tool_quality_find_duplicates(params),
+            "quality_get_duplicates" => self.tool_quality_get_duplicates(params),
+            "quality_find_conflicts" => self.tool_quality_find_conflicts(params),
+            "quality_get_conflicts" => self.tool_quality_get_conflicts(params),
+            "quality_resolve_conflict" => self.tool_quality_resolve_conflict(params),
+            "quality_source_trust" => self.tool_quality_source_trust(params),
+            "quality_improve" => self.tool_quality_improve(params),
             _ => json!({"error": format!("Unknown tool: {}", name)}),
         }
     }
@@ -5369,6 +5379,7 @@ impl EngramHandler {
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }
 
+    // Phase 9: Context Quality Tools (ENG-48 to ENG-66)
     fn tool_quality_score(&self, params: Value) -> Value {
         use engram::intelligence::{calculate_quality_score, ContextQualityConfig};
 

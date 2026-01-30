@@ -1821,6 +1821,108 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             "required": ["session_id"]
         }"#,
     ),
+    // Phase 9: Context Quality (ENG-48 to ENG-66)
+    (
+        "quality_score",
+        "Get the quality score for a memory with detailed breakdown of clarity, completeness, freshness, consistency, and source trust components.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID to score"}
+            },
+            "required": ["id"]
+        }"#,
+    ),
+    (
+        "quality_report",
+        "Generate a comprehensive quality report for a workspace. Includes quality distribution, top issues, conflict and duplicate counts.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Workspace to analyze (default: 'default')"}
+            }
+        }"#,
+    ),
+    (
+        "quality_find_duplicates",
+        "Find near-duplicate memories using text similarity. Returns pairs of similar memories above the threshold.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "threshold": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.85, "description": "Similarity threshold (0-1)"},
+                "limit": {"type": "integer", "default": 100, "description": "Maximum memories to compare"}
+            }
+        }"#,
+    ),
+    (
+        "quality_get_duplicates",
+        "Get pending duplicate candidates that need review.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "default": 50, "description": "Maximum duplicates to return"}
+            }
+        }"#,
+    ),
+    (
+        "quality_find_conflicts",
+        "Detect conflicts for a memory against existing memories. Finds contradictions, staleness, and semantic overlaps.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID to check for conflicts"}
+            },
+            "required": ["id"]
+        }"#,
+    ),
+    (
+        "quality_get_conflicts",
+        "Get unresolved conflicts that need attention.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "default": 50, "description": "Maximum conflicts to return"}
+            }
+        }"#,
+    ),
+    (
+        "quality_resolve_conflict",
+        "Resolve a conflict between memories. Options: keep_a, keep_b, merge, keep_both, delete_both, false_positive.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "conflict_id": {"type": "integer", "description": "Conflict ID to resolve"},
+                "resolution": {"type": "string", "enum": ["keep_a", "keep_b", "merge", "keep_both", "delete_both", "false_positive"], "description": "How to resolve the conflict"},
+                "notes": {"type": "string", "description": "Optional notes about the resolution"}
+            },
+            "required": ["conflict_id", "resolution"]
+        }"#,
+    ),
+    (
+        "quality_source_trust",
+        "Get or update trust score for a source type. Higher trust means memories from this source are weighted more in quality calculations.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "source_type": {"type": "string", "description": "Source type (user, seed, extraction, inference, external)"},
+                "source_identifier": {"type": "string", "description": "Optional specific source identifier"},
+                "trust_score": {"type": "number", "minimum": 0, "maximum": 1, "description": "New trust score (omit to just get current score)"},
+                "notes": {"type": "string", "description": "Notes about this source"}
+            },
+            "required": ["source_type"]
+        }"#,
+    ),
+    (
+        "quality_improve",
+        "Get suggestions for improving a memory's quality. Returns actionable recommendations.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID to analyze"}
+            },
+            "required": ["id"]
+        }"#,
+    ),
 ];
 
 /// Get all tool definitions as ToolDefinition structs
