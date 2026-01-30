@@ -47,7 +47,7 @@ Store a new memory.
 ```json
 {
   "content": "User prefers dark mode and TypeScript",
-  "type": "preference",
+  "memory_type": "preference",
   "tags": ["ui", "coding"],
   "workspace": "my-project",
   "tier": "permanent",
@@ -62,7 +62,7 @@ Store a new memory.
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `content` | string | required | The content to remember |
-| `type` | enum | `"note"` | note, todo, issue, decision, preference, learning, context, credential |
+| `memory_type` | enum | `"note"` | note, todo, issue, decision, preference, learning, context, credential |
 | `tags` | array | `[]` | Tags for categorization |
 | `workspace` | string | `"default"` | Workspace to store in |
 | `tier` | enum | `"permanent"` | Memory tier: permanent (never expires) or daily (auto-expires) |
@@ -71,6 +71,45 @@ Store a new memory.
 | `ttl_seconds` | integer | null | Time-to-live (null = permanent). Setting this implies tier='daily' |
 | `dedup_mode` | enum | `"allow"` | reject, merge, skip, allow |
 | `dedup_threshold` | number | null | Semantic similarity threshold for dedup |
+
+**Note:** `type` is accepted as a deprecated alias for `memory_type`.
+
+### context_seed
+
+Inject initial context (premises, persona assumptions, or structured facts) about an entity to avoid cold start. Seeded memories are tagged as `origin:seed` and `status:unverified`, and should be treated as revisable assumptions.
+
+```json
+{
+  "entity_context": "Client: Roberto",
+  "base_tags": ["vip", "prospect"],
+  "facts": [
+    {
+      "content": "Cliente possui coleção de carros esportivos (Ferrari citada).",
+      "category": "interest",
+      "confidence": 0.8
+    },
+    {
+      "content": "Prefere comunicação assertiva, odeia bajulação excessiva.",
+      "category": "behavior_instruction"
+    },
+    {
+      "content": "Tem interesse em imóveis com garagem para 6+ carros.",
+      "category": "preference"
+    }
+  ]
+}
+```
+
+Default TTL is derived from confidence (unless overridden):
+- **confidence ≥ 0.85** → permanent
+- **0.60 ≤ confidence < 0.85** → 90 days
+- **confidence < 0.60** → 30 days
+
+Override behavior:
+- `ttl_seconds`: apply the same TTL to all facts (0 = disable TTL)
+- `disable_ttl: true`: always permanent
+
+**Deprecated alias:** `memory_seed` (use `context_seed`).
 
 ### memory_get
 
@@ -98,6 +137,8 @@ Update an existing memory.
 
 **Note:** Setting `ttl_seconds: 0` to remove expiration only works for memories with `tier="permanent"`. For daily tier memories, you must first promote them using `memory_promote_to_permanent`.
 
+**Note:** Use `memory_type` to change the memory type (`type` is accepted as a deprecated alias).
+
 ### memory_delete
 
 Delete a memory (soft delete).
@@ -117,7 +158,7 @@ List memories with filtering.
   "limit": 20,
   "offset": 0,
   "tags": ["decision"],
-  "type": "decision",
+  "memory_type": "decision",
   "workspace": "my-project",
   "workspaces": ["project-a", "project-b"],
   "tier": "permanent",
@@ -137,15 +178,15 @@ List memories with filtering.
 | `limit` | integer | 20 | Max results |
 | `offset` | integer | 0 | Pagination offset |
 | `tags` | array | null | Filter by tags (AND logic) |
-| `type` | string | null | Filter by memory type |
+| `memory_type` | string | null | Filter by memory type |
 | `workspace` | string | null | Filter by single workspace |
 | `workspaces` | array | null | Filter by multiple workspaces |
 | `tier` | enum | null | `"permanent"` or `"daily"` |
-| `sort_by` | enum | `"created_at"` | created_at, updated_at, importance, access_count |
+| `sort_by` | enum | `"created_at"` | created_at, updated_at, last_accessed_at, importance, access_count |
 | `sort_order` | enum | `"desc"` | asc, desc |
 | `filter` | object | null | Advanced filter with AND/OR logic |
 
-**Note:** To exclude transcript chunks from results, filter by type or use the `filter` parameter to exclude `memory_type="transcript_chunk"`.
+**Note:** `type` is accepted as a deprecated alias for `memory_type`. To exclude transcript chunks from results, filter by memory type or use the `filter` parameter to exclude `memory_type="transcript_chunk"`.
 
 ### memory_list_compact
 
@@ -174,7 +215,7 @@ Hybrid search combining keyword (BM25) and semantic similarity.
   "limit": 10,
   "min_score": 0.1,
   "tags": ["auth"],
-  "type": "decision",
+  "memory_type": "decision",
   "workspace": "api-project",
   "workspaces": ["api-project", "shared"],
   "tier": "permanent",
@@ -194,11 +235,12 @@ Hybrid search combining keyword (BM25) and semantic similarity.
 | `query` | string | required | Search query |
 | `limit` | integer | 10 | Max results |
 | `min_score` | number | 0.1 | Minimum relevance score |
+| `memory_type` | string | null | Filter by memory type |
 | `workspace` | string | null | Filter by workspace |
 | `workspaces` | array | null | Filter by multiple workspaces |
 | `tier` | enum | null | Filter by tier |
 | `include_transcripts` | boolean | false | Include transcript chunks |
-| `strategy` | enum | auto | `"keyword"`, `"semantic"`, `"hybrid"` |
+| `strategy` | enum | auto | `auto` (default), `keyword`/`keyword_only`, `semantic`/`semantic_only`, `hybrid` |
 | `explain` | boolean | false | Include match explanations |
 | `rerank` | boolean | true | Apply reranking |
 | `rerank_strategy` | enum | `"heuristic"` | none, heuristic, multi_signal |
@@ -491,6 +533,16 @@ Link identity to memory.
 {
   "memory_id": 42,
   "canonical_id": "user:ronaldo"
+}
+```
+
+### memory_get_identities
+
+Get all identities linked to a memory, including mention text/count from the link table.
+
+```json
+{
+  "id": 42
 }
 ```
 
@@ -1112,6 +1164,17 @@ Aggregate by field.
 
 ## Project Context
 
+### memory_list_instruction_files
+
+List AI instruction files without ingesting them.
+
+```json
+{
+  "path": "/path/to/project",
+  "scan_parents": false
+}
+```
+
 ### memory_scan_project
 
 Scan for AI instruction files.
@@ -1283,6 +1346,26 @@ The `filter` parameter in `memory_list` and `memory_search` supports:
 }
 ```
 
+### OpenAI / OpenRouter Embeddings
+
+```json
+{
+  "mcpServers": {
+    "engram": {
+      "command": "/path/to/engram-server",
+      "args": [],
+      "env": {
+        "ENGRAM_EMBEDDING_MODEL": "openai",
+        "OPENAI_API_KEY": "${OPENAI_API_KEY}",
+        "OPENAI_BASE_URL": "https://openrouter.ai/api/v1",
+        "OPENAI_EMBEDDING_MODEL": "openai/text-embedding-3-small",
+        "OPENAI_EMBEDDING_DIMENSIONS": "1536"
+      }
+    }
+  }
+}
+```
+
 ### Environment Variables
 
 | Variable | Default | Description |
@@ -1293,6 +1376,9 @@ The `filter` parameter in `memory_list` and `memory_search` supports:
 | `ENGRAM_CLOUD_ENCRYPT` | false | Enable AES-256 encryption |
 | `ENGRAM_EMBEDDING_MODEL` | `tfidf` | `tfidf` or `openai` |
 | `OPENAI_API_KEY` | null | For OpenAI embeddings |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI-compatible API base URL (OpenRouter, Azure, etc.) |
+| `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model name |
+| `OPENAI_EMBEDDING_DIMENSIONS` | null | Expected embedding dimensions (must match model output) |
 | `ENGRAM_SYNC_DEBOUNCE_MS` | 5000 | Sync debounce interval |
 | `ENGRAM_CLEANUP_INTERVAL` | 3600 | Auto-cleanup interval (seconds) |
 | `ENGRAM_CONFIDENCE_HALF_LIFE` | 30 | Confidence decay half-life (days) |

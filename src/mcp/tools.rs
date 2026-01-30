@@ -14,7 +14,8 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             "type": "object",
             "properties": {
                 "content": {"type": "string", "description": "The content to remember"},
-                "type": {"type": "string", "enum": ["note", "todo", "issue", "decision", "preference", "learning", "context", "credential"], "default": "note"},
+                "memory_type": {"type": "string", "enum": ["note", "todo", "issue", "decision", "preference", "learning", "context", "credential", "episodic", "procedural", "summary", "checkpoint"], "default": "note", "description": "Memory type (preferred field; alias: type)"},
+                "type": {"type": "string", "enum": ["note", "todo", "issue", "decision", "preference", "learning", "context", "credential", "episodic", "procedural", "summary", "checkpoint"], "default": "note", "description": "Deprecated alias for memory_type"},
                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
                 "metadata": {"type": "object", "description": "Additional metadata as key-value pairs"},
                 "importance": {"type": "number", "minimum": 0, "maximum": 1, "description": "Importance score (0-1)"},
@@ -23,9 +24,117 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "defer_embedding": {"type": "boolean", "default": false, "description": "Defer embedding to background queue"},
                 "ttl_seconds": {"type": "integer", "description": "Time-to-live in seconds. Memory will auto-expire after this duration. Omit for permanent storage. Setting this implies tier='daily'."},
                 "dedup_mode": {"type": "string", "enum": ["reject", "merge", "skip", "allow"], "default": "allow", "description": "How to handle duplicate content: reject (error if exact match), merge (combine tags/metadata with existing), skip (return existing unchanged), allow (create duplicate)"},
-                "dedup_threshold": {"type": "number", "minimum": 0, "maximum": 1, "description": "Similarity threshold for semantic deduplication (0.0-1.0). When set with dedup_mode != 'allow', memories with cosine similarity >= threshold are treated as duplicates. Requires embeddings. If not set, only exact content hash matching is used."}
+                "dedup_threshold": {"type": "number", "minimum": 0, "maximum": 1, "description": "Similarity threshold for semantic deduplication (0.0-1.0). When set with dedup_mode != 'allow', memories with cosine similarity >= threshold are treated as duplicates. Requires embeddings. If not set, only exact content hash matching is used."},
+                "event_time": {"type": "string", "format": "date-time", "description": "ISO8601 timestamp for episodic memories (when the event occurred)"},
+                "event_duration_seconds": {"type": "integer", "description": "Duration of the event in seconds (for episodic memories)"},
+                "trigger_pattern": {"type": "string", "description": "Pattern that triggers this procedure (for procedural memories)"},
+                "summary_of_id": {"type": "integer", "description": "ID of the memory this summarizes (for summary memories)"}
             },
             "required": ["content"]
+        }"#,
+    ),
+    (
+        "context_seed",
+        "Injects initial context (premises, persona assumptions, or structured facts) about an entity to avoid cold start. Seeded memories are tagged as origin:seed and status:unverified, and should be treated as revisable assumptions.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "entity_context": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "Name or ID of the entity (e.g., 'Client: Roberto', 'Account: ACME', 'Project: Alpha')"
+                },
+                "workspace": {"type": "string", "description": "Workspace to store the memories in (default: 'default')"},
+                "base_tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Tags applied to all facts (e.g., ['vip', 'prospect'])"
+                },
+                "ttl_seconds": {
+                    "type": "integer",
+                    "description": "Override TTL for all facts in seconds (0 = disable TTL). If omitted, TTL is derived from confidence."
+                },
+                "disable_ttl": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Disable TTL and keep seeded memories permanent regardless of confidence."
+                },
+                "facts": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "content": {"type": "string", "minLength": 1},
+                            "category": {
+                                "type": "string",
+                                "enum": ["fact", "behavior_instruction", "interest", "persona", "preference"],
+                                "description": "Structured category for filtering and ranking"
+                            },
+                            "confidence": {
+                                "type": "number",
+                                "minimum": 0.0,
+                                "maximum": 1.0,
+                                "description": "0.0 to 1.0 (defaults to 0.7 for seeds). TTL derived by confidence if ttl_seconds not provided."
+                            }
+                        },
+                        "required": ["content"]
+                    }
+                }
+            },
+            "required": ["facts"]
+        }"#,
+    ),
+    (
+        "memory_seed",
+        "Deprecated alias for context_seed. Use context_seed instead.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "entity_context": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "Name or ID of the entity (e.g., 'Client: Roberto', 'Account: ACME', 'Project: Alpha')"
+                },
+                "workspace": {"type": "string", "description": "Workspace to store the memories in (default: 'default')"},
+                "base_tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Tags applied to all facts (e.g., ['vip', 'prospect'])"
+                },
+                "ttl_seconds": {
+                    "type": "integer",
+                    "description": "Override TTL for all facts in seconds (0 = disable TTL). If omitted, TTL is derived from confidence."
+                },
+                "disable_ttl": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Disable TTL and keep seeded memories permanent regardless of confidence."
+                },
+                "facts": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "content": {"type": "string", "minLength": 1},
+                            "category": {
+                                "type": "string",
+                                "enum": ["fact", "behavior_instruction", "interest", "persona", "preference"],
+                                "description": "Structured category for filtering and ranking"
+                            },
+                            "confidence": {
+                                "type": "number",
+                                "minimum": 0.0,
+                                "maximum": 1.0,
+                                "description": "0.0 to 1.0 (defaults to 0.7 for seeds). TTL derived by confidence if ttl_seconds not provided."
+                            }
+                        },
+                        "required": ["content"]
+                    }
+                }
+            },
+            "required": ["facts"]
         }"#,
     ),
     (
@@ -47,11 +156,14 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID"},
                 "content": {"type": "string", "description": "New content"},
-                "type": {"type": "string", "enum": ["note", "todo", "issue", "decision", "preference", "learning", "context", "credential"]},
+                "memory_type": {"type": "string", "enum": ["note", "todo", "issue", "decision", "preference", "learning", "context", "credential", "episodic", "procedural", "summary", "checkpoint"], "description": "Memory type (preferred field; alias: type)"},
+                "type": {"type": "string", "enum": ["note", "todo", "issue", "decision", "preference", "learning", "context", "credential", "episodic", "procedural", "summary", "checkpoint"], "description": "Deprecated alias for memory_type"},
                 "tags": {"type": "array", "items": {"type": "string"}},
                 "metadata": {"type": "object"},
                 "importance": {"type": "number", "minimum": 0, "maximum": 1},
-                "ttl_seconds": {"type": "integer", "description": "Time-to-live in seconds (0 = remove expiration, positive = set new expiration)"}
+                "ttl_seconds": {"type": "integer", "description": "Time-to-live in seconds (0 = remove expiration, positive = set new expiration)"},
+                "event_time": {"type": ["string", "null"], "format": "date-time", "description": "ISO8601 timestamp for episodic memories (null to clear)"},
+                "trigger_pattern": {"type": ["string", "null"], "description": "Pattern that triggers this procedure (null to clear)"}
             },
             "required": ["id"]
         }"#,
@@ -76,11 +188,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "limit": {"type": "integer", "default": 20},
                 "offset": {"type": "integer", "default": 0},
                 "tags": {"type": "array", "items": {"type": "string"}},
-                "type": {"type": "string"},
+                "memory_type": {"type": "string", "description": "Filter by memory type (preferred field; alias: type)"},
+                "type": {"type": "string", "description": "Deprecated alias for memory_type"},
                 "workspace": {"type": "string", "description": "Filter by single workspace"},
                 "workspaces": {"type": "array", "items": {"type": "string"}, "description": "Filter by multiple workspaces"},
                 "tier": {"type": "string", "enum": ["permanent", "daily"], "description": "Filter by memory tier"},
-                "sort_by": {"type": "string", "enum": ["created_at", "updated_at", "importance", "access_count"]},
+                "sort_by": {"type": "string", "enum": ["created_at", "updated_at", "last_accessed_at", "importance", "access_count"]},
                 "sort_order": {"type": "string", "enum": ["asc", "desc"], "default": "desc"},
                 "filter": {
                     "type": "object",
@@ -104,12 +217,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "limit": {"type": "integer", "default": 10},
                 "min_score": {"type": "number", "default": 0.1},
                 "tags": {"type": "array", "items": {"type": "string"}},
-                "type": {"type": "string"},
+                "memory_type": {"type": "string", "description": "Filter by memory type (preferred field; alias: type)"},
+                "type": {"type": "string", "description": "Deprecated alias for memory_type"},
                 "workspace": {"type": "string", "description": "Filter by single workspace"},
                 "workspaces": {"type": "array", "items": {"type": "string"}, "description": "Filter by multiple workspaces"},
                 "tier": {"type": "string", "enum": ["permanent", "daily"], "description": "Filter by memory tier"},
                 "include_transcripts": {"type": "boolean", "default": false, "description": "Include transcript chunk memories (excluded by default)"},
-                "strategy": {"type": "string", "enum": ["keyword", "semantic", "hybrid"], "description": "Force specific strategy"},
+                "strategy": {"type": "string", "enum": ["auto", "keyword", "keyword_only", "semantic", "semantic_only", "hybrid"], "description": "Force specific strategy (auto selects based on query; keyword/semantic are aliases for keyword_only/semantic_only)"},
                 "explain": {"type": "boolean", "default": false, "description": "Include match explanations"},
                 "rerank": {"type": "boolean", "default": true, "description": "Apply reranking to improve result quality"},
                 "rerank_strategy": {"type": "string", "enum": ["none", "heuristic", "multi_signal"], "default": "heuristic", "description": "Reranking strategy to use"},
@@ -380,6 +494,17 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "path": {"type": "string", "description": "Project path (defaults to current working directory)"},
                 "include_sections": {"type": "boolean", "default": true, "description": "Include section memories"},
                 "file_types": {"type": "array", "items": {"type": "string"}, "description": "Filter by file type (claude-md, cursorrules, etc.)"}
+            }
+        }"#,
+    ),
+    (
+        "memory_list_instruction_files",
+        "List AI instruction files (CLAUDE.md, AGENTS.md, .cursorrules, etc.) in a directory without ingesting them. Returns file paths, types, and sizes for discovery purposes.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Directory to scan (defaults to current working directory)"},
+                "scan_parents": {"type": "boolean", "default": false, "description": "Also scan parent directories for instruction files"}
             }
         }"#,
     ),
@@ -793,6 +918,17 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             "required": ["memory_id", "canonical_id"]
         }"#,
     ),
+    (
+        "memory_get_identities",
+        "Get all identities (persons, organizations, projects, etc.) linked to a memory. Returns identity details including display name, type, aliases, and mention information.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID"}
+            },
+            "required": ["id"]
+        }"#,
+    ),
     // Content Utilities
     (
         "memory_soft_trim",
@@ -819,10 +955,11 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "limit": {"type": "integer", "default": 20, "description": "Maximum memories to return"},
                 "offset": {"type": "integer", "default": 0, "description": "Pagination offset"},
                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Filter by tags"},
-                "type": {"type": "string", "description": "Filter by memory type"},
+                "memory_type": {"type": "string", "description": "Filter by memory type (preferred field; alias: type)"},
+                "type": {"type": "string", "description": "Deprecated alias for memory_type"},
                 "workspace": {"type": "string", "description": "Filter by workspace"},
                 "tier": {"type": "string", "enum": ["permanent", "daily"], "description": "Filter by tier"},
-                "sort_by": {"type": "string", "enum": ["created_at", "updated_at", "importance", "access_count"], "default": "created_at"},
+                "sort_by": {"type": "string", "enum": ["created_at", "updated_at", "last_accessed_at", "importance", "access_count"], "default": "created_at"},
                 "sort_order": {"type": "string", "enum": ["asc", "desc"], "default": "desc"},
                 "preview_chars": {"type": "integer", "default": 100, "description": "Maximum characters for content preview"}
             }
@@ -977,6 +1114,67 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             "required": ["session_id", "summary"]
         }"#,
     ),
+    // Phase 1: Cognitive Memory Types (ENG-33)
+    (
+        "memory_create_episodic",
+        "Create an episodic memory representing an event with temporal context. Use for tracking when things happened and their duration.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "Description of the event"},
+                "event_time": {"type": "string", "format": "date-time", "description": "ISO8601 timestamp when the event occurred"},
+                "event_duration_seconds": {"type": "integer", "description": "Duration of the event in seconds"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
+                "metadata": {"type": "object", "description": "Additional metadata"},
+                "importance": {"type": "number", "minimum": 0, "maximum": 1, "description": "Importance score (0-1)"},
+                "workspace": {"type": "string", "description": "Workspace (default: 'default')"}
+            },
+            "required": ["content", "event_time"]
+        }"#,
+    ),
+    (
+        "memory_create_procedural",
+        "Create a procedural memory representing a learned pattern or workflow. Tracks success/failure to measure effectiveness.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "Description of the procedure/workflow"},
+                "trigger_pattern": {"type": "string", "description": "Pattern that triggers this procedure (e.g., 'When user asks about auth')"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
+                "metadata": {"type": "object", "description": "Additional metadata"},
+                "importance": {"type": "number", "minimum": 0, "maximum": 1, "description": "Importance score (0-1)"},
+                "workspace": {"type": "string", "description": "Workspace (default: 'default')"}
+            },
+            "required": ["content", "trigger_pattern"]
+        }"#,
+    ),
+    (
+        "memory_get_timeline",
+        "Query episodic memories by time range. Returns events ordered by event_time.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "start_time": {"type": "string", "format": "date-time", "description": "Start of time range (ISO8601)"},
+                "end_time": {"type": "string", "format": "date-time", "description": "End of time range (ISO8601)"},
+                "workspace": {"type": "string", "description": "Filter by workspace"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Filter by tags"},
+                "limit": {"type": "integer", "default": 50, "description": "Maximum results to return"}
+            }
+        }"#,
+    ),
+    (
+        "memory_get_procedures",
+        "List procedural memories (learned patterns/workflows). Optionally filter by trigger pattern.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "trigger_pattern": {"type": "string", "description": "Filter by trigger pattern (partial match)"},
+                "workspace": {"type": "string", "description": "Filter by workspace"},
+                "min_success_rate": {"type": "number", "minimum": 0, "maximum": 1, "description": "Minimum success rate (successes / (successes + failures))"},
+                "limit": {"type": "integer", "default": 50, "description": "Maximum results to return"}
+            }
+        }"#,
+    ),
     (
         "memory_boost",
         "Temporarily boost a memory's importance score. The boost can optionally decay over time.",
@@ -988,6 +1186,225 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "duration_seconds": {"type": "integer", "description": "Optional: duration before boost decays (omit for permanent boost)"}
             },
             "required": ["id"]
+        }"#,
+    ),
+    // Phase 2: Context Compression Engine
+    (
+        "memory_summarize",
+        "Create a summary of one or more memories. Returns a new Summary-type memory with summary_of_id set.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "memory_ids": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "IDs of memories to summarize"
+                },
+                "summary": {"type": "string", "description": "The summary text (provide this or let the system generate one)"},
+                "max_length": {"type": "integer", "default": 500, "description": "Maximum length for auto-generated summary"},
+                "workspace": {"type": "string", "description": "Workspace for the summary memory"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for the summary memory"}
+            },
+            "required": ["memory_ids"]
+        }"#,
+    ),
+    (
+        "memory_get_full",
+        "Get the full/original content of a memory. If the memory is a Summary, returns the original content from summary_of_id.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID to get full content for"}
+            },
+            "required": ["id"]
+        }"#,
+    ),
+    (
+        "context_budget_check",
+        "Check token usage of memories against a budget. Returns token counts and suggestions if over budget.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "memory_ids": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "IDs of memories to check"
+                },
+                "model": {
+                    "type": "string",
+                    "description": "Model name for tokenization (gpt-4, gpt-4o, gpt-4o-mini, claude-3-opus, etc.)"
+                },
+                "encoding": {
+                    "type": "string",
+                    "description": "Override encoding (cl100k_base, o200k_base). Optional if model is known."
+                },
+                "budget": {"type": "integer", "description": "Token budget to check against"}
+            },
+            "required": ["memory_ids", "model", "budget"]
+        }"#,
+    ),
+    (
+        "memory_archive_old",
+        "Archive old, low-importance memories by creating summaries. Moves originals to archived state.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "max_age_days": {"type": "integer", "default": 90, "description": "Archive memories older than this many days"},
+                "max_importance": {"type": "number", "default": 0.5, "description": "Only archive memories with importance below this"},
+                "min_access_count": {"type": "integer", "default": 5, "description": "Skip memories accessed more than this many times"},
+                "workspace": {"type": "string", "description": "Limit to specific workspace"},
+                "dry_run": {"type": "boolean", "default": true, "description": "If true, only report what would be archived"}
+            }
+        }"#,
+    ),
+    // Phase 3: Langfuse Integration (ENG-35) - feature-gated
+    #[cfg(feature = "langfuse")]
+    (
+        "langfuse_connect",
+        "Configure Langfuse connection for observability integration. Stores config in metadata.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "public_key": {"type": "string", "description": "Langfuse public key (or use LANGFUSE_PUBLIC_KEY env var)"},
+                "secret_key": {"type": "string", "description": "Langfuse secret key (or use LANGFUSE_SECRET_KEY env var)"},
+                "base_url": {"type": "string", "default": "https://cloud.langfuse.com", "description": "Langfuse API base URL"}
+            }
+        }"#,
+    ),
+    #[cfg(feature = "langfuse")]
+    (
+        "langfuse_sync",
+        "Start background sync from Langfuse traces to memories. Returns task_id for status checking.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "since": {"type": "string", "format": "date-time", "description": "Sync traces since this timestamp (default: 24h ago)"},
+                "limit": {"type": "integer", "default": 100, "description": "Maximum traces to sync"},
+                "workspace": {"type": "string", "description": "Workspace to create memories in"},
+                "dry_run": {"type": "boolean", "default": false, "description": "Preview what would be synced without creating memories"}
+            }
+        }"#,
+    ),
+    #[cfg(feature = "langfuse")]
+    (
+        "langfuse_sync_status",
+        "Check the status of a Langfuse sync task.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task ID returned from langfuse_sync"}
+            },
+            "required": ["task_id"]
+        }"#,
+    ),
+    #[cfg(feature = "langfuse")]
+    (
+        "langfuse_extract_patterns",
+        "Extract patterns from Langfuse traces without saving. Preview mode for pattern discovery.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "since": {"type": "string", "format": "date-time", "description": "Analyze traces since this timestamp"},
+                "limit": {"type": "integer", "default": 50, "description": "Maximum traces to analyze"},
+                "min_confidence": {"type": "number", "default": 0.7, "description": "Minimum confidence for patterns"}
+            }
+        }"#,
+    ),
+    #[cfg(feature = "langfuse")]
+    (
+        "memory_from_trace",
+        "Create a memory from a specific Langfuse trace ID.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "trace_id": {"type": "string", "description": "Langfuse trace ID"},
+                "memory_type": {"type": "string", "enum": ["note", "episodic", "procedural", "learning"], "default": "episodic", "description": "Type of memory to create"},
+                "workspace": {"type": "string", "description": "Workspace for the memory"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Additional tags"}
+            },
+            "required": ["trace_id"]
+        }"#,
+    ),
+    // Phase 4: Search Result Caching (ENG-36)
+    (
+        "search_cache_feedback",
+        "Report feedback on search results quality. Helps tune the adaptive cache threshold.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "The search query"},
+                "positive": {"type": "boolean", "description": "True if results were helpful, false otherwise"},
+                "workspace": {"type": "string", "description": "Workspace filter used (if any)"}
+            },
+            "required": ["query", "positive"]
+        }"#,
+    ),
+    (
+        "search_cache_stats",
+        "Get search result cache statistics including hit rate, entry count, and current threshold.",
+        r#"{
+            "type": "object",
+            "properties": {}
+        }"#,
+    ),
+    (
+        "search_cache_clear",
+        "Clear the search result cache. Useful after bulk operations.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Only clear cache for this workspace (optional)"}
+            }
+        }"#,
+    ),
+    // Phase 5: Memory Lifecycle Management (ENG-37)
+    (
+        "lifecycle_status",
+        "Get lifecycle statistics (active/stale/archived counts by workspace).",
+        r#"{
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Filter by workspace (optional)"}
+            }
+        }"#,
+    ),
+    (
+        "lifecycle_run",
+        "Manually trigger a lifecycle cycle (mark stale, archive old). Dry run by default.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "dry_run": {"type": "boolean", "default": true, "description": "Preview changes without applying"},
+                "workspace": {"type": "string", "description": "Limit to specific workspace"},
+                "stale_days": {"type": "integer", "default": 30, "description": "Mark memories older than this as stale"},
+                "archive_days": {"type": "integer", "default": 90, "description": "Archive memories older than this"},
+                "min_importance": {"type": "number", "default": 0.5, "description": "Only process memories below this importance"}
+            }
+        }"#,
+    ),
+    (
+        "memory_set_lifecycle",
+        "Manually set the lifecycle state of a memory.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID"},
+                "state": {"type": "string", "enum": ["active", "stale", "archived"], "description": "New lifecycle state"}
+            },
+            "required": ["id", "state"]
+        }"#,
+    ),
+    (
+        "lifecycle_config",
+        "Get or set lifecycle configuration (intervals, thresholds).",
+        r#"{
+            "type": "object",
+            "properties": {
+                "stale_days": {"type": "integer", "description": "Days before marking as stale"},
+                "archive_days": {"type": "integer", "description": "Days before auto-archiving"},
+                "min_importance": {"type": "number", "description": "Importance threshold for lifecycle"},
+                "min_access_count": {"type": "integer", "description": "Access count threshold"}
+            }
         }"#,
     ),
     // Event System

@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use clap::Parser;
 use parking_lot::Mutex;
+use rusqlite::params;
 use serde_json::{json, Value};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -57,6 +58,26 @@ struct Args {
     #[arg(long, env = "OPENAI_API_KEY")]
     openai_key: Option<String>,
 
+    /// OpenAI-compatible API base URL (for OpenRouter, Azure, etc.)
+    #[arg(
+        long,
+        env = "OPENAI_BASE_URL",
+        default_value = "https://api.openai.com/v1"
+    )]
+    openai_base_url: String,
+
+    /// Embedding model name (e.g., text-embedding-3-small, openai/text-embedding-3-small for OpenRouter)
+    #[arg(
+        long,
+        env = "OPENAI_EMBEDDING_MODEL",
+        default_value = "text-embedding-3-small"
+    )]
+    openai_embedding_model: String,
+
+    /// Embedding dimensions (must match model output; 1536 for text-embedding-3-small)
+    #[arg(long, env = "OPENAI_EMBEDDING_DIMENSIONS")]
+    openai_embedding_dimensions: Option<usize>,
+
     /// Sync debounce in ms
     #[arg(long, env = "ENGRAM_SYNC_DEBOUNCE_MS", default_value = "5000")]
     sync_debounce_ms: u64,
@@ -85,6 +106,11 @@ struct EngramHandler {
     realtime: Option<RealtimeManager>,
     /// Embedding cache for performance optimization
     embedding_cache: Arc<engram::embedding::EmbeddingCache>,
+    /// Search result cache (Phase 4 - ENG-36)
+    search_cache: Arc<engram::search::SearchResultCache>,
+    /// Dedicated Tokio runtime for async operations (Langfuse sync)
+    #[cfg(feature = "langfuse")]
+    langfuse_runtime: tokio::runtime::Runtime,
 }
 
 impl EngramHandler {
@@ -96,6 +122,12 @@ impl EngramHandler {
             search_config: SearchConfig::default(),
             realtime: None,
             embedding_cache: Arc::new(engram::embedding::EmbeddingCache::default()),
+            search_cache: Arc::new(engram::search::SearchResultCache::new(
+                engram::search::AdaptiveCacheConfig::default(),
+            )),
+            #[cfg(feature = "langfuse")]
+            langfuse_runtime: tokio::runtime::Runtime::new()
+                .expect("Failed to create Langfuse runtime"),
         }
     }
 
@@ -114,6 +146,18 @@ impl EngramHandler {
     fn handle_tool_call(&self, name: &str, params: Value) -> Value {
         match name {
             "memory_create" => self.tool_memory_create(params),
+            "context_seed" => self.tool_context_seed(params),
+            "memory_seed" => {
+                let mut result = self.tool_context_seed(params);
+                if let Value::Object(ref mut map) = result {
+                    map.insert("deprecated".to_string(), json!(true));
+                    map.insert(
+                        "deprecated_message".to_string(),
+                        json!("Use context_seed instead."),
+                    );
+                }
+                result
+            }
             "memory_get" => self.tool_memory_get(params),
             "memory_update" => self.tool_memory_update(params),
             "memory_delete" => self.tool_memory_delete(params),
@@ -131,6 +175,7 @@ impl EngramHandler {
             "memory_sync_status" => self.tool_sync_status(params),
             "memory_scan_project" => self.tool_scan_project(params),
             "memory_get_project_context" => self.tool_get_project_context(params),
+            "memory_list_instruction_files" => self.tool_list_instruction_files(params),
             "memory_ingest_document" => self.tool_ingest_document(params),
             // Entity tools (RML-925)
             "memory_extract_entities" => self.tool_extract_entities(params),
@@ -174,6 +219,7 @@ impl EngramHandler {
             "identity_search" => self.tool_identity_search(params),
             "identity_link" => self.tool_identity_link(params),
             "identity_unlink" => self.tool_identity_unlink(params),
+            "memory_get_identities" => self.tool_memory_get_identities(params),
             // Content utility tools
             "memory_soft_trim" => self.tool_memory_soft_trim(params),
             "memory_list_compact" => self.tool_memory_list_compact(params),
@@ -195,6 +241,37 @@ impl EngramHandler {
             "memory_create_section" => self.tool_memory_create_section(params),
             "memory_checkpoint" => self.tool_memory_checkpoint(params),
             "memory_boost" => self.tool_memory_boost(params),
+            // Phase 1: Cognitive memory types (ENG-33)
+            // TODO: Implement cognitive memory tools once query functions are ready
+            // "memory_create_episodic" => self.tool_memory_create_episodic(params),
+            // "memory_create_procedural" => self.tool_memory_create_procedural(params),
+            // "memory_get_timeline" => self.tool_memory_get_timeline(params),
+            // "memory_get_procedures" => self.tool_memory_get_procedures(params),
+            // Phase 2: Context Compression Engine (ENG-34)
+            "memory_summarize" => self.tool_memory_summarize(params),
+            "memory_get_full" => self.tool_memory_get_full(params),
+            "context_budget_check" => self.tool_context_budget_check(params),
+            "memory_archive_old" => self.tool_memory_archive_old(params),
+            // Phase 3: Langfuse Integration (ENG-35) - feature-gated
+            #[cfg(feature = "langfuse")]
+            "langfuse_connect" => self.tool_langfuse_connect(params),
+            #[cfg(feature = "langfuse")]
+            "langfuse_sync" => self.tool_langfuse_sync(params),
+            #[cfg(feature = "langfuse")]
+            "langfuse_sync_status" => self.tool_langfuse_sync_status(params),
+            #[cfg(feature = "langfuse")]
+            "langfuse_extract_patterns" => self.tool_langfuse_extract_patterns(params),
+            #[cfg(feature = "langfuse")]
+            "memory_from_trace" => self.tool_memory_from_trace(params),
+            // Phase 4: Search Result Caching (ENG-36)
+            "search_cache_feedback" => self.tool_search_cache_feedback(params),
+            "search_cache_stats" => self.tool_search_cache_stats(params),
+            "search_cache_clear" => self.tool_search_cache_clear(params),
+            // Phase 5: Memory Lifecycle Management (ENG-37)
+            "lifecycle_status" => self.tool_lifecycle_status(params),
+            "lifecycle_run" => self.tool_lifecycle_run(params),
+            "memory_set_lifecycle" => self.tool_memory_set_lifecycle(params),
+            "lifecycle_config" => self.tool_lifecycle_config(params),
             // Event system
             "memory_events_poll" => self.tool_memory_events_poll(params),
             "memory_events_clear" => self.tool_memory_events_clear(params),
@@ -235,7 +312,7 @@ impl EngramHandler {
                 // Generate embedding for new content
                 if let Ok(query_embedding) = self.embedder.embed(&input.content) {
                     // Check for similar memories (scoped to same workspace)
-                    let workspace = input.workspace.as_deref();
+                    let workspace = input.workspace.as_ref().map(|s| s.as_str());
                     let similar_result = self.storage.with_connection(|conn| {
                         find_similar_by_embedding(
                             conn,
@@ -286,7 +363,9 @@ impl EngramHandler {
                                         importance: input.importance,
                                         scope: None,
                                         ttl_seconds: input.ttl_seconds,
-                                    };
+                event_time: None,
+                trigger_pattern: None,
+            };
 
                                     update_memory(conn, existing.id, &update_input)
                                 });
@@ -315,12 +394,209 @@ impl EngramHandler {
 
         match result {
             Ok(memory) => {
+                // Invalidate search cache for this workspace (Phase 4 - ENG-36)
+                self.search_cache
+                    .invalidate_for_workspace(Some(memory.workspace.as_str()));
+
                 // Broadcast real-time event
                 self.broadcast_event(RealtimeEvent::memory_created(
                     memory.id,
                     memory.content.clone(),
                 ));
                 json!(memory)
+            }
+            Err(e) => json!({"error": e.to_string()}),
+        }
+    }
+
+    fn tool_context_seed(&self, params: Value) -> Value {
+        use engram::storage::create_memory_batch;
+        use std::collections::HashMap;
+
+        #[derive(serde::Deserialize)]
+        struct ContextSeedFact {
+            content: String,
+            category: Option<String>,
+            confidence: Option<f32>,
+        }
+
+        #[derive(serde::Deserialize)]
+        struct ContextSeedInput {
+            entity_context: Option<String>,
+            workspace: Option<String>,
+            base_tags: Option<Vec<String>>,
+            ttl_seconds: Option<i64>,
+            disable_ttl: Option<bool>,
+            facts: Vec<ContextSeedFact>,
+        }
+
+        let input: ContextSeedInput = match serde_json::from_value(params) {
+            Ok(i) => i,
+            Err(e) => return json!({"error": e.to_string()}),
+        };
+
+        if input.facts.is_empty() {
+            return json!({"error": "facts must have at least 1 item"});
+        }
+
+        fn norm_tag(tag: &str) -> String {
+            tag.trim()
+                .trim_start_matches('#')
+                .replace(' ', "_")
+                .to_lowercase()
+        }
+
+        fn norm_entity(entity: &str) -> Option<String> {
+            let e = entity.trim();
+            if e.is_empty() || e.eq_ignore_ascii_case("general") {
+                return None;
+            }
+            Some(format!("entity:{}", e.replace(' ', "_").to_lowercase()))
+        }
+
+        fn clamp_confidence(val: Option<f32>) -> f32 {
+            let v = val.unwrap_or(0.7);
+            if v < 0.0 {
+                0.0
+            } else if v > 1.0 {
+                1.0
+            } else {
+                v
+            }
+        }
+
+        fn ttl_for_confidence(confidence: f32) -> Option<i64> {
+            if confidence >= 0.85 {
+                None
+            } else if confidence >= 0.6 {
+                Some(90 * 24 * 60 * 60)
+            } else {
+                Some(30 * 24 * 60 * 60)
+            }
+        }
+
+        let mut entity_context = input.entity_context.unwrap_or_else(|| "General".to_string());
+        if entity_context.len() > 200 {
+            entity_context.truncate(200);
+        }
+        let entity_tag = norm_entity(&entity_context);
+        let base_tags: Vec<String> = input
+            .base_tags
+            .unwrap_or_default()
+            .iter()
+            .map(|t| norm_tag(t))
+            .filter(|t| !t.is_empty())
+            .collect();
+        let ttl_override = input.ttl_seconds;
+        let disable_ttl = input.disable_ttl.unwrap_or(false);
+
+        let mut inputs = Vec::with_capacity(input.facts.len());
+
+        for fact in input.facts {
+            let content = fact.content.trim();
+            if content.is_empty() {
+                continue;
+            }
+
+            let category = fact.category.unwrap_or_else(|| "fact".to_string());
+            let confidence = clamp_confidence(fact.confidence);
+            let ttl_seconds = if disable_ttl {
+                None
+            } else if let Some(ttl) = ttl_override {
+                if ttl <= 0 {
+                    None
+                } else {
+                    Some(ttl)
+                }
+            } else {
+                ttl_for_confidence(confidence)
+            };
+            let (tier, ttl) = if let Some(ttl) = ttl_seconds {
+                (MemoryTier::Daily, Some(ttl))
+            } else {
+                (MemoryTier::Permanent, None)
+            };
+
+            let rich_content = if entity_context.eq_ignore_ascii_case("General") {
+                content.to_string()
+            } else {
+                format!("[{}] {}", entity_context.trim(), content)
+            };
+
+            let mut tags = base_tags.clone();
+            tags.push("origin:seed".to_string());
+            tags.push("status:unverified".to_string());
+            tags.push(format!("category:{}", norm_tag(&category)));
+            tags.push(format!("confidence:{:.2}", confidence));
+            if let Some(et) = &entity_tag {
+                tags.push(et.clone());
+            }
+            tags.sort();
+            tags.dedup();
+
+            let mut metadata: HashMap<String, Value> = HashMap::new();
+            metadata.insert("origin".to_string(), json!("seed"));
+            metadata.insert("status".to_string(), json!("unverified"));
+            metadata.insert("confidence".to_string(), json!(confidence));
+            metadata.insert("entity_context".to_string(), json!(entity_context));
+            metadata.insert("category".to_string(), json!(category));
+            metadata.insert("seeded_at".to_string(), json!(chrono::Utc::now().to_rfc3339()));
+
+            inputs.push(CreateMemoryInput {
+                content: rich_content,
+                memory_type: MemoryType::Context,
+                tags,
+                metadata,
+                importance: None,
+                scope: MemoryScope::Global,
+                workspace: input.workspace.clone(),
+                tier,
+                defer_embedding: false,
+                ttl_seconds: ttl,
+                dedup_mode: DedupMode::Allow,
+                dedup_threshold: None,
+                event_time: None,
+                event_duration_seconds: None,
+                trigger_pattern: None,
+                summary_of_id: None,
+            });
+        }
+
+        if inputs.is_empty() {
+            return json!({"error": "facts must contain at least one non-empty content"});
+        }
+
+        let result = self.storage.with_transaction(|conn| create_memory_batch(conn, &inputs));
+
+        match result {
+            Ok(batch) => {
+                // Invalidate search cache for this workspace
+                self.search_cache
+                    .invalidate_for_workspace(input.workspace.as_deref());
+
+                // Add seeded content to fuzzy engine vocabulary
+                {
+                    let mut fuzzy = self.fuzzy_engine.lock();
+                    for memory in &batch.created {
+                        fuzzy.add_to_vocabulary(&memory.content);
+                    }
+                }
+
+                // Broadcast real-time events for created memories
+                for memory in &batch.created {
+                    self.broadcast_event(RealtimeEvent::memory_created(
+                        memory.id,
+                        memory.content.clone(),
+                    ));
+                }
+
+                json!({
+                    "status": "success",
+                    "seeded_count": batch.total_created,
+                    "memory_ids": batch.created.iter().map(|m| m.id).collect::<Vec<_>>(),
+                    "entity": if entity_context.is_empty() { "General" } else { entity_context.as_str() },
+                    "failed": batch.failed
+                })
             }
             Err(e) => json!({"error": e.to_string()}),
         }
@@ -369,6 +645,9 @@ impl EngramHandler {
 
         match result {
             Ok(memory) => {
+                // Invalidate search cache for this memory (Phase 4 - ENG-36)
+                self.search_cache.invalidate_for_memory(memory.id);
+
                 // Broadcast real-time event
                 self.broadcast_event(RealtimeEvent::memory_updated(memory.id, changes));
                 json!(memory)
@@ -387,6 +666,9 @@ impl EngramHandler {
 
         match result {
             Ok(deleted_id) => {
+                // Invalidate search cache for this memory (Phase 4 - ENG-36)
+                self.search_cache.invalidate_for_memory(deleted_id);
+
                 // Broadcast real-time event
                 self.broadcast_event(RealtimeEvent::memory_deleted(deleted_id));
                 json!({"deleted": deleted_id})
@@ -407,6 +689,7 @@ impl EngramHandler {
     }
 
     fn tool_memory_search(&self, params: Value) -> Value {
+        use engram::search::result_cache::CacheFilterParams;
         use engram::search::{RerankConfig, RerankStrategy, Reranker};
 
         let query = params.get("query").and_then(|v| v.as_str()).unwrap_or("");
@@ -427,6 +710,33 @@ impl EngramHandler {
         let query_embedding = self.embedder.embed(query).ok();
         let embedding_ref = query_embedding.as_deref();
 
+        // Build cache filter params from search options
+        let cache_filters = CacheFilterParams {
+            workspace: options.workspace.clone(),
+            tier: options.tier.map(|t| t.as_str().to_string()),
+            memory_types: options.memory_type.map(|t| vec![t]),
+            include_archived: options.include_archived,
+            include_transcripts: options.include_transcripts,
+            tags: options.tags.clone(),
+        };
+
+        // Check cache first (skip if reranking is enabled, as reranking needs fresh scores)
+        let skip_cache = params
+            .get("skip_cache")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if !skip_cache && !rerank_enabled {
+            if let Some(cached_results) =
+                self.search_cache.get(query, embedding_ref, &cache_filters)
+            {
+                return json!({
+                    "results": cached_results,
+                    "cached": true
+                });
+            }
+        }
+
         // Set project context path from current working directory for boost
         let mut search_config = self.search_config.clone();
         if let Ok(cwd) = std::env::current_dir() {
@@ -438,6 +748,16 @@ impl EngramHandler {
         self.storage
             .with_connection(|conn| {
                 let results = hybrid_search(conn, query, embedding_ref, &options, &search_config)?;
+
+                // Store in cache if not reranking (reranking changes scores)
+                if !rerank_enabled && !skip_cache {
+                    self.search_cache.put(
+                        query,
+                        query_embedding.clone(),
+                        cache_filters.clone(),
+                        results.clone(),
+                    );
+                }
 
                 // Apply reranking if enabled
                 if rerank_enabled && rerank_strategy != RerankStrategy::None {
@@ -681,7 +1001,11 @@ impl EngramHandler {
             ttl_seconds: None,
             dedup_mode: Default::default(),
             dedup_threshold: None,
-        };
+                event_time: None,
+                event_duration_seconds: None,
+                trigger_pattern: None,
+                summary_of_id: None,
+            };
 
         self.tool_memory_create(json!(input))
     }
@@ -737,7 +1061,11 @@ impl EngramHandler {
             ttl_seconds: None,
             dedup_mode: Default::default(),
             dedup_threshold: None,
-        };
+                event_time: None,
+                event_duration_seconds: None,
+                trigger_pattern: None,
+                summary_of_id: None,
+            };
 
         self.tool_memory_create(json!(input))
     }
@@ -896,6 +1224,8 @@ impl EngramHandler {
                             importance: Some(memory.importance),
                             scope: None,
                             ttl_seconds: None,
+                            event_time: None,
+                            trigger_pattern: None,
                         };
 
                         match self.storage.with_transaction(|conn| {
@@ -941,7 +1271,11 @@ impl EngramHandler {
                         ttl_seconds: None,
                         dedup_mode: Default::default(),
                         dedup_threshold: None,
-                    };
+                event_time: None,
+                event_duration_seconds: None,
+                trigger_pattern: None,
+                summary_of_id: None,
+            };
 
                     match self
                         .storage
@@ -1044,7 +1378,9 @@ impl EngramHandler {
                             importance: Some(section_memory.importance),
                             scope: None,
                             ttl_seconds: None,
-                        };
+                event_time: None,
+                trigger_pattern: None,
+            };
 
                         match self.storage.with_transaction(|conn| {
                             update_memory(conn, existing.id, &update_input)
@@ -1083,7 +1419,11 @@ impl EngramHandler {
                             ttl_seconds: None,
                             dedup_mode: Default::default(),
                             dedup_threshold: None,
-                        };
+                event_time: None,
+                event_duration_seconds: None,
+                trigger_pattern: None,
+                summary_of_id: None,
+            };
 
                         match self
                             .storage
@@ -1213,6 +1553,79 @@ impl EngramHandler {
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }
 
+    fn tool_list_instruction_files(&self, params: Value) -> Value {
+        use engram::intelligence::ProjectContextConfig;
+        use std::path::PathBuf;
+
+        // Get scan path (default to current working directory)
+        let path_str = params
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                std::env::current_dir()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|_| ".".to_string())
+            });
+
+        let path = PathBuf::from(&path_str);
+
+        // Check if path exists
+        if !path.exists() {
+            return json!({
+                "error": format!("Path does not exist: {}", path_str),
+                "files": []
+            });
+        }
+
+        // Canonicalize for consistent output
+        let canonical_path = path.canonicalize().unwrap_or(path.clone());
+        let canonical_path_str = canonical_path.to_string_lossy().to_string();
+
+        // Get options
+        let scan_parents = params
+            .get("scan_parents")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        // Create engine with config
+        let config = ProjectContextConfig {
+            scan_parents,
+            ..Default::default()
+        };
+        let engine = ProjectContextEngine::with_config(config);
+
+        // Scan for instruction files (without ingesting)
+        match engine.scan_directory_with_stats(&canonical_path) {
+            Ok((discovered, files_skipped)) => {
+                let files: Vec<Value> = discovered
+                    .iter()
+                    .map(|f| {
+                        json!({
+                            "path": f.path.to_string_lossy(),
+                            "filename": f.filename,
+                            "file_type": f.file_type.as_tag(),
+                            "format": f.format.as_str(),
+                            "size": f.size,
+                            "content_hash": f.content_hash
+                        })
+                    })
+                    .collect();
+
+                json!({
+                    "project_path": canonical_path_str,
+                    "files_found": discovered.len(),
+                    "files_skipped": files_skipped,
+                    "files": files
+                })
+            }
+            Err(e) => json!({
+                "error": format!("Scan failed: {}", e),
+                "files": []
+            }),
+        }
+    }
+
     fn tool_ingest_document(&self, params: Value) -> Value {
         use serde::Deserialize;
 
@@ -1231,7 +1644,7 @@ impl EngramHandler {
             Err(e) => return json!({"error": e.to_string()}),
         };
 
-        let format = match input.format.as_deref() {
+        let format = match input.format.as_ref().map(|s| s.as_str()) {
             None | Some("auto") => None,
             Some("md") | Some("markdown") => Some(DocumentFormat::Markdown),
             Some("pdf") => Some(DocumentFormat::Pdf),
@@ -1729,7 +2142,11 @@ impl EngramHandler {
             ttl_seconds: Some(ttl_seconds),
             dedup_mode: Default::default(),
             dedup_threshold: None,
-        };
+                event_time: None,
+                event_duration_seconds: None,
+                trigger_pattern: None,
+                summary_of_id: None,
+            };
 
         self.storage
             .with_connection(|conn| {
@@ -2225,6 +2642,40 @@ impl EngramHandler {
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }
 
+    fn tool_memory_get_identities(&self, params: Value) -> Value {
+        use engram::storage::identity_links::get_memory_identities_with_mentions;
+
+        let memory_id = match params
+            .get("id")
+            .or_else(|| params.get("memory_id"))
+            .and_then(|v| v.as_i64())
+        {
+            Some(id) => id,
+            None => {
+                return json!({
+                    "error": "id is required",
+                    "identities": []
+                })
+            }
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let identities = get_memory_identities_with_mentions(conn, memory_id)?;
+                Ok(json!({
+                    "memory_id": memory_id,
+                    "identities_count": identities.len(),
+                    "identities": identities
+                }))
+            })
+            .unwrap_or_else(|e| {
+                json!({
+                    "error": e.to_string(),
+                    "identities": []
+                })
+            })
+    }
+
     // Content utility tools
 
     fn tool_memory_soft_trim(&self, params: Value) -> Value {
@@ -2547,6 +2998,1257 @@ impl EngramHandler {
                 Ok(json!(memory))
             })
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // =========================================================================
+    // Phase 1: Cognitive Memory Types (ENG-33)
+    // =========================================================================
+
+    #[allow(dead_code)]
+    fn tool_memory_create_episodic(&self, params: Value) -> Value {
+        use chrono::DateTime;
+        use engram::storage::create_memory;
+        use engram::types::{CreateMemoryInput, DedupMode, MemoryScope, MemoryTier, MemoryType};
+
+        let content = match params.get("content").and_then(|v| v.as_str()) {
+            Some(c) => c.to_string(),
+            None => return json!({"error": "content is required"}),
+        };
+
+        let event_time = match params.get("event_time").and_then(|v| v.as_str()) {
+            Some(s) => match DateTime::parse_from_rfc3339(s) {
+                Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
+                Err(e) => return json!({"error": format!("Invalid event_time format: {}", e)}),
+            },
+            None => return json!({"error": "event_time is required for episodic memories"}),
+        };
+
+        let event_duration_seconds = params
+            .get("event_duration_seconds")
+            .and_then(|v| v.as_i64());
+        let tags: Vec<String> = params
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let metadata: std::collections::HashMap<String, Value> = params
+            .get("metadata")
+            .and_then(|v| v.as_object())
+            .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+        let importance = params
+            .get("importance")
+            .and_then(|v| v.as_f64())
+            .map(|f| f as f32);
+        let workspace = params
+            .get("workspace")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let input = CreateMemoryInput {
+            content,
+            memory_type: MemoryType::Episodic,
+            tags,
+            metadata,
+            importance,
+            scope: MemoryScope::Global,
+            workspace,
+            tier: MemoryTier::Permanent,
+            defer_embedding: false,
+            ttl_seconds: None,
+            dedup_mode: DedupMode::Allow,
+            dedup_threshold: None,
+            event_time,
+            event_duration_seconds,
+            trigger_pattern: None,
+            summary_of_id: None,
+        };
+
+        self.storage
+            .with_transaction(|conn| {
+                let memory = create_memory(conn, &input)?;
+                Ok(json!(memory))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    #[allow(dead_code)]
+    fn tool_memory_create_procedural(&self, params: Value) -> Value {
+        use engram::storage::create_memory;
+        use engram::types::{CreateMemoryInput, DedupMode, MemoryScope, MemoryTier, MemoryType};
+
+        let content = match params.get("content").and_then(|v| v.as_str()) {
+            Some(c) => c.to_string(),
+            None => return json!({"error": "content is required"}),
+        };
+
+        let trigger_pattern = match params.get("trigger_pattern").and_then(|v| v.as_str()) {
+            Some(p) => Some(p.to_string()),
+            None => return json!({"error": "trigger_pattern is required for procedural memories"}),
+        };
+
+        let tags: Vec<String> = params
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let metadata: std::collections::HashMap<String, Value> = params
+            .get("metadata")
+            .and_then(|v| v.as_object())
+            .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+        let importance = params
+            .get("importance")
+            .and_then(|v| v.as_f64())
+            .map(|f| f as f32);
+        let workspace = params
+            .get("workspace")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let input = CreateMemoryInput {
+            content,
+            memory_type: MemoryType::Procedural,
+            tags,
+            metadata,
+            importance,
+            scope: MemoryScope::Global,
+            workspace,
+            tier: MemoryTier::Permanent,
+            defer_embedding: false,
+            ttl_seconds: None,
+            dedup_mode: DedupMode::Allow,
+            dedup_threshold: None,
+            event_time: None,
+            event_duration_seconds: None,
+            trigger_pattern,
+            summary_of_id: None,
+        };
+
+        self.storage
+            .with_transaction(|conn| {
+                let memory = create_memory(conn, &input)?;
+                Ok(json!(memory))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    #[allow(dead_code)]
+    fn tool_memory_get_timeline(&self, params: Value) -> Value {
+        // // use engram::storage::queries::get_episodic_timeline; // TODO: implement // TODO: implement
+
+        let _start_time = params
+            .get("start_time")
+            .and_then(|v| v.as_str())
+            .and_then(|s| {
+                chrono::DateTime::parse_from_rfc3339(s)
+                    .ok()
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+            });
+        let _end_time = params
+            .get("end_time")
+            .and_then(|v| v.as_str())
+            .and_then(|s| {
+                chrono::DateTime::parse_from_rfc3339(s)
+                    .ok()
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+            });
+        let _workspace = params.get("workspace").and_then(|v| v.as_str());
+        let _tags: Option<Vec<String>> = params.get("tags").and_then(|v| v.as_array()).map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        });
+        let _limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(50);
+
+        // Episodic timeline queries not yet implemented
+        json!({"error": "Episodic timeline queries not yet implemented"})
+    }
+
+    #[allow(dead_code)]
+    fn tool_memory_get_procedures(&self, params: Value) -> Value {
+        // // use engram::storage::queries::get_procedural_memories; // TODO: implement // TODO: implement
+
+        let _trigger_pattern = params.get("trigger_pattern").and_then(|v| v.as_str());
+        let _workspace = params.get("workspace").and_then(|v| v.as_str());
+        let _min_success_rate = params
+            .get("min_success_rate")
+            .and_then(|v| v.as_f64())
+            .map(|f| f as f32);
+        let _limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(50);
+
+        // Procedural memory queries not yet implemented
+        json!({"error": "Procedural memory queries not yet implemented"})
+    }
+
+    // =========================================================================
+    // Phase 2: Context Compression Engine (ENG-34)
+    // =========================================================================
+
+    fn tool_memory_summarize(&self, params: Value) -> Value {
+        use engram::storage::queries::{create_memory, get_memory};
+        use engram::types::{CreateMemoryInput, MemoryTier, MemoryType};
+
+        let memory_ids: Vec<i64> = match params.get("memory_ids") {
+            Some(v) => match serde_json::from_value(v.clone()) {
+                Ok(ids) => ids,
+                Err(e) => return json!({"error": format!("Invalid memory_ids: {}", e)}),
+            },
+            None => return json!({"error": "memory_ids is required"}),
+        };
+
+        if memory_ids.is_empty() {
+            return json!({"error": "memory_ids cannot be empty"});
+        }
+
+        let provided_summary = params.get("summary").and_then(|v| v.as_str());
+        let max_length = params
+            .get("max_length")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(500) as usize;
+        let workspace = params.get("workspace").and_then(|v| v.as_str());
+        let tags: Option<Vec<String>> = params
+            .get("tags")
+            .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+        self.storage
+            .with_connection(|conn| {
+                // Fetch all memories to summarize
+                let mut contents: Vec<String> = Vec::with_capacity(memory_ids.len());
+                let mut first_memory_workspace: Option<String> = None;
+
+                for id in &memory_ids {
+                    match get_memory(conn, *id) {
+                        Ok(mem) => {
+                            contents.push(mem.content);
+                            if first_memory_workspace.is_none() {
+                                first_memory_workspace = Some(mem.workspace);
+                            }
+                        }
+                        Err(e) => {
+                            return Err(engram::error::EngramError::Internal(format!("Memory {} not found: {}", id, e)));
+                        }
+                    }
+                }
+
+                // Generate summary if not provided
+                let summary_text = if let Some(s) = provided_summary {
+                    s.to_string()
+                } else {
+                    // Simple head-tail summary for now (LLM summarization would require async)
+                    let combined = contents.join("\n\n---\n\n");
+                    if combined.len() <= max_length {
+                        combined
+                    } else {
+                        // Head 60%, tail 30%, ellipsis in middle
+                        let head_len = (max_length as f64 * 0.6) as usize;
+                        let tail_len = (max_length as f64 * 0.3) as usize;
+                        let head: String = combined.chars().take(head_len).collect();
+                        let tail: String = combined
+                            .chars()
+                            .rev()
+                            .take(tail_len)
+                            .collect::<String>()
+                            .chars()
+                            .rev()
+                            .collect();
+                        let truncated = combined.len() - head_len - tail_len;
+                        format!("{}...[{} chars truncated]...{}", head, truncated, tail)
+                    }
+                };
+
+                // Create the summary memory
+                let input = CreateMemoryInput {
+                    content: summary_text,
+                    memory_type: MemoryType::Summary,
+                    importance: Some(0.6), // Default importance for summaries
+                    tags: tags.unwrap_or_default(),
+                    workspace: workspace.map(|s| s.to_string()).or(first_memory_workspace),
+                    tier: MemoryTier::Permanent,
+                    summary_of_id: Some(memory_ids[0]), // Link to first memory
+                    ..Default::default()
+                };
+
+                let memory = create_memory(conn, &input)?;
+
+                Ok(json!({
+                    "id": memory.id,
+                    "memory_type": "summary",
+                    "summarized_count": memory_ids.len(),
+                    "original_ids": memory_ids,
+                    "summary_length": memory.content.len()
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_memory_get_full(&self, params: Value) -> Value {
+        use engram::storage::queries::get_memory;
+        use engram::types::MemoryType;
+
+        let id = match params.get("id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "id is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let memory = match get_memory(conn, id) {
+                    Ok(m) => m,
+                    Err(_) => return Ok(json!({"error": "Memory not found"})),
+                };
+
+                // If it's a Summary and has a summary_of_id, fetch original
+                if memory.memory_type == MemoryType::Summary {
+                    if let Some(original_id) = memory.summary_of_id {
+                        match get_memory(conn, original_id) {
+                            Ok(original) => {
+                                return Ok(json!({
+                                    "id": id,
+                                    "is_summary": true,
+                                    "original_id": original_id,
+                                    "original_content": original.content,
+                                    "summary_content": memory.content
+                                }));
+                            }
+                            Err(_) => {
+                                return Ok(json!({
+                                    "error": "original_deleted",
+                                    "id": id,
+                                    "original_id": original_id,
+                                    "summary": memory.content
+                                }));
+                            }
+                        }
+                    }
+                }
+
+                // Not a summary or no summary_of_id - return as-is
+                Ok(json!({
+                    "id": id,
+                    "is_summary": false,
+                    "content": memory.content
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_context_budget_check(&self, params: Value) -> Value {
+        use engram::intelligence::compression::check_context_budget;
+        use engram::storage::queries::get_memory;
+
+        let memory_ids: Vec<i64> = match params.get("memory_ids") {
+            Some(v) => match serde_json::from_value(v.clone()) {
+                Ok(ids) => ids,
+                Err(e) => return json!({"error": format!("Invalid memory_ids: {}", e)}),
+            },
+            None => return json!({"error": "memory_ids is required"}),
+        };
+
+        let model = match params.get("model").and_then(|v| v.as_str()) {
+            Some(m) => m,
+            None => return json!({"error": "model is required"}),
+        };
+
+        let encoding = params.get("encoding").and_then(|v| v.as_str());
+
+        let budget = match params.get("budget").and_then(|v| v.as_u64()) {
+            Some(b) => b as usize,
+            None => return json!({"error": "budget is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                // Fetch all memory contents
+                let mut contents: Vec<(i64, String)> = Vec::with_capacity(memory_ids.len());
+
+                for id in &memory_ids {
+                    match get_memory(conn, *id) {
+                        Ok(mem) => contents.push((*id, mem.content)),
+                        Err(_) => return Ok(json!({"error": format!("Memory {} not found", id)})),
+                    }
+                }
+
+                // Check budget
+                match check_context_budget(&contents, model, encoding, budget) {
+                    Ok(result) => Ok(json!(result)),
+                    Err(e) => Ok(json!({"error": e.to_string()})),
+                }
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_memory_archive_old(&self, params: Value) -> Value {
+        use chrono::{Duration, Utc};
+        use engram::storage::queries::{create_memory, list_memories};
+        use engram::types::{CreateMemoryInput, ListOptions, MemoryTier, MemoryType};
+
+        let max_age_days = params
+            .get("max_age_days")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(90);
+        let max_importance = params
+            .get("max_importance")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.5) as f32;
+        let min_access_count = params
+            .get("min_access_count")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(5);
+        let workspace = params.get("workspace").and_then(|v| v.as_str());
+        let dry_run = params
+            .get("dry_run")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+
+        let cutoff_date = Utc::now() - Duration::days(max_age_days);
+
+        self.storage
+            .with_connection(|conn| {
+                // Find old, low-importance, rarely-accessed memories
+                let options = ListOptions {
+                    workspace: workspace.map(|s| s.to_string()),
+                    limit: Some(1000),
+                    ..Default::default()
+                };
+
+                let all_memories = list_memories(conn, &options)?;
+
+                // Filter candidates for archival
+                let candidates: Vec<_> = all_memories
+                    .into_iter()
+                    .filter(|m| {
+                        m.created_at < cutoff_date
+                            && m.importance <= max_importance
+                            && m.access_count < min_access_count as i32
+                            && m.memory_type != MemoryType::Summary
+                            && m.memory_type != MemoryType::Checkpoint
+                    })
+                    .collect();
+
+                if dry_run {
+                    // Just report what would be archived
+                    let summaries: Vec<_> = candidates
+                        .iter()
+                        .map(|m| {
+                            json!({
+                                "id": m.id,
+                                "memory_type": m.memory_type,
+                                "importance": m.importance,
+                                "access_count": m.access_count,
+                                "created_at": m.created_at.to_rfc3339(),
+                                "content_preview": m.content.chars().take(100).collect::<String>()
+                            })
+                        })
+                        .collect();
+
+                    return Ok(json!({
+                        "dry_run": true,
+                        "would_archive": candidates.len(),
+                        "candidates": summaries
+                    }));
+                }
+
+                // Actually create summaries for each candidate and mark originals as archived
+                let mut archived = 0;
+                let mut errors: Vec<String> = Vec::new();
+
+                for memory in candidates {
+                    // Create a summary
+                    let summary_text = if memory.content.len() > 200 {
+                        let head: String = memory.content.chars().take(120).collect();
+                        let tail: String = memory
+                            .content
+                            .chars()
+                            .rev()
+                            .take(60)
+                            .collect::<String>()
+                            .chars()
+                            .rev()
+                            .collect();
+                        format!("{}...{}", head, tail)
+                    } else {
+                        memory.content.clone()
+                    };
+
+                    let input = CreateMemoryInput {
+                        content: format!("[Archived {:?}] {}", memory.memory_type, summary_text),
+                        memory_type: MemoryType::Summary,
+                        importance: Some(memory.importance),
+                        tags: memory.tags.clone(),
+                        workspace: Some(memory.workspace.clone()),
+                        tier: MemoryTier::Permanent,
+                        summary_of_id: Some(memory.id),
+                        ..Default::default()
+                    };
+
+                    match create_memory(conn, &input) {
+                        Ok(_) => {
+                            // Mark the original memory as archived
+                            match conn.execute(
+                                "UPDATE memories SET lifecycle_state = 'archived' WHERE id = ? AND valid_to IS NULL",
+                                params![memory.id],
+                            ) {
+                                Ok(_) => archived += 1,
+                                Err(e) => errors.push(format!(
+                                    "Memory {}: summary created but failed to mark archived: {}",
+                                    memory.id, e
+                                )),
+                            }
+                        }
+                        Err(e) => errors.push(format!("Memory {}: {}", memory.id, e)),
+                    }
+                }
+
+                Ok(json!({
+                    "dry_run": false,
+                    "archived": archived,
+                    "errors": errors
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // =========================================================================
+    // Phase 3: Langfuse Integration (ENG-35)
+    // =========================================================================
+
+    #[cfg(feature = "langfuse")]
+    fn tool_langfuse_connect(&self, params: Value) -> Value {
+        use engram::integrations::langfuse::{LangfuseClient, LangfuseConfig};
+
+        let public_key = params
+            .get("public_key")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| std::env::var("LANGFUSE_PUBLIC_KEY").ok());
+
+        let secret_key = params
+            .get("secret_key")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| std::env::var("LANGFUSE_SECRET_KEY").ok());
+
+        let base_url = params
+            .get("base_url")
+            .and_then(|v| v.as_str())
+            .unwrap_or("https://cloud.langfuse.com")
+            .to_string();
+
+        let (public_key, secret_key) = match (public_key, secret_key) {
+            (Some(pk), Some(sk)) => (pk, sk),
+            _ => {
+                return json!({
+                    "error": "Missing credentials. Provide public_key and secret_key or set LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY environment variables."
+                });
+            }
+        };
+
+        let config = LangfuseConfig {
+            public_key: public_key.clone(),
+            secret_key,
+            base_url: base_url.clone(),
+        };
+
+        let client = LangfuseClient::new(config);
+
+        // Test connection using the dedicated runtime
+        let connected = self
+            .langfuse_runtime
+            .block_on(async { client.test_connection().await });
+
+        match connected {
+            Ok(true) => json!({
+                "status": "connected",
+                "base_url": base_url,
+                "public_key_prefix": &public_key[..8.min(public_key.len())]
+            }),
+            Ok(false) => json!({
+                "status": "failed",
+                "error": "Connection test failed"
+            }),
+            Err(e) => json!({
+                "status": "error",
+                "error": e.to_string()
+            }),
+        }
+    }
+
+    #[cfg(feature = "langfuse")]
+    fn tool_langfuse_sync(&self, params: Value) -> Value {
+        use chrono::{Duration, Utc};
+        use engram::integrations::langfuse::{LangfuseClient, LangfuseConfig};
+        use engram::storage::queries::{upsert_sync_task, SyncTask};
+
+        // Get or create config
+        let config = match LangfuseConfig::from_env() {
+            Some(c) => c,
+            None => {
+                return json!({
+                    "error": "Langfuse not configured. Call langfuse_connect first or set environment variables."
+                });
+            }
+        };
+
+        let since = params
+            .get("since")
+            .and_then(|v| v.as_str())
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|| Utc::now() - Duration::hours(24));
+
+        let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
+
+        let workspace = params
+            .get("workspace")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let dry_run = params
+            .get("dry_run")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let task_id = uuid::Uuid::new_v4().to_string();
+        let started_at = Utc::now().to_rfc3339();
+
+        // Create initial sync task record
+        let initial_task = SyncTask {
+            task_id: task_id.clone(),
+            task_type: "langfuse_sync".to_string(),
+            status: "running".to_string(),
+            progress_percent: 0,
+            traces_processed: 0,
+            memories_created: 0,
+            error_message: None,
+            started_at: started_at.clone(),
+            completed_at: None,
+        };
+
+        if let Err(e) = self
+            .storage
+            .with_connection(|conn| upsert_sync_task(conn, &initial_task))
+        {
+            return json!({"error": format!("Failed to create sync task: {}", e)});
+        }
+
+        // For now, do synchronous sync (background sync would require shared state)
+        let client = LangfuseClient::new(config);
+
+        let result = self
+            .langfuse_runtime
+            .block_on(async { client.fetch_traces(since, limit).await });
+
+        match result {
+            Ok(traces) => {
+                if dry_run {
+                    let trace_summaries: Vec<_> = traces
+                        .iter()
+                        .map(|t| {
+                            json!({
+                                "id": t.id,
+                                "name": t.name,
+                                "timestamp": t.timestamp.to_rfc3339(),
+                                "user_id": t.user_id,
+                                "tags": t.tags
+                            })
+                        })
+                        .collect();
+
+                    // Update task as completed (dry run)
+                    let final_task = SyncTask {
+                        task_id: task_id.clone(),
+                        task_type: "langfuse_sync".to_string(),
+                        status: "completed".to_string(),
+                        progress_percent: 100,
+                        traces_processed: traces.len() as i64,
+                        memories_created: 0, // dry run creates no memories
+                        error_message: None,
+                        started_at,
+                        completed_at: Some(Utc::now().to_rfc3339()),
+                    };
+                    let _ = self
+                        .storage
+                        .with_connection(|conn| upsert_sync_task(conn, &final_task));
+
+                    return json!({
+                        "task_id": task_id,
+                        "dry_run": true,
+                        "traces_found": traces.len(),
+                        "traces": trace_summaries
+                    });
+                }
+
+                // Actually create memories from traces
+                use engram::integrations::langfuse::trace_to_memory_content;
+                use engram::storage::queries::create_memory;
+                use engram::types::{CreateMemoryInput, MemoryType};
+
+                let mut memories_created = 0i64;
+                let mut errors: Vec<String> = Vec::new();
+
+                for trace in &traces {
+                    let content = trace_to_memory_content(trace, &[]);
+
+                    let input = CreateMemoryInput {
+                        content,
+                        memory_type: MemoryType::Episodic,
+                        importance: Some(0.5),
+                        tags: {
+                            let mut tags = trace.tags.clone();
+                            tags.push("langfuse".to_string());
+                            tags
+                        },
+                        workspace: workspace.clone(),
+                        event_time: Some(trace.timestamp),
+                        ..Default::default()
+                    };
+
+                    match self
+                        .storage
+                        .with_connection(|conn| create_memory(conn, &input))
+                    {
+                        Ok(_) => memories_created += 1,
+                        Err(e) => errors.push(format!("Trace {}: {}", trace.id, e)),
+                    }
+                }
+
+                // Update task as completed
+                let final_task = SyncTask {
+                    task_id: task_id.clone(),
+                    task_type: "langfuse_sync".to_string(),
+                    status: if errors.is_empty() {
+                        "completed".to_string()
+                    } else {
+                        "completed_with_errors".to_string()
+                    },
+                    progress_percent: 100,
+                    traces_processed: traces.len() as i64,
+                    memories_created,
+                    error_message: if errors.is_empty() {
+                        None
+                    } else {
+                        Some(errors.join("; "))
+                    },
+                    started_at,
+                    completed_at: Some(Utc::now().to_rfc3339()),
+                };
+                let _ = self
+                    .storage
+                    .with_connection(|conn| upsert_sync_task(conn, &final_task));
+
+                json!({
+                    "task_id": task_id,
+                    "status": final_task.status,
+                    "traces_processed": traces.len(),
+                    "memories_created": memories_created,
+                    "errors": errors
+                })
+            }
+            Err(e) => {
+                // Update task as failed
+                let final_task = SyncTask {
+                    task_id: task_id.clone(),
+                    task_type: "langfuse_sync".to_string(),
+                    status: "failed".to_string(),
+                    progress_percent: 0,
+                    traces_processed: 0,
+                    memories_created: 0,
+                    error_message: Some(e.to_string()),
+                    started_at,
+                    completed_at: Some(Utc::now().to_rfc3339()),
+                };
+                let _ = self
+                    .storage
+                    .with_connection(|conn| upsert_sync_task(conn, &final_task));
+
+                json!({
+                    "task_id": task_id,
+                    "status": "failed",
+                    "error": e.to_string()
+                })
+            }
+        }
+    }
+
+    #[cfg(feature = "langfuse")]
+    fn tool_langfuse_sync_status(&self, params: Value) -> Value {
+        use engram::storage::queries::get_sync_task;
+
+        let task_id = match params.get("task_id").and_then(|v| v.as_str()) {
+            Some(id) => id,
+            None => return json!({"error": "task_id is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| match get_sync_task(conn, task_id)? {
+                Some(task) => Ok(json!(task)),
+                None => Ok(json!({"error": "Task not found", "task_id": task_id})),
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    #[cfg(feature = "langfuse")]
+    fn tool_langfuse_extract_patterns(&self, params: Value) -> Value {
+        use chrono::{Duration, Utc};
+        use engram::integrations::langfuse::{extract_patterns, LangfuseClient, LangfuseConfig};
+
+        let config = match LangfuseConfig::from_env() {
+            Some(c) => c,
+            None => {
+                return json!({
+                    "error": "Langfuse not configured. Set LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY environment variables."
+                });
+            }
+        };
+
+        let since = params
+            .get("since")
+            .and_then(|v| v.as_str())
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|| Utc::now() - Duration::days(7));
+
+        let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+
+        let min_confidence = params
+            .get("min_confidence")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.7);
+
+        let client = LangfuseClient::new(config);
+
+        let result = self
+            .langfuse_runtime
+            .block_on(async { client.fetch_traces(since, limit).await });
+
+        match result {
+            Ok(traces) => {
+                let patterns = extract_patterns(&traces);
+                let filtered: Vec<_> = patterns
+                    .into_iter()
+                    .filter(|p| p.confidence >= min_confidence)
+                    .collect();
+
+                json!({
+                    "traces_analyzed": traces.len(),
+                    "patterns_found": filtered.len(),
+                    "patterns": filtered
+                })
+            }
+            Err(e) => json!({"error": e.to_string()}),
+        }
+    }
+
+    #[cfg(feature = "langfuse")]
+    fn tool_memory_from_trace(&self, params: Value) -> Value {
+        use engram::integrations::langfuse::{
+            trace_to_memory_content, LangfuseClient, LangfuseConfig,
+        };
+        use engram::storage::queries::create_memory;
+        use engram::types::{CreateMemoryInput, MemoryType};
+
+        let trace_id = match params.get("trace_id").and_then(|v| v.as_str()) {
+            Some(id) => id,
+            None => return json!({"error": "trace_id is required"}),
+        };
+
+        let memory_type_str = params
+            .get("memory_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("episodic");
+
+        let memory_type = match memory_type_str {
+            "note" => MemoryType::Note,
+            "episodic" => MemoryType::Episodic,
+            "procedural" => MemoryType::Procedural,
+            "learning" => MemoryType::Learning,
+            _ => MemoryType::Episodic,
+        };
+
+        let workspace = params
+            .get("workspace")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let extra_tags: Vec<String> = params
+            .get("tags")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
+
+        let config = match LangfuseConfig::from_env() {
+            Some(c) => c,
+            None => {
+                return json!({
+                    "error": "Langfuse not configured. Set environment variables."
+                });
+            }
+        };
+
+        let client = LangfuseClient::new(config);
+
+        let trace_result = self
+            .langfuse_runtime
+            .block_on(async { client.fetch_trace(trace_id).await });
+
+        match trace_result {
+            Ok(Some(trace)) => {
+                let content = trace_to_memory_content(&trace, &[]);
+
+                let mut tags = trace.tags.clone();
+                tags.push("langfuse".to_string());
+                tags.push(format!("trace:{}", trace_id));
+                tags.extend(extra_tags);
+
+                let input = CreateMemoryInput {
+                    content,
+                    memory_type,
+                    importance: 0.6,
+                    tags,
+                    workspace,
+                    event_time: Some(trace.timestamp),
+                    ..Default::default()
+                };
+
+                self.storage
+                    .with_connection(|conn| {
+                        let memory = create_memory(conn, &input)?;
+                        Ok(json!({
+                            "id": memory.id,
+                            "trace_id": trace_id,
+                            "memory_type": memory_type_str,
+                            "content_length": memory.content.len()
+                        }))
+                    })
+                    .unwrap_or_else(|e| json!({"error": e.to_string()}))
+            }
+            Ok(None) => json!({"error": format!("Trace {} not found", trace_id)}),
+            Err(e) => json!({"error": e.to_string()}),
+        }
+    }
+
+    // =========================================================================
+    // Phase 4: Search Result Caching (ENG-36)
+    // =========================================================================
+
+    fn tool_search_cache_feedback(&self, params: Value) -> Value {
+        use engram::search::CacheFilterParams;
+
+        let query = match params.get("query").and_then(|v| v.as_str()) {
+            Some(q) => q,
+            None => return json!({"error": "query is required"}),
+        };
+
+        let positive = match params.get("positive").and_then(|v| v.as_bool()) {
+            Some(p) => p,
+            None => return json!({"error": "positive is required"}),
+        };
+
+        let workspace = params
+            .get("workspace")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let filters = CacheFilterParams {
+            workspace,
+            ..Default::default()
+        };
+
+        self.search_cache.record_feedback(query, &filters, positive);
+
+        let new_threshold = self.search_cache.current_threshold();
+
+        json!({
+            "recorded": true,
+            "feedback": if positive { "positive" } else { "negative" },
+            "current_threshold": new_threshold
+        })
+    }
+
+    fn tool_search_cache_stats(&self, _params: Value) -> Value {
+        let stats = self.search_cache.stats();
+        json!(stats)
+    }
+
+    fn tool_search_cache_clear(&self, params: Value) -> Value {
+        let workspace = params.get("workspace").and_then(|v| v.as_str());
+
+        if let Some(ws) = workspace {
+            self.search_cache.invalidate_for_workspace(Some(ws));
+            json!({
+                "cleared": true,
+                "scope": "workspace",
+                "workspace": ws
+            })
+        } else {
+            self.search_cache.clear();
+            json!({
+                "cleared": true,
+                "scope": "all"
+            })
+        }
+    }
+
+    // =========================================================================
+    // Phase 5: Memory Lifecycle Management (ENG-37)
+    // =========================================================================
+
+    fn tool_lifecycle_status(&self, params: Value) -> Value {
+        let workspace = params.get("workspace").and_then(|v| v.as_str());
+
+        self.storage
+            .with_connection(|conn| {
+                let query = if workspace.is_some() {
+                    "SELECT lifecycle_state, COUNT(*) as count
+                     FROM memories
+                     WHERE workspace = ? AND valid_to IS NULL
+                     GROUP BY lifecycle_state"
+                } else {
+                    "SELECT lifecycle_state, COUNT(*) as count
+                     FROM memories
+                     WHERE valid_to IS NULL
+                     GROUP BY lifecycle_state"
+                };
+
+                let mut stmt = conn.prepare(query)?;
+                let rows: Vec<_> = if let Some(ws) = workspace {
+                    stmt.query_map(params![ws], |row| {
+                        Ok((
+                            row.get::<_, Option<String>>(0)?
+                                .unwrap_or_else(|| "active".to_string()),
+                            row.get::<_, i64>(1)?,
+                        ))
+                    })?.collect::<rusqlite::Result<Vec<_>>>()?
+                } else {
+                    stmt.query_map([], |row| {
+                        Ok((
+                            row.get::<_, Option<String>>(0)?
+                                .unwrap_or_else(|| "active".to_string()),
+                            row.get::<_, i64>(1)?,
+                        ))
+                    })?.collect::<rusqlite::Result<Vec<_>>>()?
+                };
+
+                let mut active = 0i64;
+                let mut stale = 0i64;
+                let mut archived = 0i64;
+
+                for row in rows {
+                    let (state, count) = row;
+                    match state.as_str() {
+                        "active" => active = count,
+                        "stale" => stale = count,
+                        "archived" => archived = count,
+                        _ => active += count, // Unknown states count as active
+                    }
+                }
+
+                Ok(json!({
+                    "active": active,
+                    "stale": stale,
+                    "archived": archived,
+                    "total": active + stale + archived,
+                    "workspace": workspace
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_lifecycle_run(&self, params: Value) -> Value {
+        use chrono::{Duration, Utc};
+
+        let dry_run = params
+            .get("dry_run")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let workspace = params.get("workspace").and_then(|v| v.as_str());
+        let stale_days = params
+            .get("stale_days")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(30);
+        let archive_days = params
+            .get("archive_days")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(90);
+        let min_importance = params
+            .get("min_importance")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.5) as f32;
+
+        let stale_cutoff = (Utc::now() - Duration::days(stale_days)).to_rfc3339();
+        let archive_cutoff = (Utc::now() - Duration::days(archive_days)).to_rfc3339();
+
+        self.storage
+            .with_connection(|conn| {
+                // Find candidates for stale marking
+                let stale_query = if workspace.is_some() {
+                    "SELECT id, content FROM memories
+                     WHERE workspace = ?
+                       AND (lifecycle_state IS NULL OR lifecycle_state = 'active')
+                       AND created_at < ?
+                       AND importance < ?
+                       AND access_count < 5
+                       AND valid_to IS NULL"
+                } else {
+                    "SELECT id, content FROM memories
+                     WHERE (lifecycle_state IS NULL OR lifecycle_state = 'active')
+                       AND created_at < ?
+                       AND importance < ?
+                       AND access_count < 5
+                       AND valid_to IS NULL"
+                };
+
+                let stale_candidates: Vec<(i64, String)> = {
+                    let mut stmt = conn.prepare(stale_query)?;
+                    let rows: Vec<_> = if let Some(ws) = workspace {
+                        stmt.query_map(
+                            params![ws, &stale_cutoff, min_importance],
+                            |row| Ok((row.get(0)?, row.get(1)?)),
+                        )?.collect::<rusqlite::Result<Vec<_>>>()?
+                    } else {
+                        stmt.query_map(
+                            params![&stale_cutoff, min_importance],
+                            |row| Ok((row.get(0)?, row.get(1)?)),
+                        )?.collect::<rusqlite::Result<Vec<_>>>()?
+                    };
+                    rows
+                };
+
+                // Find candidates for archiving
+                let archive_query = if workspace.is_some() {
+                    "SELECT id, content FROM memories
+                     WHERE workspace = ?
+                       AND lifecycle_state = 'stale'
+                       AND created_at < ?
+                       AND valid_to IS NULL"
+                } else {
+                    "SELECT id, content FROM memories
+                     WHERE lifecycle_state = 'stale'
+                       AND created_at < ?
+                       AND valid_to IS NULL"
+                };
+
+                let archive_candidates: Vec<(i64, String)> = {
+                    let mut stmt = conn.prepare(archive_query)?;
+                    let rows: Vec<_> = if let Some(ws) = workspace {
+                          stmt.query_map(params![ws, &archive_cutoff], |row| {
+                            Ok((row.get(0)?, row.get(1)?))
+                        })?
+                              .collect::<rusqlite::Result<Vec<_>>>()?
+                      } else {
+                          stmt.query_map(params![&archive_cutoff], |row| {
+                            Ok((row.get(0)?, row.get(1)?))
+                        })?
+                              .collect::<rusqlite::Result<Vec<_>>>()?
+                      };
+                    rows
+                };
+
+                if dry_run {
+                    return Ok(json!({
+                        "dry_run": true,
+                        "would_mark_stale": stale_candidates.len(),
+                        "would_archive": archive_candidates.len(),
+                        "stale_candidates": stale_candidates.iter().take(10).map(|(id, content)| {
+                            json!({"id": id, "preview": content.chars().take(50).collect::<String>()})
+                        }).collect::<Vec<_>>(),
+                        "archive_candidates": archive_candidates.iter().take(10).map(|(id, content)| {
+                            json!({"id": id, "preview": content.chars().take(50).collect::<String>()})
+                        }).collect::<Vec<_>>()
+                    }));
+                }
+
+                // Apply changes
+                let mut stale_count = 0;
+                let mut archive_count = 0;
+
+                for (id, _) in &stale_candidates {
+                    conn.execute(
+                        "UPDATE memories SET lifecycle_state = 'stale' WHERE id = ?",
+                        params![id],
+                    )?;
+                    stale_count += 1;
+                }
+
+                for (id, _) in &archive_candidates {
+                    conn.execute(
+                        "UPDATE memories SET lifecycle_state = 'archived' WHERE id = ?",
+                        params![id],
+                    )?;
+                    archive_count += 1;
+                }
+
+                Ok(json!({
+                    "dry_run": false,
+                    "marked_stale": stale_count,
+                    "archived": archive_count
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_memory_set_lifecycle(&self, params: Value) -> Value {
+        let id = match params.get("id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "id is required"}),
+        };
+
+        let state = match params.get("state").and_then(|v| v.as_str()) {
+            Some(s) => s,
+            None => return json!({"error": "state is required"}),
+        };
+
+        // Validate state
+        if !["active", "stale", "archived"].contains(&state) {
+            return json!({"error": "state must be one of: active, stale, archived"});
+        }
+
+        self.storage
+            .with_connection(|conn| {
+                let updated = conn.execute(
+                    "UPDATE memories SET lifecycle_state = ? WHERE id = ? AND valid_to IS NULL",
+                    params![state, id],
+                )?;
+
+                if updated == 0 {
+                    return Ok(json!({"error": "Memory not found"}));
+                }
+
+                Ok(json!({
+                    "id": id,
+                    "lifecycle_state": state,
+                    "updated": true
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_lifecycle_config(&self, params: Value) -> Value {
+        // For now, just return the defaults and any passed values
+        // A more complete implementation would store these in metadata
+        let stale_days = params.get("stale_days").and_then(|v| v.as_i64());
+        let archive_days = params.get("archive_days").and_then(|v| v.as_i64());
+        let min_importance = params.get("min_importance").and_then(|v| v.as_f64());
+        let min_access_count = params.get("min_access_count").and_then(|v| v.as_i64());
+
+        json!({
+            "stale_days": stale_days.unwrap_or(30),
+            "archive_days": archive_days.unwrap_or(90),
+            "min_importance": min_importance.unwrap_or(0.5),
+            "min_access_count": min_access_count.unwrap_or(5),
+            "lifecycle_enabled": std::env::var("ENGRAM_LIFECYCLE_ENABLED")
+                .map(|v| v != "false" && v != "0")
+                .unwrap_or(true),
+            "note": "Pass values to update configuration"
+        })
     }
 
     // =========================================================================
@@ -3042,7 +4744,9 @@ impl EngramHandler {
             importance: None,
             scope: None,
             ttl_seconds: None,
-        };
+                event_time: None,
+                trigger_pattern: None,
+            };
 
         match self
             .storage
@@ -3144,11 +4848,26 @@ fn main() -> Result<()> {
     }
 
     // Create embedder
+    // Determine dimensions: use explicit config, or default based on model
+    let dimensions = args.openai_embedding_dimensions.unwrap_or_else(|| {
+        if args.embedding_model == "openai" {
+            1536 // Default for text-embedding-3-small
+        } else {
+            384 // Default for TF-IDF
+        }
+    });
+
     let embedding_config = EmbeddingConfig {
         model: args.embedding_model,
         api_key: args.openai_key,
+        base_url: if args.openai_base_url == "https://api.openai.com/v1" {
+            None // Use default
+        } else {
+            Some(args.openai_base_url)
+        },
+        embedding_model: Some(args.openai_embedding_model),
         model_path: None,
-        dimensions: 384,
+        dimensions,
         batch_size: 100,
     };
     let embedder = create_embedder(&embedding_config)?;
@@ -3227,7 +4946,8 @@ mod tests {
         let storage = Storage::open_in_memory().unwrap();
         let embedder = create_embedder(&EmbeddingConfig::default()).unwrap();
         EngramHandler {
-            storage,
+            storage: storage.clone(),
+            search_cache: Arc::new(engram::search::result_cache::SearchResultCache::new(Default::default())),
             embedder,
             fuzzy_engine: Arc::new(Mutex::new(FuzzyEngine::new())),
             search_config: SearchConfig::default(),
