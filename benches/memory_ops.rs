@@ -29,6 +29,10 @@ fn bench_memory_create(c: &mut Criterion) {
                         dedup_threshold: None,
                         workspace: Some("default".to_string()),
                         tier: MemoryTier::Permanent,
+                        event_time: None,
+                        event_duration_seconds: None,
+                        trigger_pattern: None,
+                        summary_of_id: None,
                     };
                     create_memory(conn, &input)
                 })
@@ -60,6 +64,10 @@ fn bench_memory_get(c: &mut Criterion) {
                     dedup_threshold: None,
                     workspace: Some("default".to_string()),
                     tier: MemoryTier::Permanent,
+                    event_time: None,
+                    event_duration_seconds: None,
+                    trigger_pattern: None,
+                    summary_of_id: None,
                 };
                 create_memory(conn, &input)
             })
@@ -111,6 +119,10 @@ fn bench_memory_list(c: &mut Criterion) {
                     dedup_threshold: None,
                     workspace: Some("default".to_string()),
                     tier: MemoryTier::Permanent,
+                    event_time: None,
+                    event_duration_seconds: None,
+                    trigger_pattern: None,
+                    summary_of_id: None,
                 };
                 create_memory(conn, &input)
             })
@@ -176,6 +188,10 @@ fn bench_crossref_operations(c: &mut Criterion) {
                     dedup_threshold: None,
                     workspace: Some("default".to_string()),
                     tier: MemoryTier::Permanent,
+                    event_time: None,
+                    event_duration_seconds: None,
+                    trigger_pattern: None,
+                    summary_of_id: None,
                 };
                 create_memory(conn, &input)
             })
@@ -259,6 +275,10 @@ fn bench_stats(c: &mut Criterion) {
                     dedup_threshold: None,
                     workspace: Some("default".to_string()),
                     tier: MemoryTier::Permanent,
+                    event_time: None,
+                    event_duration_seconds: None,
+                    trigger_pattern: None,
+                    summary_of_id: None,
                 };
                 create_memory(conn, &input)
             })

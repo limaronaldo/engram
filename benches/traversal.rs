@@ -23,6 +23,10 @@ fn create_test_memory(storage: &Storage, i: usize) -> MemoryId {
                 dedup_threshold: None,
                 workspace: Some("default".to_string()),
                 tier: MemoryTier::Permanent,
+                event_time: None,
+                event_duration_seconds: None,
+                trigger_pattern: None,
+                summary_of_id: None,
             };
             create_memory(conn, &input)
         })

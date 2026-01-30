@@ -45,6 +45,10 @@ fn setup_storage_with_data(count: usize) -> Storage {
                     dedup_threshold: None,
                     workspace: Some("default".to_string()),
                     tier: MemoryTier::Permanent,
+                    event_time: None,
+                    event_duration_seconds: None,
+                    trigger_pattern: None,
+                    summary_of_id: None,
                 };
                 create_memory(conn, &input)
             })
