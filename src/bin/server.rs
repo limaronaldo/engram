@@ -314,6 +314,24 @@ impl EngramHandler {
             // Auto-tagging tools
             "memory_suggest_tags" => self.tool_memory_suggest_tags(params),
             "memory_auto_tag" => self.tool_memory_auto_tag(params),
+            // Phase 8: Salience & Sessions (ENG-66 to ENG-77)
+            "salience_get" => self.tool_salience_get(params),
+            "salience_set_importance" => self.tool_salience_set_importance(params),
+            "salience_boost" => self.tool_salience_boost(params),
+            "salience_demote" => self.tool_salience_demote(params),
+            "salience_decay_run" => self.tool_salience_decay_run(params),
+            "salience_stats" => self.tool_salience_stats(params),
+            "salience_history" => self.tool_salience_history(params),
+            "salience_top" => self.tool_salience_top(params),
+            "session_context_create" => self.tool_session_context_create(params),
+            "session_context_add_memory" => self.tool_session_context_add_memory(params),
+            "session_context_remove_memory" => self.tool_session_context_remove_memory(params),
+            "session_context_get" => self.tool_session_context_get(params),
+            "session_context_list" => self.tool_session_context_list(params),
+            "session_context_search" => self.tool_session_context_search(params),
+            "session_context_update_summary" => self.tool_session_context_update_summary(params),
+            "session_context_end" => self.tool_session_context_end(params),
+            "session_context_export" => self.tool_session_context_export(params),
             _ => json!({"error": format!("Unknown tool: {}", name)}),
         }
     }
@@ -4797,6 +4815,681 @@ impl EngramHandler {
             }
             Err(e) => json!({"error": e.to_string()}),
         }
+    }
+
+    // Phase 8: Salience Tools (ENG-66 to ENG-68)
+    fn tool_salience_get(&self, params: Value) -> Value {
+        use engram::intelligence::{get_memory_salience, SalienceConfig};
+
+        let id = match params.get("id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "id is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let config = SalienceConfig::default();
+                let score = get_memory_salience(conn, id, &config)?;
+                Ok(json!(score))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_salience_set_importance(&self, params: Value) -> Value {
+        use engram::intelligence::set_memory_importance;
+
+        let id = match params.get("id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "id is required"}),
+        };
+
+        let importance = match params.get("importance").and_then(|v| v.as_f64()) {
+            Some(imp) => imp as f32,
+            None => return json!({"error": "importance is required"}),
+        };
+
+        self.storage
+            .with_transaction(|conn| {
+                set_memory_importance(conn, id, importance)?;
+                Ok(json!({"id": id, "importance": importance, "updated": true}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_salience_boost(&self, params: Value) -> Value {
+        use engram::intelligence::boost_memory_salience;
+
+        let id = match params.get("id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "id is required"}),
+        };
+
+        let boost_amount = params
+            .get("boost_amount")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.2) as f32;
+
+        self.storage
+            .with_transaction(|conn| {
+                let entry = boost_memory_salience(conn, id, boost_amount)?;
+                Ok(json!(entry))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_salience_demote(&self, params: Value) -> Value {
+        use engram::intelligence::demote_memory_salience;
+
+        let id = match params.get("id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "id is required"}),
+        };
+
+        let demote_amount = params
+            .get("demote_amount")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.2) as f32;
+
+        self.storage
+            .with_transaction(|conn| {
+                let entry = demote_memory_salience(conn, id, demote_amount)?;
+                Ok(json!(entry))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_salience_decay_run(&self, params: Value) -> Value {
+        use engram::intelligence::{run_salience_decay, SalienceConfig};
+
+        let record_history = !params
+            .get("dry_run")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let config = SalienceConfig::default();
+
+        self.storage
+            .with_transaction(|conn| {
+                let result = run_salience_decay(conn, &config, record_history)?;
+                Ok(json!(result))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_salience_stats(&self, _params: Value) -> Value {
+        use engram::intelligence::{get_salience_stats, SalienceConfig};
+
+        self.storage
+            .with_connection(|conn| {
+                let config = SalienceConfig::default();
+                let stats = get_salience_stats(conn, &config)?;
+                Ok(json!(stats))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_salience_history(&self, params: Value) -> Value {
+        use engram::intelligence::get_salience_history;
+
+        let id = match params.get("id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "id is required"}),
+        };
+
+        let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(50);
+
+        self.storage
+            .with_connection(|conn| {
+                let history = get_salience_history(conn, id, limit)?;
+                Ok(json!(history))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_salience_top(&self, params: Value) -> Value {
+        use engram::intelligence::{SalienceCalculator, SalienceConfig};
+
+        let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(20) as usize;
+
+        let workspace = params
+            .get("workspace")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let min_score = params
+            .get("min_score")
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32);
+
+        let memory_type = params
+            .get("memory_type")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<MemoryType>().ok());
+
+        self.storage
+            .with_connection(|conn| {
+                let config = SalienceConfig::default();
+                let calculator = SalienceCalculator::new(config);
+
+                // Get memories with filters
+                let options = ListOptions {
+                    limit: Some(limit as i64 * 2), // Get extra for filtering
+                    workspace: workspace.clone(),
+                    memory_type,
+                    sort_by: Some(SortField::Importance),
+                    sort_order: Some(SortOrder::Desc),
+                    ..Default::default()
+                };
+
+                let memories = list_memories(conn, &options)?;
+
+                // Calculate salience and sort
+                let mut scored: Vec<_> = memories
+                    .into_iter()
+                    .map(|m| {
+                        let score = calculator.calculate(&m, 0.0);
+                        (m, score)
+                    })
+                    .collect();
+
+                scored.sort_by(|a, b| {
+                    b.1.score
+                        .partial_cmp(&a.1.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+
+                // Apply min_score filter and limit
+                let results: Vec<_> = scored
+                    .into_iter()
+                    .filter(|(_, s)| min_score.map_or(true, |min| s.score >= min))
+                    .take(limit)
+                    .map(|(m, s)| {
+                        json!({
+                            "memory": m,
+                            "salience": s
+                        })
+                    })
+                    .collect();
+
+                Ok(json!(results))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    // Phase 8: Session Context Tools (ENG-70, ENG-71)
+    fn tool_session_context_create(&self, params: Value) -> Value {
+        use engram::intelligence::{create_session, CreateSessionInput};
+
+        let title = params
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let initial_context = params
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+
+        let metadata = params
+            .get("metadata")
+            .and_then(|v| v.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect::<std::collections::HashMap<_, _>>()
+            })
+            .unwrap_or_default();
+
+        let input = CreateSessionInput {
+            session_id: None,
+            title,
+            initial_context,
+            metadata,
+        };
+
+        self.storage
+            .with_transaction(|conn| {
+                let session = create_session(conn, input)?;
+                Ok(json!(session))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_session_context_add_memory(&self, params: Value) -> Value {
+        use engram::intelligence::{add_memory_to_session, ContextRole};
+
+        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+            Some(id) => id.to_string(),
+            None => return json!({"error": "session_id is required"}),
+        };
+
+        let memory_id = match params.get("memory_id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "memory_id is required"}),
+        };
+
+        let relevance_score = params
+            .get("relevance_score")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(1.0) as f32;
+
+        let context_role = params
+            .get("context_role")
+            .and_then(|v| v.as_str())
+            .map(|s| match s.to_lowercase().as_str() {
+                "created" => ContextRole::Created,
+                "updated" => ContextRole::Updated,
+                "pinned" => ContextRole::Pinned,
+                _ => ContextRole::Referenced,
+            })
+            .unwrap_or(ContextRole::Referenced);
+
+        self.storage
+            .with_transaction(|conn| {
+                let link = add_memory_to_session(
+                    conn,
+                    &session_id,
+                    memory_id,
+                    relevance_score,
+                    context_role,
+                )?;
+                Ok(json!(link))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_session_context_remove_memory(&self, params: Value) -> Value {
+        use engram::intelligence::remove_memory_from_session;
+
+        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+            Some(id) => id.to_string(),
+            None => return json!({"error": "session_id is required"}),
+        };
+
+        let memory_id = match params.get("memory_id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "memory_id is required"}),
+        };
+
+        self.storage
+            .with_transaction(|conn| {
+                remove_memory_from_session(conn, &session_id, memory_id)?;
+                Ok(json!({"session_id": session_id, "memory_id": memory_id, "removed": true}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_session_context_get(&self, params: Value) -> Value {
+        use engram::intelligence::get_session_context;
+
+        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+            Some(id) => id.to_string(),
+            None => return json!({"error": "session_id is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                let context = get_session_context(conn, &session_id)?;
+                Ok(json!(context))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_session_context_list(&self, params: Value) -> Value {
+        use engram::intelligence::list_sessions_extended;
+
+        let active_only = params
+            .get("active_only")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(50);
+        let offset = params.get("offset").and_then(|v| v.as_i64()).unwrap_or(0);
+
+        self.storage
+            .with_connection(|conn| {
+                let sessions = list_sessions_extended(conn, active_only, limit, offset)?;
+                Ok(json!(sessions))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_session_context_search(&self, params: Value) -> Value {
+        use engram::intelligence::search_session_memories;
+
+        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+            Some(id) => id.to_string(),
+            None => return json!({"error": "session_id is required"}),
+        };
+
+        let query = match params.get("query").and_then(|v| v.as_str()) {
+            Some(q) => q.to_string(),
+            None => return json!({"error": "query is required"}),
+        };
+
+        let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(20);
+
+        self.storage
+            .with_connection(|conn| {
+                let results = search_session_memories(conn, &session_id, &query, limit)?;
+                Ok(json!(results))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_session_context_update_summary(&self, params: Value) -> Value {
+        use engram::intelligence::update_session_summary;
+
+        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+            Some(id) => id.to_string(),
+            None => return json!({"error": "session_id is required"}),
+        };
+
+        let summary = match params.get("summary").and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => return json!({"error": "summary is required"}),
+        };
+
+        self.storage
+            .with_transaction(|conn| {
+                update_session_summary(conn, &session_id, &summary)?;
+                Ok(json!({"session_id": session_id, "summary": summary, "updated": true}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_session_context_end(&self, params: Value) -> Value {
+        use engram::intelligence::end_session;
+
+        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+            Some(id) => id.to_string(),
+            None => return json!({"error": "session_id is required"}),
+        };
+
+        self.storage
+            .with_transaction(|conn| {
+                end_session(conn, &session_id)?;
+                Ok(json!({"session_id": session_id, "ended": true}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_session_context_export(&self, params: Value) -> Value {
+        use engram::intelligence::export_session;
+
+        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+            Some(id) => id.to_string(),
+            None => return json!({"error": "session_id is required"}),
+        };
+
+        let format = params
+            .get("format")
+            .and_then(|v| v.as_str())
+            .unwrap_or("json");
+
+        self.storage
+            .with_connection(|conn| {
+                let export = export_session(conn, &session_id)?;
+
+                match format {
+                    "markdown" => {
+                        // Convert to markdown format
+                        let mut md = String::new();
+                        let title = export
+                            .session
+                            .title
+                            .as_deref()
+                            .unwrap_or("Untitled Session");
+                        md.push_str(&format!("# Session: {}\n\n", title));
+                        if let Some(summary) = &export.session.summary {
+                            md.push_str(&format!("## Summary\n\n{}\n\n", summary));
+                        }
+                        md.push_str(&format!(
+                            "**Created:** {}\n",
+                            export.session.created_at.format("%Y-%m-%d %H:%M:%S")
+                        ));
+                        if let Some(ended) = export.session.ended_at {
+                            md.push_str(&format!(
+                                "**Ended:** {}\n",
+                                ended.format("%Y-%m-%d %H:%M:%S")
+                            ));
+                        }
+                        md.push_str(&format!("\n## Memories ({})\n\n", export.memories.len()));
+
+                        for mem in &export.memories {
+                            md.push_str(&format!(
+                                "### Memory #{} ({})\n\n",
+                                mem.id,
+                                mem.memory_type.as_str()
+                            ));
+                            md.push_str(&format!("{}\n\n", mem.content));
+                            if !mem.tags.is_empty() {
+                                md.push_str(&format!("Tags: {}\n\n", mem.tags.join(", ")));
+                            }
+                        }
+
+                        Ok(json!({"format": "markdown", "content": md}))
+                    }
+                    _ => Ok(json!(export)),
+                }
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_quality_score(&self, params: Value) -> Value {
+        use engram::intelligence::{calculate_quality_score, ContextQualityConfig};
+
+        let id = match params.get("id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "id is required"}),
+        };
+
+        let config = ContextQualityConfig::default();
+
+        self.storage
+            .with_transaction(|conn| {
+                let score = calculate_quality_score(conn, id, &config)?;
+                Ok(json!(score))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_quality_report(&self, params: Value) -> Value {
+        use engram::intelligence::generate_quality_report;
+
+        let workspace = params.get("workspace").and_then(|v| v.as_str());
+
+        self.storage
+            .with_connection(|conn| {
+                let report = generate_quality_report(conn, workspace)?;
+                Ok(json!(report))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_quality_find_duplicates(&self, params: Value) -> Value {
+        use engram::intelligence::find_near_duplicates;
+
+        let threshold = params
+            .get("threshold")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.85) as f32;
+
+        let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(100);
+
+        self.storage
+            .with_transaction(|conn| {
+                let duplicates = find_near_duplicates(conn, threshold, limit)?;
+                Ok(json!({
+                    "found": duplicates.len(),
+                    "duplicates": duplicates
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_quality_get_duplicates(&self, params: Value) -> Value {
+        use engram::intelligence::get_pending_duplicates;
+
+        let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(50);
+
+        self.storage
+            .with_connection(|conn| {
+                let duplicates = get_pending_duplicates(conn, limit)?;
+                Ok(json!(duplicates))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_quality_find_conflicts(&self, params: Value) -> Value {
+        use engram::intelligence::{detect_conflicts, ContextQualityConfig};
+
+        let id = match params.get("id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "id is required"}),
+        };
+
+        let config = ContextQualityConfig::default();
+
+        self.storage
+            .with_transaction(|conn| {
+                let conflicts = detect_conflicts(conn, id, &config)?;
+                Ok(json!({
+                    "found": conflicts.len(),
+                    "conflicts": conflicts
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_quality_get_conflicts(&self, params: Value) -> Value {
+        use engram::intelligence::get_unresolved_conflicts;
+
+        let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(50);
+
+        self.storage
+            .with_connection(|conn| {
+                let conflicts = get_unresolved_conflicts(conn, limit)?;
+                Ok(json!(conflicts))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_quality_resolve_conflict(&self, params: Value) -> Value {
+        use engram::intelligence::{resolve_conflict, ResolutionType};
+
+        let conflict_id = match params.get("conflict_id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "conflict_id is required"}),
+        };
+
+        let resolution_str = match params.get("resolution").and_then(|v| v.as_str()) {
+            Some(r) => r,
+            None => return json!({"error": "resolution is required"}),
+        };
+
+        let resolution_type = match resolution_str {
+            "keep_a" => ResolutionType::KeepA,
+            "keep_b" => ResolutionType::KeepB,
+            "merge" => ResolutionType::Merge,
+            "keep_both" => ResolutionType::KeepBoth,
+            "delete_both" => ResolutionType::DeleteBoth,
+            "false_positive" => ResolutionType::FalsePositive,
+            _ => return json!({"error": format!("Invalid resolution type: {}", resolution_str)}),
+        };
+
+        let notes = params.get("notes").and_then(|v| v.as_str());
+
+        self.storage
+            .with_transaction(|conn| {
+                resolve_conflict(conn, conflict_id, resolution_type, notes)?;
+                Ok(json!({
+                    "conflict_id": conflict_id,
+                    "resolution": resolution_str,
+                    "resolved": true
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_quality_source_trust(&self, params: Value) -> Value {
+        use engram::intelligence::{get_source_trust, update_source_trust};
+
+        let source_type = match params.get("source_type").and_then(|v| v.as_str()) {
+            Some(st) => st,
+            None => return json!({"error": "source_type is required"}),
+        };
+
+        let source_identifier = params.get("source_identifier").and_then(|v| v.as_str());
+
+        // If trust_score is provided, update
+        if let Some(trust_score) = params.get("trust_score").and_then(|v| v.as_f64()) {
+            let notes = params.get("notes").and_then(|v| v.as_str());
+
+            return self
+                .storage
+                .with_transaction(|conn| {
+                    update_source_trust(
+                        conn,
+                        source_type,
+                        source_identifier,
+                        trust_score as f32,
+                        notes,
+                    )?;
+                    Ok(json!({
+                        "source_type": source_type,
+                        "source_identifier": source_identifier,
+                        "trust_score": trust_score,
+                        "updated": true
+                    }))
+                })
+                .unwrap_or_else(|e| json!({"error": e.to_string()}));
+        }
+
+        // Otherwise, get current score
+        self.storage
+            .with_connection(
+                |conn| match get_source_trust(conn, source_type, source_identifier) {
+                    Ok(score) => Ok(json!(score)),
+                    Err(_) => Ok(json!({
+                        "source_type": source_type,
+                        "source_identifier": source_identifier,
+                        "trust_score": 0.7,
+                        "notes": "Default trust score"
+                    })),
+                },
+            )
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_quality_improve(&self, params: Value) -> Value {
+        use engram::intelligence::{calculate_quality_score, ContextQualityConfig};
+
+        let id = match params.get("id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "id is required"}),
+        };
+
+        let config = ContextQualityConfig::default();
+
+        self.storage
+            .with_transaction(|conn| {
+                let score = calculate_quality_score(conn, id, &config)?;
+                Ok(json!({
+                    "memory_id": id,
+                    "current_quality": score.overall,
+                    "grade": score.grade.to_string(),
+                    "suggestions": score.suggestions,
+                    "component_scores": {
+                        "clarity": score.clarity,
+                        "completeness": score.completeness,
+                        "freshness": score.freshness,
+                        "consistency": score.consistency,
+                        "source_trust": score.source_trust
+                    }
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }
 }
 

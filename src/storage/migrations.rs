@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 13;
+pub const SCHEMA_VERSION: i32 = 14;
 
 /// Run all migrations
 pub fn run_migrations(conn: &Connection) -> Result<()> {
@@ -74,9 +74,14 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         migrate_v12(conn)?;
     }
 
-    if current_version < SCHEMA_VERSION {
+    if current_version < 13 {
         migrate_v13(conn)?;
     }
+
+    if current_version < 14 {
+        migrate_v14(conn)?;
+    }
+
 
     Ok(())
 }
@@ -805,6 +810,83 @@ fn migrate_v13(conn: &Connection) -> Result<()> {
     )?;
 
     tracing::info!("Migration v13 complete: lifecycle state column added");
+
+    Ok(())
+}
+
+/// Migration v14: Salience & Session Memory (Phase 8 - ENG-66 to ENG-77)
+///
+/// Adds:
+/// - salience_history: Track salience scores over time for trend analysis
+/// - session_memories: Link memories to sessions for context tracking
+/// - Indexes for efficient salience-based queries
+///
+/// This enables:
+/// - Salience scoring algorithm (ENG-66)
+/// - Priority queue implementation (ENG-67)
+/// - Temporal decay functions (ENG-68)
+/// - Session context tracking (ENG-70)
+/// - Session-scoped search (ENG-71)
+fn migrate_v14(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v14: Adding salience history and session memory tables...");
+
+    conn.execute_batch(
+        r#"
+        -- Salience history for trend analysis
+        -- Records salience scores periodically for each memory
+        CREATE TABLE IF NOT EXISTS salience_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+            salience_score REAL NOT NULL,
+            recency_score REAL,
+            frequency_score REAL,
+            importance_score REAL,
+            feedback_score REAL,
+            recorded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Index for querying salience history by memory
+        CREATE INDEX IF NOT EXISTS idx_salience_history_memory
+            ON salience_history(memory_id, recorded_at DESC);
+
+        -- Index for time-based salience queries
+        CREATE INDEX IF NOT EXISTS idx_salience_history_time
+            ON salience_history(recorded_at DESC);
+
+        -- Session-memory linking table
+        -- Links memories to sessions for context tracking
+        CREATE TABLE IF NOT EXISTS session_memories (
+            session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+            memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+            added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            relevance_score REAL DEFAULT 1.0,
+            context_role TEXT DEFAULT 'referenced',
+            PRIMARY KEY (session_id, memory_id)
+        );
+
+        -- Index for finding memories by session
+        CREATE INDEX IF NOT EXISTS idx_session_memories_session
+            ON session_memories(session_id);
+
+        -- Index for finding sessions by memory
+        CREATE INDEX IF NOT EXISTS idx_session_memories_memory
+            ON session_memories(memory_id);
+
+        -- Add summary column to sessions for session summarization
+        ALTER TABLE sessions ADD COLUMN summary TEXT;
+
+        -- Add context column to sessions for active context tracking
+        ALTER TABLE sessions ADD COLUMN context TEXT;
+
+        -- Add ended_at column to sessions for lifecycle tracking
+        ALTER TABLE sessions ADD COLUMN ended_at TEXT;
+
+        -- Record migration
+        INSERT INTO schema_version (version) VALUES (14);
+        "#,
+    )?;
+
+    tracing::info!("Migration v14 complete: salience history and session memory tables added");
 
     Ok(())
 }

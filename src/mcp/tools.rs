@@ -1606,6 +1606,219 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             "required": ["id"]
         }"#,
     ),
+    // Phase 8: Salience & Sessions (ENG-66 to ENG-77)
+    (
+        "salience_get",
+        "Get the salience score for a memory. Returns recency, frequency, importance, and feedback components with the combined score and lifecycle state.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID to get salience for"},
+                "feedback_signal": {"type": "number", "minimum": -1, "maximum": 1, "default": 0, "description": "Optional feedback signal (-1 to 1) to include in calculation"}
+            },
+            "required": ["id"]
+        }"#,
+    ),
+    (
+        "salience_set_importance",
+        "Set the importance score for a memory. This is the static importance component of salience.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID"},
+                "importance": {"type": "number", "minimum": 0, "maximum": 1, "description": "Importance score (0-1)"}
+            },
+            "required": ["id", "importance"]
+        }"#,
+    ),
+    (
+        "salience_boost",
+        "Boost a memory's salience score temporarily or permanently. Useful for marking memories as contextually relevant.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID to boost"},
+                "boost_amount": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.2, "description": "Amount to boost (0-1)"},
+                "reason": {"type": "string", "description": "Optional reason for boosting"}
+            },
+            "required": ["id"]
+        }"#,
+    ),
+    (
+        "salience_demote",
+        "Demote a memory's salience score. Useful for marking memories as less relevant.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID to demote"},
+                "demote_amount": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.2, "description": "Amount to demote (0-1)"},
+                "reason": {"type": "string", "description": "Optional reason for demoting"}
+            },
+            "required": ["id"]
+        }"#,
+    ),
+    (
+        "salience_decay_run",
+        "Run temporal decay on all memories. Updates lifecycle states (Active → Stale → Archived) based on salience scores.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "dry_run": {"type": "boolean", "default": false, "description": "If true, only report what would change without applying"},
+                "workspace": {"type": "string", "description": "Limit to specific workspace"},
+                "stale_threshold": {"type": "number", "minimum": 0, "maximum": 1, "description": "Override stale threshold (default: 0.3)"},
+                "archive_threshold": {"type": "number", "minimum": 0, "maximum": 1, "description": "Override archive threshold (default: 0.1)"}
+            }
+        }"#,
+    ),
+    (
+        "salience_stats",
+        "Get salience statistics across all memories. Returns distribution, percentiles, and state counts.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Limit to specific workspace"}
+            }
+        }"#,
+    ),
+    (
+        "salience_history",
+        "Get salience score history for a memory. Shows how salience has changed over time.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID"},
+                "limit": {"type": "integer", "default": 50, "description": "Maximum history entries to return"}
+            },
+            "required": ["id"]
+        }"#,
+    ),
+    (
+        "salience_top",
+        "Get top memories by salience score. Useful for context injection.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "default": 20, "description": "Maximum memories to return"},
+                "workspace": {"type": "string", "description": "Limit to specific workspace"},
+                "min_score": {"type": "number", "minimum": 0, "maximum": 1, "description": "Minimum salience score"},
+                "memory_type": {"type": "string", "description": "Filter by memory type"}
+            }
+        }"#,
+    ),
+    // Session Context Tools (ENG-70, ENG-71)
+    (
+        "session_context_create",
+        "Create a new session context for tracking related memories during a conversation or task.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Session name"},
+                "description": {"type": "string", "description": "Session description"},
+                "workspace": {"type": "string", "description": "Workspace for the session"},
+                "metadata": {"type": "object", "description": "Additional session metadata"}
+            },
+            "required": ["name"]
+        }"#,
+    ),
+    (
+        "session_context_add_memory",
+        "Add a memory to a session context with relevance score and role.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID"},
+                "memory_id": {"type": "integer", "description": "Memory ID to add"},
+                "relevance_score": {"type": "number", "minimum": 0, "maximum": 1, "default": 1.0, "description": "How relevant this memory is to the session"},
+                "context_role": {"type": "string", "enum": ["referenced", "created", "updated", "pinned"], "default": "referenced", "description": "Role of the memory in the session"}
+            },
+            "required": ["session_id", "memory_id"]
+        }"#,
+    ),
+    (
+        "session_context_remove_memory",
+        "Remove a memory from a session context.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID"},
+                "memory_id": {"type": "integer", "description": "Memory ID to remove"}
+            },
+            "required": ["session_id", "memory_id"]
+        }"#,
+    ),
+    (
+        "session_context_get",
+        "Get a session context with its linked memories.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID"}
+            },
+            "required": ["session_id"]
+        }"#,
+    ),
+    (
+        "session_context_list",
+        "List all session contexts with optional filtering.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Filter by workspace"},
+                "active_only": {"type": "boolean", "default": false, "description": "Only return active sessions"},
+                "limit": {"type": "integer", "default": 50, "description": "Maximum sessions to return"}
+            }
+        }"#,
+    ),
+    (
+        "session_context_search",
+        "Search memories within a specific session context.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID to search within"},
+                "query": {"type": "string", "description": "Search query"},
+                "limit": {"type": "integer", "default": 20, "description": "Maximum results"}
+            },
+            "required": ["session_id", "query"]
+        }"#,
+    ),
+    (
+        "session_context_update_summary",
+        "Update the summary of a session context.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID"},
+                "summary": {"type": "string", "description": "New session summary"}
+            },
+            "required": ["session_id", "summary"]
+        }"#,
+    ),
+    (
+        "session_context_end",
+        "End a session context, marking it as inactive.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID to end"},
+                "summary": {"type": "string", "description": "Optional final summary"}
+            },
+            "required": ["session_id"]
+        }"#,
+    ),
+    (
+        "session_context_export",
+        "Export a session context with all its memories for archival or sharing.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session ID to export"},
+                "include_content": {"type": "boolean", "default": true, "description": "Include full memory content"},
+                "format": {"type": "string", "enum": ["json", "markdown"], "default": "json", "description": "Export format"}
+            },
+            "required": ["session_id"]
+        }"#,
+    ),
 ];
 
 /// Get all tool definitions as ToolDefinition structs
