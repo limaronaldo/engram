@@ -181,7 +181,9 @@ fn build_scope_filter(scope: &MemoryScope) -> Vec<String> {
     parts
 }
 
-fn build_filter_from_search_options(options: &SearchOptions) -> Result<Option<String>, EngramError> {
+fn build_filter_from_search_options(
+    options: &SearchOptions,
+) -> Result<Option<String>, EngramError> {
     if options.filter.is_some() {
         return Err(EngramError::InvalidInput(
             "Advanced filter expressions are not supported by the Meilisearch backend.".to_string(),
@@ -204,10 +206,7 @@ fn build_filter_from_search_options(options: &SearchOptions) -> Result<Option<St
     }
 
     if let Some(tier) = &options.tier {
-        clauses.push(format!(
-            "tier = \"{}\"",
-            escape_filter_value(tier.as_str())
-        ));
+        clauses.push(format!("tier = \"{}\"", escape_filter_value(tier.as_str())));
     }
 
     if !options.include_archived {
@@ -257,10 +256,7 @@ fn build_filter_from_list_options(options: &ListOptions) -> Result<Option<String
     }
 
     if let Some(tier) = &options.tier {
-        clauses.push(format!(
-            "tier = \"{}\"",
-            escape_filter_value(tier.as_str())
-        ));
+        clauses.push(format!("tier = \"{}\"", escape_filter_value(tier.as_str())));
     }
 
     if !options.include_archived {
@@ -374,9 +370,7 @@ fn build_memory_from_input(
 pub struct MeilisearchBackend {
     client: Client,
     rt: Arc<Runtime>,
-    #[allow(dead_code)] // Keep these for future use or debugging
     url: String,
-    #[allow(dead_code)]
     api_key: Option<String>,
 }
 
@@ -483,6 +477,63 @@ impl MeilisearchBackend {
                 .await
                 .map_err(|e| EngramError::Storage(e.to_string()))?;
             Ok(())
+        })
+    }
+
+    /// Get the configured Meilisearch URL
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    /// Whether an API key is configured
+    pub fn has_api_key(&self) -> bool {
+        self.api_key.is_some()
+    }
+
+    /// Get index statistics from Meilisearch
+    pub fn get_index_stats(&self) -> Result<serde_json::Value, EngramError> {
+        self.rt.block_on(async {
+            let stats = self
+                .client
+                .index(MEMORIES_INDEX)
+                .get_stats()
+                .await
+                .map_err(|e| EngramError::Storage(e.to_string()))?;
+            Ok(serde_json::json!({
+                "number_of_documents": stats.number_of_documents,
+                "is_indexing": stats.is_indexing,
+            }))
+        })
+    }
+
+    /// Get facet distribution for a field (used for tag/workspace listing)
+    fn get_facet_distribution(
+        &self,
+        field: &str,
+        filter: Option<&str>,
+    ) -> Result<HashMap<String, usize>, EngramError> {
+        self.rt.block_on(async {
+            let index = self.client.index(MEMORIES_INDEX);
+            let mut search = index.search();
+            search.with_query("");
+            search.with_limit(0);
+            let facet_fields = [field];
+            search.with_facets(meilisearch_sdk::search::Selectors::Some(&facet_fields));
+            if let Some(f) = filter {
+                search.with_filter(f);
+            }
+
+            let results: SearchResults<MeilisearchMemory> = search
+                .execute()
+                .await
+                .map_err(|e| EngramError::Storage(e.to_string()))?;
+
+            let distribution = results
+                .facet_distribution
+                .and_then(|fd| fd.get(field).cloned())
+                .unwrap_or_default();
+
+            Ok(distribution)
         })
     }
 }
@@ -683,7 +734,6 @@ impl StorageBackend for MeilisearchBackend {
             let mut search = index.search();
             search.with_query("");
             search.with_limit(options.limit.unwrap_or(50) as usize);
-            search.with_offset(options.offset.unwrap_or(0) as usize);
             search.with_sort(&sort_refs);
             if let Some(ref filter) = filter {
                 search.with_filter(filter);
@@ -725,7 +775,6 @@ impl StorageBackend for MeilisearchBackend {
 
             search.with_query(query);
             search.with_limit(options.limit.unwrap_or(50) as usize);
-            search.with_offset(options.offset.unwrap_or(0) as usize);
 
             let filter = build_filter_from_search_options(&options)?;
             if let Some(ref filter) = filter {
@@ -785,9 +834,13 @@ impl StorageBackend for MeilisearchBackend {
     // --- Tag Operations ---
 
     fn list_tags(&self) -> Result<Vec<(String, i64)>, EngramError> {
-        Err(EngramError::Storage(
-            "Tag listing not supported yet".to_string(),
-        ))
+        let distribution = self.get_facet_distribution("tags", None)?;
+        let mut tags: Vec<(String, i64)> = distribution
+            .into_iter()
+            .map(|(tag, count)| (tag, count as i64))
+            .collect();
+        tags.sort_by(|a, b| b.1.cmp(&a.1));
+        Ok(tags)
     }
 
     fn get_memories_by_tag(
@@ -806,23 +859,36 @@ impl StorageBackend for MeilisearchBackend {
     // --- Workspace Operations ---
 
     fn list_workspaces(&self) -> Result<Vec<(String, i64)>, EngramError> {
-        Err(EngramError::Storage(
-            "Workspace listing not supported".to_string(),
-        ))
+        let distribution = self.get_facet_distribution("workspace", None)?;
+        let mut workspaces: Vec<(String, i64)> = distribution
+            .into_iter()
+            .map(|(ws, count)| (ws, count as i64))
+            .collect();
+        workspaces.sort_by(|a, b| b.1.cmp(&a.1));
+        Ok(workspaces)
     }
 
-    fn get_workspace_stats(&self, _workspace: &str) -> Result<HashMap<String, i64>, EngramError> {
-        Ok(HashMap::new())
+    fn get_workspace_stats(&self, workspace: &str) -> Result<HashMap<String, i64>, EngramError> {
+        let filter = format!("workspace = \"{}\"", escape_filter_value(workspace));
+        let type_dist = self.get_facet_distribution("memory_type", Some(&filter))?;
+        let mut stats: HashMap<String, i64> =
+            type_dist.into_iter().map(|(k, v)| (k, v as i64)).collect();
+        let total: i64 = stats.values().sum();
+        stats.insert("total".to_string(), total);
+        Ok(stats)
     }
 
-    fn move_to_workspace(
-        &self,
-        _ids: Vec<MemoryId>,
-        _workspace: &str,
-    ) -> Result<usize, EngramError> {
-        Err(EngramError::Storage(
-            "Move workspace not supported".to_string(),
-        ))
+    fn move_to_workspace(&self, ids: Vec<MemoryId>, workspace: &str) -> Result<usize, EngramError> {
+        let mut moved = 0;
+        for id in &ids {
+            if let Some(mut memory) = self.get_memory(*id)? {
+                memory.workspace = workspace.to_string();
+                memory.updated_at = chrono::Utc::now();
+                self.index_memory(&memory)?;
+                moved += 1;
+            }
+        }
+        Ok(moved)
     }
 
     // --- Maintenance & Metadata ---
@@ -865,5 +931,355 @@ impl StorageBackend for MeilisearchBackend {
 
     fn schema_version(&self) -> Result<i32, EngramError> {
         Ok(1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::MemoryType;
+
+    // --- escape_filter_value ---
+
+    #[test]
+    fn test_escape_filter_value_plain() {
+        assert_eq!(escape_filter_value("hello"), "hello");
+    }
+
+    #[test]
+    fn test_escape_filter_value_quotes() {
+        assert_eq!(escape_filter_value(r#"say "hi""#), r#"say \"hi\""#);
+    }
+
+    #[test]
+    fn test_escape_filter_value_backslashes() {
+        assert_eq!(escape_filter_value(r"path\to"), r"path\\to");
+    }
+
+    #[test]
+    fn test_escape_filter_value_mixed() {
+        assert_eq!(escape_filter_value(r#"a\"b"#), r#"a\\\"b"#);
+    }
+
+    // --- build_tags_filter ---
+
+    #[test]
+    fn test_build_tags_filter_empty() {
+        assert_eq!(build_tags_filter(&[]), None);
+    }
+
+    #[test]
+    fn test_build_tags_filter_single() {
+        let tags = vec!["rust".to_string()];
+        assert_eq!(
+            build_tags_filter(&tags),
+            Some(r#"tags = "rust""#.to_string())
+        );
+    }
+
+    #[test]
+    fn test_build_tags_filter_multiple() {
+        let tags = vec!["rust".to_string(), "async".to_string()];
+        assert_eq!(
+            build_tags_filter(&tags),
+            Some(r#"tags = "rust" AND tags = "async""#.to_string())
+        );
+    }
+
+    #[test]
+    fn test_build_tags_filter_special_chars() {
+        let tags = vec![r#"say "hi""#.to_string()];
+        assert_eq!(
+            build_tags_filter(&tags),
+            Some(r#"tags = "say \"hi\"""#.to_string())
+        );
+    }
+
+    // --- build_workspace_filter ---
+
+    #[test]
+    fn test_build_workspace_filter_empty() {
+        assert_eq!(build_workspace_filter(&[]), None);
+    }
+
+    #[test]
+    fn test_build_workspace_filter_single() {
+        let ws = vec!["default".to_string()];
+        assert_eq!(
+            build_workspace_filter(&ws),
+            Some(r#"workspace = "default""#.to_string())
+        );
+    }
+
+    #[test]
+    fn test_build_workspace_filter_multiple() {
+        let ws = vec!["proj-a".to_string(), "proj-b".to_string()];
+        assert_eq!(
+            build_workspace_filter(&ws),
+            Some(r#"workspace IN ["proj-a", "proj-b"]"#.to_string())
+        );
+    }
+
+    // --- build_scope_filter ---
+
+    #[test]
+    fn test_build_scope_filter_global() {
+        let parts = build_scope_filter(&MemoryScope::Global);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0], r#"scope = "global""#);
+        assert_eq!(parts[1], "scope_id IS NULL");
+    }
+
+    #[test]
+    fn test_build_scope_filter_user() {
+        let parts = build_scope_filter(&MemoryScope::User {
+            user_id: "u123".to_string(),
+        });
+        assert_eq!(parts[0], r#"scope = "user""#);
+        assert_eq!(parts[1], r#"scope_id = "u123""#);
+    }
+
+    #[test]
+    fn test_build_scope_filter_session() {
+        let parts = build_scope_filter(&MemoryScope::Session {
+            session_id: "s-abc".to_string(),
+        });
+        assert_eq!(parts[0], r#"scope = "session""#);
+        assert_eq!(parts[1], r#"scope_id = "s-abc""#);
+    }
+
+    #[test]
+    fn test_build_scope_filter_agent() {
+        let parts = build_scope_filter(&MemoryScope::Agent {
+            agent_id: "agent-1".to_string(),
+        });
+        assert_eq!(parts[0], r#"scope = "agent""#);
+        assert_eq!(parts[1], r#"scope_id = "agent-1""#);
+    }
+
+    // --- build_filter_from_search_options ---
+
+    #[test]
+    fn test_search_filter_defaults() {
+        let opts = SearchOptions::default();
+        let filter = build_filter_from_search_options(&opts).unwrap();
+        // Default excludes transcript_chunk and archived
+        let f = filter.unwrap();
+        assert!(f.contains(r#"memory_type != "transcript_chunk""#));
+        assert!(f.contains(r#"lifecycle_state != "archived""#));
+    }
+
+    #[test]
+    fn test_search_filter_with_workspace() {
+        let opts = SearchOptions {
+            workspace: Some("my-proj".to_string()),
+            ..Default::default()
+        };
+        let filter = build_filter_from_search_options(&opts).unwrap().unwrap();
+        assert!(filter.contains(r#"workspace = "my-proj""#));
+    }
+
+    #[test]
+    fn test_search_filter_with_tags_and_type() {
+        let opts = SearchOptions {
+            tags: Some(vec!["rust".to_string()]),
+            memory_type: Some(MemoryType::Note),
+            ..Default::default()
+        };
+        let filter = build_filter_from_search_options(&opts).unwrap().unwrap();
+        assert!(filter.contains(r#"memory_type = "note""#));
+        assert!(filter.contains(r#"tags = "rust""#));
+        // When memory_type is set, transcript_chunk exclusion is NOT added
+        assert!(!filter.contains("transcript_chunk"));
+    }
+
+    #[test]
+    fn test_search_filter_rejects_advanced_filter() {
+        let opts = SearchOptions {
+            filter: Some(serde_json::json!({"and": []})),
+            ..Default::default()
+        };
+        assert!(build_filter_from_search_options(&opts).is_err());
+    }
+
+    #[test]
+    fn test_search_filter_include_transcripts() {
+        let opts = SearchOptions {
+            include_transcripts: true,
+            ..Default::default()
+        };
+        let filter = build_filter_from_search_options(&opts).unwrap();
+        let f = filter.unwrap();
+        // Should NOT exclude transcript_chunk when include_transcripts is true
+        assert!(!f.contains("transcript_chunk"));
+    }
+
+    #[test]
+    fn test_search_filter_include_archived() {
+        let opts = SearchOptions {
+            include_archived: true,
+            ..Default::default()
+        };
+        let filter = build_filter_from_search_options(&opts).unwrap();
+        let f = filter.unwrap();
+        assert!(!f.contains("archived"));
+    }
+
+    // --- build_filter_from_list_options ---
+
+    #[test]
+    fn test_list_filter_defaults() {
+        let opts = ListOptions::default();
+        let filter = build_filter_from_list_options(&opts).unwrap();
+        // Default only excludes archived
+        let f = filter.unwrap();
+        assert!(f.contains(r#"lifecycle_state != "archived""#));
+    }
+
+    #[test]
+    fn test_list_filter_with_workspace_and_tier() {
+        let opts = ListOptions {
+            workspace: Some("eng".to_string()),
+            tier: Some(MemoryTier::Permanent),
+            ..Default::default()
+        };
+        let filter = build_filter_from_list_options(&opts).unwrap().unwrap();
+        assert!(filter.contains(r#"workspace = "eng""#));
+        assert!(filter.contains(r#"tier = "permanent""#));
+    }
+
+    #[test]
+    fn test_list_filter_rejects_metadata_filter() {
+        let opts = ListOptions {
+            metadata_filter: Some(HashMap::from([(
+                "key".to_string(),
+                serde_json::json!("val"),
+            )])),
+            ..Default::default()
+        };
+        assert!(build_filter_from_list_options(&opts).is_err());
+    }
+
+    // --- sort_to_meili ---
+
+    #[test]
+    fn test_sort_created_at_desc() {
+        assert_eq!(
+            sort_to_meili(SortField::CreatedAt, SortOrder::Desc),
+            "created_at:desc"
+        );
+    }
+
+    #[test]
+    fn test_sort_importance_asc() {
+        assert_eq!(
+            sort_to_meili(SortField::Importance, SortOrder::Asc),
+            "importance:asc"
+        );
+    }
+
+    #[test]
+    fn test_sort_all_fields() {
+        // Verify all sort fields produce valid output
+        let fields = [
+            SortField::CreatedAt,
+            SortField::UpdatedAt,
+            SortField::LastAccessedAt,
+            SortField::Importance,
+            SortField::AccessCount,
+        ];
+        for field in fields {
+            let result = sort_to_meili(field, SortOrder::Desc);
+            assert!(result.ends_with(":desc"));
+            assert!(!result.starts_with(':'));
+        }
+    }
+
+    // --- scope_from_parts ---
+
+    #[test]
+    fn test_scope_from_parts_user() {
+        let scope = scope_from_parts("user", Some("u1".to_string()));
+        assert!(matches!(scope, MemoryScope::User { user_id } if user_id == "u1"));
+    }
+
+    #[test]
+    fn test_scope_from_parts_global_fallback() {
+        let scope = scope_from_parts("unknown", None);
+        assert!(matches!(scope, MemoryScope::Global));
+    }
+
+    #[test]
+    fn test_scope_from_parts_missing_id_falls_back() {
+        // "user" without an ID falls back to Global
+        let scope = scope_from_parts("user", None);
+        assert!(matches!(scope, MemoryScope::Global));
+    }
+
+    // --- visibility_from_str / visibility_to_str roundtrip ---
+
+    #[test]
+    fn test_visibility_roundtrip() {
+        for vis in [Visibility::Private, Visibility::Shared, Visibility::Public] {
+            let s = visibility_to_str(vis);
+            let back = visibility_from_str(s);
+            assert_eq!(back, vis);
+        }
+    }
+
+    #[test]
+    fn test_visibility_unknown_defaults_private() {
+        assert_eq!(visibility_from_str("unknown"), Visibility::Private);
+    }
+
+    // --- build_memory_from_doc ---
+
+    #[test]
+    fn test_build_memory_from_doc_roundtrip() {
+        let doc = MeilisearchMemory {
+            id: 42,
+            content: "test memory".to_string(),
+            memory_type: "note".to_string(),
+            tags: vec!["tag1".to_string()],
+            metadata: Some(HashMap::new()),
+            created_at: 1700000000,
+            updated_at: 1700001000,
+            last_accessed_at: Some(1700002000),
+            importance: 0.8,
+            access_count: 5,
+            owner_id: None,
+            visibility: "private".to_string(),
+            scope: "global".to_string(),
+            scope_id: None,
+            workspace: "default".to_string(),
+            tier: "permanent".to_string(),
+            version: 1,
+            has_embedding: true,
+            expires_at: None,
+            content_hash: Some("abc123".to_string()),
+            event_time: None,
+            event_duration_seconds: None,
+            trigger_pattern: None,
+            procedure_success_count: 0,
+            procedure_failure_count: 0,
+            summary_of_id: None,
+            lifecycle_state: "active".to_string(),
+        };
+
+        let memory = build_memory_from_doc(doc);
+
+        assert_eq!(memory.id, 42);
+        assert_eq!(memory.content, "test memory");
+        assert_eq!(memory.memory_type, MemoryType::Note);
+        assert_eq!(memory.tags, vec!["tag1".to_string()]);
+        assert_eq!(memory.importance, 0.8);
+        assert_eq!(memory.access_count, 5);
+        assert_eq!(memory.workspace, "default");
+        assert_eq!(memory.tier, MemoryTier::Permanent);
+        assert!(memory.has_embedding);
+        assert_eq!(memory.content_hash, Some("abc123".to_string()));
+        assert!(matches!(memory.scope, MemoryScope::Global));
+        assert_eq!(memory.visibility, Visibility::Private);
+        assert_eq!(memory.lifecycle_state, LifecycleState::Active);
     }
 }

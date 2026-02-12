@@ -1923,6 +1923,51 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             "required": ["id"]
         }"#,
     ),
+    // Phase 7: Meilisearch Integration (ENG-58) - feature-gated
+    #[cfg(feature = "meilisearch")]
+    (
+        "meilisearch_search",
+        "Search memories using Meilisearch (typo-tolerant, fast full-text). Requires Meilisearch to be configured. Falls back to hybrid search if unavailable.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query text"},
+                "limit": {"type": "integer", "default": 20, "description": "Maximum results to return"},
+                "offset": {"type": "integer", "default": 0, "description": "Number of results to skip"},
+                "workspace": {"type": "string", "description": "Filter by workspace"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Filter by tags (AND logic)"},
+                "memory_type": {"type": "string", "description": "Filter by memory type"}
+            },
+            "required": ["query"]
+        }"#,
+    ),
+    #[cfg(feature = "meilisearch")]
+    (
+        "meilisearch_reindex",
+        "Trigger a full re-sync from SQLite to Meilisearch. Use after bulk imports or if the index is out of sync.",
+        r#"{
+            "type": "object",
+            "properties": {}
+        }"#,
+    ),
+    #[cfg(feature = "meilisearch")]
+    (
+        "meilisearch_status",
+        "Get Meilisearch index status including document count, indexing state, and health.",
+        r#"{
+            "type": "object",
+            "properties": {}
+        }"#,
+    ),
+    #[cfg(feature = "meilisearch")]
+    (
+        "meilisearch_config",
+        "Show current Meilisearch configuration (URL, sync interval, enabled status).",
+        r#"{
+            "type": "object",
+            "properties": {}
+        }"#,
+    ),
 ];
 
 /// Get all tool definitions as ToolDefinition structs
