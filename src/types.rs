@@ -594,7 +594,7 @@ pub enum SearchStrategy {
 }
 
 impl SearchStrategy {
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "keyword" | "keyword_only" => Some(SearchStrategy::KeywordOnly),
             "semantic" | "semantic_only" => Some(SearchStrategy::SemanticOnly),
@@ -614,7 +614,7 @@ where
     match opt.as_deref() {
         None => Ok(None),
         Some("auto") => Ok(None),
-        Some(other) => SearchStrategy::from_str(other).map(Some).ok_or_else(|| {
+        Some(other) => SearchStrategy::parse_str(other).map(Some).ok_or_else(|| {
             <D::Error as serde::de::Error>::custom(format!("Invalid search strategy: {}", other))
         }),
     }

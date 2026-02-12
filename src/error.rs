@@ -74,13 +74,13 @@ pub enum EngramError {
 impl EngramError {
     /// Check if error is retryable
     pub fn is_retryable(&self) -> bool {
-        match self {
-            EngramError::Sync(_) => true,
-            EngramError::CloudStorage(_) => true,
-            EngramError::Http(_) => true,
-            EngramError::RateLimited(_) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            EngramError::Sync(_)
+                | EngramError::CloudStorage(_)
+                | EngramError::Http(_)
+                | EngramError::RateLimited(_)
+        )
     }
 
     /// Get error code for MCP protocol

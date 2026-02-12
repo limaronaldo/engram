@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Filter parameters that affect cache key generation
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CacheFilterParams {
     pub workspace: Option<String>,
     pub tier: Option<String>,
@@ -23,19 +23,6 @@ pub struct CacheFilterParams {
     pub include_archived: bool,
     pub include_transcripts: bool,
     pub tags: Option<Vec<String>>,
-}
-
-impl Default for CacheFilterParams {
-    fn default() -> Self {
-        Self {
-            workspace: None,
-            tier: None,
-            memory_types: None,
-            include_archived: false,
-            include_transcripts: false,
-            tags: None,
-        }
-    }
 }
 
 /// A cached search result entry

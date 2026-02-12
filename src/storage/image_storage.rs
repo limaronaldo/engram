@@ -131,8 +131,8 @@ pub fn parse_data_uri(data_uri: &str) -> Result<(Vec<u8>, String)> {
         let ct = &rest[..semicolon_pos];
         let after_semicolon = &rest[semicolon_pos + 1..];
 
-        if after_semicolon.starts_with("base64,") {
-            (ct.to_string(), &after_semicolon[7..])
+        if let Some(stripped) = after_semicolon.strip_prefix("base64,") {
+            (ct.to_string(), stripped)
         } else {
             return Err(EngramError::InvalidInput(
                 "Invalid data URI encoding".to_string(),

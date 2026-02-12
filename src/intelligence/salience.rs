@@ -229,7 +229,7 @@ impl SalienceCalculator {
         // Exponential decay: score = 0.5^(days / half_life)
         let decay = 0.5_f32.powf(days_since_access / self.config.recency_half_life_days);
 
-        decay.max(0.0).min(1.0)
+        decay.clamp(0.0, 1.0)
     }
 
     /// Calculate frequency score using log scaling
@@ -695,7 +695,6 @@ pub fn get_salience_stats_in_workspace(
     };
 
     for (importance, access_count, created_at_str, last_accessed_str, state_str) in rows {
-
         // Calculate score
         let created_at = DateTime::parse_from_rfc3339(&created_at_str)
             .map(|dt| dt.with_timezone(&Utc))

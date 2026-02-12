@@ -63,8 +63,8 @@ pub fn detect_encoding(model: &str) -> Option<TokenEncoding> {
     }
 
     // OpenRouter prefixed models
-    if model_lower.starts_with("openai/") {
-        return detect_encoding(&model_lower[7..]);
+    if let Some(stripped) = model_lower.strip_prefix("openai/") {
+        return detect_encoding(stripped);
     }
     if model_lower.starts_with("anthropic/") {
         return Some(TokenEncoding::Cl100kBase);

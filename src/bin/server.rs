@@ -361,7 +361,7 @@ impl EngramHandler {
                 // Generate embedding for new content
                 if let Ok(query_embedding) = self.embedder.embed(&input.content) {
                     // Check for similar memories (scoped to same workspace)
-                    let workspace = input.workspace.as_ref().map(|s| s.as_str());
+                    let workspace = input.workspace.as_deref();
                     let similar_result = self.storage.with_connection(|conn| {
                         find_similar_by_embedding(
                             conn,
@@ -504,14 +504,7 @@ impl EngramHandler {
         }
 
         fn clamp_confidence(val: Option<f32>) -> f32 {
-            let v = val.unwrap_or(0.7);
-            if v < 0.0 {
-                0.0
-            } else if v > 1.0 {
-                1.0
-            } else {
-                v
-            }
+            val.unwrap_or(0.7).clamp(0.0, 1.0)
         }
 
         fn ttl_for_confidence(confidence: f32) -> Option<i64> {
@@ -1700,7 +1693,7 @@ impl EngramHandler {
             Err(e) => return json!({"error": e.to_string()}),
         };
 
-        let format = match input.format.as_ref().map(|s| s.as_str()) {
+        let format = match input.format.as_deref() {
             None | Some("auto") => None,
             Some("md") | Some("markdown") => Some(DocumentFormat::Markdown),
             Some("pdf") => Some(DocumentFormat::Pdf),
@@ -4935,15 +4928,9 @@ impl EngramHandler {
 
         let mut config = SalienceConfig::default();
 
-        if let Some(days) = params
-            .get("stale_threshold_days")
-            .and_then(|v| v.as_f64())
-        {
+        if let Some(days) = params.get("stale_threshold_days").and_then(|v| v.as_f64()) {
             config.stale_threshold_days = days.max(1.0).round() as i64;
-        } else if let Some(days) = params
-            .get("stale_threshold")
-            .and_then(|v| v.as_f64())
-        {
+        } else if let Some(days) = params.get("stale_threshold").and_then(|v| v.as_f64()) {
             config.stale_threshold_days = days.max(1.0).round() as i64;
         }
 
@@ -4952,10 +4939,7 @@ impl EngramHandler {
             .and_then(|v| v.as_f64())
         {
             config.archive_threshold_days = days.max(1.0).round() as i64;
-        } else if let Some(days) = params
-            .get("archive_threshold")
-            .and_then(|v| v.as_f64())
-        {
+        } else if let Some(days) = params.get("archive_threshold").and_then(|v| v.as_f64()) {
             config.archive_threshold_days = days.max(1.0).round() as i64;
         }
 
@@ -4964,12 +4948,8 @@ impl EngramHandler {
                 .storage
                 .with_connection(|conn| {
                     conn.execute("BEGIN IMMEDIATE", [])?;
-                    let result = run_salience_decay_in_workspace(
-                        conn,
-                        &config,
-                        false,
-                        workspace.as_deref(),
-                    );
+                    let result =
+                        run_salience_decay_in_workspace(conn, &config, false, workspace.as_deref());
                     let _ = conn.execute("ROLLBACK", []);
                     Ok(json!({
                         "dry_run": true,
@@ -4981,8 +4961,12 @@ impl EngramHandler {
 
         self.storage
             .with_transaction(|conn| {
-                let result =
-                    run_salience_decay_in_workspace(conn, &config, record_history, workspace.as_deref())?;
+                let result = run_salience_decay_in_workspace(
+                    conn,
+                    &config,
+                    record_history,
+                    workspace.as_deref(),
+                )?;
                 Ok(json!(result))
             })
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
@@ -5078,7 +5062,7 @@ impl EngramHandler {
                 // Apply min_score filter and limit
                 let results: Vec<_> = scored
                     .into_iter()
-                    .filter(|(_, s)| min_score.map_or(true, |min| s.score >= min))
+                    .filter(|(_, s)| min_score.is_none_or(|min| s.score >= min))
                     .take(limit)
                     .map(|(m, s)| {
                         json!({

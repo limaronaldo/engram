@@ -395,26 +395,24 @@ impl AutoTagger {
         }
 
         // Structure-based tagging
-        if content.contains("```") {
-            if !existing_set.contains("has-code") {
-                suggestions.push(TagSuggestion::new(
-                    "has-code",
-                    0.9,
-                    TagSource::Structure,
-                    "Contains code blocks",
-                ));
-            }
+        if content.contains("```") && !existing_set.contains("has-code") {
+            suggestions.push(TagSuggestion::new(
+                "has-code",
+                0.9,
+                TagSource::Structure,
+                "Contains code blocks",
+            ));
         }
 
-        if content.contains("http://") || content.contains("https://") {
-            if !existing_set.contains("has-links") {
-                suggestions.push(TagSuggestion::new(
-                    "has-links",
-                    0.85,
-                    TagSource::Structure,
-                    "Contains URLs",
-                ));
-            }
+        if (content.contains("http://") || content.contains("https://"))
+            && !existing_set.contains("has-links")
+        {
+            suggestions.push(TagSuggestion::new(
+                "has-links",
+                0.85,
+                TagSource::Structure,
+                "Contains URLs",
+            ));
         }
 
         // Deduplicate by tag name, keeping highest confidence

@@ -23,10 +23,11 @@ use crate::error::{EngramError, Result};
 use crate::types::{Memory, MemoryId};
 
 /// Role of a memory in a session context
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ContextRole {
     /// Memory was referenced/read during session
+    #[default]
     Referenced,
     /// Memory was created during session
     Created,
@@ -34,12 +35,6 @@ pub enum ContextRole {
     Updated,
     /// Memory was explicitly added to context
     Pinned,
-}
-
-impl Default for ContextRole {
-    fn default() -> Self {
-        Self::Referenced
-    }
 }
 
 impl std::fmt::Display for ContextRole {
