@@ -34,7 +34,7 @@ use std::time::Instant;
 
 use chrono::{DateTime, Utc};
 use libsql::{Builder, Connection, Database};
-use parking_lot::RwLock;
+use tokio::sync::RwLock;
 
 use crate::error::{EngramError, Result};
 use crate::storage::migrations::SCHEMA_VERSION;
@@ -186,7 +186,7 @@ impl TursoBackend {
             return Ok(());
         }
 
-        let conn = self.conn.write();
+        let conn = self.conn.write().await;
 
         // Create schema version table
         conn.execute(
@@ -427,7 +427,7 @@ impl TursoBackend {
 
     /// Execute a query and return results
     async fn query_memories(&self, sql: &str, params: Vec<libsql::Value>) -> Result<Vec<Memory>> {
-        let conn = self.conn.read();
+        let conn = self.conn.read().await;
         let mut stmt = conn
             .prepare(sql)
             .await
@@ -615,7 +615,7 @@ impl StorageBackend for TursoBackend {
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
         rt.block_on(async {
-            let conn = self.conn.write();
+            let conn = self.conn.write().await;
 
             let now = Utc::now();
             let now_str = now.to_rfc3339();
@@ -772,7 +772,7 @@ impl StorageBackend for TursoBackend {
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
         rt.block_on(async {
-            let conn = self.conn.write();
+            let conn = self.conn.write().await;
             let now = Utc::now().to_rfc3339();
 
             let mut updates = vec!["updated_at = ?".to_string()];
@@ -925,7 +925,7 @@ impl StorageBackend for TursoBackend {
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
         rt.block_on(async {
-            let conn = self.conn.write();
+            let conn = self.conn.write().await;
             let now = chrono::Utc::now().to_rfc3339();
 
             // Soft delete by setting valid_to
@@ -1139,7 +1139,7 @@ impl StorageBackend for TursoBackend {
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
         rt.block_on(async {
-            let conn = self.conn.write();
+            let conn = self.conn.write().await;
             let now = Utc::now();
             let now_str = now.to_rfc3339();
 
@@ -1188,7 +1188,7 @@ impl StorageBackend for TursoBackend {
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
         rt.block_on(async {
-            let conn = self.conn.read();
+            let conn = self.conn.read().await;
             let mut stmt = conn
                 .prepare(
                     "SELECT from_id, to_id, edge_type, score, confidence, strength, source,
@@ -1255,7 +1255,7 @@ impl StorageBackend for TursoBackend {
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
         rt.block_on(async {
-            let conn = self.conn.write();
+            let conn = self.conn.write().await;
             let now = chrono::Utc::now().to_rfc3339();
 
             conn.execute(
@@ -1272,7 +1272,7 @@ impl StorageBackend for TursoBackend {
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
         rt.block_on(async {
-            let conn = self.conn.read();
+            let conn = self.conn.read().await;
             let mut stmt = conn
                 .prepare(
                     "SELECT t.name, COUNT(mt.memory_id) as count
@@ -1319,7 +1319,7 @@ impl StorageBackend for TursoBackend {
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
         rt.block_on(async {
-            let conn = self.conn.read();
+            let conn = self.conn.read().await;
             let mut stmt = conn.prepare(
                 "SELECT workspace, COUNT(*) FROM memories WHERE valid_to IS NULL GROUP BY workspace"
             ).await.map_err(|e| EngramError::Storage(e.to_string()))?;
@@ -1350,7 +1350,7 @@ impl StorageBackend for TursoBackend {
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
         rt.block_on(async {
-            let conn = self.conn.read();
+            let conn = self.conn.read().await;
 
             let total: i64 = conn.query(
                 "SELECT COUNT(*) FROM memories WHERE workspace = ? AND valid_to IS NULL",
@@ -1389,7 +1389,7 @@ impl StorageBackend for TursoBackend {
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
         rt.block_on(async {
-            let conn = self.conn.write();
+            let conn = self.conn.write().await;
             let mut moved = 0usize;
 
             for id in ids {
@@ -1414,7 +1414,7 @@ impl StorageBackend for TursoBackend {
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
         rt.block_on(async {
-            let conn = self.conn.read();
+            let conn = self.conn.read().await;
 
             let memory_count: i64 = conn
                 .query("SELECT COUNT(*) FROM memories WHERE valid_to IS NULL", ())
@@ -1476,7 +1476,7 @@ impl StorageBackend for TursoBackend {
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
         let result = rt.block_on(async {
-            let conn = self.conn.read();
+            let conn = self.conn.read().await;
             conn.query("SELECT 1", ()).await
         });
 
@@ -1506,7 +1506,7 @@ impl StorageBackend for TursoBackend {
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
         rt.block_on(async {
-            let conn = self.conn.write();
+            let conn = self.conn.write().await;
             conn.execute("VACUUM", ())
                 .await
                 .map_err(|e| EngramError::Storage(e.to_string()))?;
@@ -1523,7 +1523,7 @@ impl StorageBackend for TursoBackend {
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
         rt.block_on(async {
-            let conn = self.conn.read();
+            let conn = self.conn.read().await;
             let version: i32 = conn
                 .query("SELECT COALESCE(MAX(version), 0) FROM schema_version", ())
                 .await
@@ -1554,7 +1554,7 @@ impl TransactionalBackend for TursoBackend {
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
         rt.block_on(async {
-            let conn = self.conn.write();
+            let conn = self.conn.write().await;
             conn.execute(&format!("SAVEPOINT {}", name), ())
                 .await
                 .map_err(|e| EngramError::Storage(e.to_string()))?;
@@ -1567,7 +1567,7 @@ impl TransactionalBackend for TursoBackend {
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
         rt.block_on(async {
-            let conn = self.conn.write();
+            let conn = self.conn.write().await;
             conn.execute(&format!("RELEASE SAVEPOINT {}", name), ())
                 .await
                 .map_err(|e| EngramError::Storage(e.to_string()))?;
@@ -1580,7 +1580,7 @@ impl TransactionalBackend for TursoBackend {
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
         rt.block_on(async {
-            let conn = self.conn.write();
+            let conn = self.conn.write().await;
             conn.execute(&format!("ROLLBACK TO SAVEPOINT {}", name), ())
                 .await
                 .map_err(|e| EngramError::Storage(e.to_string()))?;
