@@ -122,7 +122,7 @@ pub fn memory_from_row(row: &Row) -> rusqlite::Result<Memory> {
     })
 }
 
-fn metadata_value_to_param(
+pub(crate) fn metadata_value_to_param(
     key: &str,
     value: &serde_json::Value,
     conditions: &mut Vec<String>,

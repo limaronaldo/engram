@@ -138,30 +138,80 @@ impl StorageBackend for SqliteBackend {
 
     fn count_memories(&self, options: ListOptions) -> Result<i64> {
         self.storage.with_connection(|conn| {
-            // Use a count query instead of listing all memories
-            // Note: This is a simplified implementation. Real implementation
-            // should mirror filters in list_memories query.
-            let mut sql = String::from("SELECT COUNT(*) FROM memories WHERE valid_to IS NULL");
+            let now = chrono::Utc::now().to_rfc3339();
+
+            let mut sql = String::from("SELECT COUNT(DISTINCT m.id) FROM memories m");
+            let mut conditions = vec!["m.valid_to IS NULL".to_string()];
             let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
+            // Exclude expired memories
+            conditions.push("(m.expires_at IS NULL OR m.expires_at > ?)".to_string());
+            params.push(Box::new(now));
+
+            // Tag filter (requires join)
+            if let Some(ref tags) = options.tags {
+                if !tags.is_empty() {
+                    sql.push_str(
+                        " JOIN memory_tags mt ON m.id = mt.memory_id
+                          JOIN tags t ON mt.tag_id = t.id",
+                    );
+                    let placeholders: Vec<String> = tags.iter().map(|_| "?".to_string()).collect();
+                    conditions.push(format!("t.name IN ({})", placeholders.join(", ")));
+                    for tag in tags {
+                        params.push(Box::new(tag.clone()));
+                    }
+                }
+            }
+
+            // Type filter
+            if let Some(ref memory_type) = options.memory_type {
+                conditions.push("m.memory_type = ?".to_string());
+                params.push(Box::new(memory_type.as_str().to_string()));
+            }
+
+            // Metadata filter (JSON)
+            if let Some(ref metadata_filter) = options.metadata_filter {
+                for (key, value) in metadata_filter {
+                    queries::metadata_value_to_param(key, value, &mut conditions, &mut params)?;
+                }
+            }
+
+            // Scope filter
+            if let Some(ref scope) = options.scope {
+                conditions.push("m.scope_type = ?".to_string());
+                params.push(Box::new(scope.scope_type().to_string()));
+                if let Some(scope_id) = scope.scope_id() {
+                    conditions.push("m.scope_id = ?".to_string());
+                    params.push(Box::new(scope_id.to_string()));
+                } else {
+                    conditions.push("m.scope_id IS NULL".to_string());
+                }
+            }
+
+            // Workspace filter
             if let Some(ref workspace) = options.workspace {
-                sql.push_str(" AND workspace = ?");
+                conditions.push("m.workspace = ?".to_string());
                 params.push(Box::new(workspace.clone()));
-            } else {
-                sql.push_str(" AND workspace = 'default'");
             }
 
+            // Tier filter
+            if let Some(ref tier) = options.tier {
+                conditions.push("m.tier = ?".to_string());
+                params.push(Box::new(tier.as_str().to_string()));
+            }
+
+            // Archived filter
             if !options.include_archived {
-                sql.push_str(" AND (lifecycle_state IS NULL OR lifecycle_state != 'archived')");
+                conditions.push(
+                    "(m.lifecycle_state IS NULL OR m.lifecycle_state != 'archived')".to_string(),
+                );
             }
 
-            // TODO: Add support for all ListOptions filters in count query
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
 
-            let count: i64 = conn.query_row(
-                &sql,
-                rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
-                |row| row.get(0),
-            )?;
+            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+            let count: i64 = conn.query_row(&sql, param_refs.as_slice(), |row| row.get(0))?;
 
             Ok(count)
         })
