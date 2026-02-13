@@ -3,6 +3,8 @@
 **Memory for production AI agents — built for predictable latency.**  
 Hybrid search, knowledge graphs, and optional cloud sync — shipped as a single Rust binary.
 
+[![Crates.io](https://img.shields.io/crates/v/engram)](https://crates.io/crates/engram)
+[![docs.rs](https://img.shields.io/docsrs/engram)](https://docs.rs/engram)
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -62,7 +64,7 @@ engram-cli search "why did we choose postgres"
 git clone https://github.com/limaronaldo/engram.git
 cd engram && cargo install --path .
 
-# Run as MCP server (Claude Code, Cursor, etc.)
+# Run as MCP server (Claude Code, Cursor, VS Code MCP clients, etc.)
 engram-server --mcp
 
 # Or run as HTTP API
@@ -172,10 +174,52 @@ Multi-hop traversal and shortest-path are available via MCP tools:
 
 ### Multiple Interfaces
 
-- **MCP**: Native Model Context Protocol for Claude Code, Cursor
+- **MCP**: Native Model Context Protocol for Claude Code, Cursor, VS Code MCP clients
 - **REST**: Standard HTTP API for any client
 - **WebSocket**: Real-time updates
 - **CLI**: Developer-friendly commands
+
+### Salience Scoring
+
+Dynamic memory prioritization based on recency, frequency, importance, and feedback:
+
+```bash
+# Get top memories by salience
+engram-cli salience top --limit 10
+
+# Boost a memory's salience
+engram-cli salience boost 42
+```
+
+Salience decays over time, transitioning memories through lifecycle states: Active -> Stale -> Archived.
+
+### Context Quality
+
+5-component quality assessment (clarity, completeness, freshness, consistency, source trust):
+
+```bash
+# Quality report for a workspace
+engram-cli quality report --workspace my-project
+
+# Find near-duplicate memories
+engram-cli quality duplicates
+```
+
+Includes conflict detection for contradictions between memories and resolution workflows.
+
+### Optional Meilisearch Backend
+
+Offload search to Meilisearch for larger-scale deployments (feature-gated):
+
+```bash
+# Build with Meilisearch support
+cargo build --features meilisearch
+
+# Run with Meilisearch indexer
+engram-server --meilisearch-url http://localhost:7700 --meilisearch-indexer
+```
+
+SQLite remains the source of truth. MeilisearchIndexer syncs changes in the background.
 
 ### Project Context Discovery
 
@@ -195,13 +239,13 @@ Ingest and query instruction and policy files using MCP tools:
 
 ## MCP Configuration
 
-Add to your MCP config (`~/.config/claude/mcp.json` or similar):
+Add to your MCP config (for example: `~/.claude/mcp.json`, `.cursor/mcp.json`, or your VS Code MCP extension config):
 
 ```json
 {
   "mcpServers": {
     "engram": {
-      "command": "/Users/ronaldo/Projects/FORK/engram/target/release/engram-server",
+      "command": "engram-server",
       "args": [],
       "env": {
         "ENGRAM_DB_PATH": "~/.local/share/engram/memories.db"
@@ -210,6 +254,8 @@ Add to your MCP config (`~/.config/claude/mcp.json` or similar):
   }
 }
 ```
+
+If you built from source instead of installing via Homebrew, use the full path to the binary (e.g. `/path/to/engram/target/release/engram-server`).
 
 ### Available MCP Tools
 
@@ -270,11 +316,52 @@ Add to your MCP config (`~/.config/claude/mcp.json` or similar):
 | `memory_scan_project` | Ingest project context files |
 | `memory_get_project_context` | Retrieve project context memories |
 
+**Salience:**
+| Tool | Description |
+|------|-------------|
+| `salience_get` | Get salience score with component breakdown |
+| `salience_boost` | Boost memory salience |
+| `salience_top` | Get top memories by salience |
+| `salience_decay_run` | Run temporal decay cycle |
+
+**Quality:**
+| Tool | Description |
+|------|-------------|
+| `quality_score` | Get quality breakdown |
+| `quality_find_duplicates` | Find near-duplicate memories |
+| `quality_find_conflicts` | Detect contradictions |
+| `quality_resolve_conflict` | Resolve conflicts |
+| `quality_report` | Workspace quality report |
+
+**Lifecycle:**
+| Tool | Description |
+|------|-------------|
+| `lifecycle_status` | Active/stale/archived counts |
+| `lifecycle_run` | Trigger lifecycle cycle |
+| `memory_set_lifecycle` | Manually set lifecycle state |
+
+**Compression:**
+| Tool | Description |
+|------|-------------|
+| `memory_summarize` | Create summary from multiple memories |
+| `context_budget_check` | Check token usage against budget |
+| `memory_archive_old` | Batch archive old memories |
+
+**Meilisearch** (requires `--features meilisearch`):
+| Tool | Description |
+|------|-------------|
+| `meilisearch_search` | Search via Meilisearch directly |
+| `meilisearch_reindex` | Trigger full re-sync from SQLite |
+| `meilisearch_status` | Index stats and health |
+| `meilisearch_config` | Current configuration |
+
 **Performance:**
 | Tool | Description |
 |------|-------------|
 | `embedding_cache_stats` | Cache hit/miss statistics |
 | `embedding_cache_clear` | Clear embedding cache |
+
+**140+ MCP tools total.** See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
 ---
 
@@ -289,6 +376,10 @@ Add to your MCP config (`~/.config/claude/mcp.json` or similar):
 | `ENGRAM_CLEANUP_INTERVAL` | Expired memory cleanup interval (seconds) | `3600` |
 | `ENGRAM_WS_PORT` | WebSocket server port (0 = disabled) | `0` |
 | `OPENAI_API_KEY` | OpenAI API key (for `openai` embeddings) | - |
+| `MEILISEARCH_URL` | Meilisearch URL (requires `--features meilisearch`) | - |
+| `MEILISEARCH_API_KEY` | Meilisearch API key | - |
+| `MEILISEARCH_INDEXER` | Enable background sync to Meilisearch | `false` |
+| `MEILISEARCH_SYNC_INTERVAL` | Sync interval in seconds | `60` |
 
 ---
 
@@ -301,13 +392,16 @@ Add to your MCP config (`~/.config/claude/mcp.json` or similar):
 │  MCP (stdio)  │  REST (HTTP)  │  WebSocket  │  CLI              │
 ├─────────────────────────────────────────────────────────────────┤
 │                    Intelligence Layer                           │
-│  • Auto-capture  • Suggestions  • Quality scoring  • NL commands│
+│  • Salience scoring  • Quality assessment  • Entity extraction  │
+│  • Context compression  • Lifecycle management                  │
 ├─────────────────────────────────────────────────────────────────┤
 │                      Search Layer                               │
-│  • BM25 (FTS5)  • Vectors (sqlite-vec)  • Fuzzy  • RRF fusion   │
+│  • BM25 (FTS5)  • Vectors (sqlite-vec)  • Fuzzy  • RRF fusion  │
+│  • Optional Meilisearch backend for scaled deployments          │
 ├─────────────────────────────────────────────────────────────────┤
 │                     Storage Layer                               │
-│  • SQLite + WAL  • Connection pooling  • Optional S3/R2 sync    │
+│  • SQLite + WAL  • Turso/libSQL  • Connection pooling           │
+│  • Optional S3/R2 sync with AES-256 encryption                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 

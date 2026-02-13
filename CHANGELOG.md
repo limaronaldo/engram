@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Meilisearch Integration (Phase 7)
+
+#### Phase 7: Meilisearch Backend (ENG-58)
+
+**MeilisearchBackend** - Full `StorageBackend` implementation backed by Meilisearch:
+- All 18 core trait methods implemented (CRUD, batch, search, tags, workspaces, stats)
+- Meilisearch filter syntax for scope, workspace, tier, tags, lifecycle state
+- Facet distribution for tag/workspace listing
+- Configurable via `--meilisearch-url` and `--meilisearch-api-key` CLI args
+- Feature-gated behind `--features meilisearch` (not in defaults)
+- Graph operations intentionally unsupported (Meilisearch has no graph model)
+
+**MeilisearchIndexer** - SQLite → Meilisearch sync engine:
+- Full sync with paginated reads (100 items/batch)
+- Incremental sync using `updated_at` timestamp tracking
+- Configurable interval via `--meilisearch-sync-interval` (default: 60s)
+- Background thread with automatic startup
+
+**MCP Tools** (4 new, feature-gated):
+- `meilisearch_search` - Search via Meilisearch backend directly
+- `meilisearch_reindex` - Trigger full re-sync from SQLite
+- `meilisearch_status` - Index stats and health check
+- `meilisearch_config` - Current Meilisearch configuration
+
+**Environment Variables:**
+- `MEILISEARCH_URL` - Meilisearch server URL
+- `MEILISEARCH_API_KEY` - API key (optional)
+- `MEILISEARCH_INDEXER` - Enable background sync (default: false)
+- `MEILISEARCH_SYNC_INTERVAL` - Sync interval in seconds (default: 60)
+
+### Fixed
+- `count_memories` now applies all filters (tags, type, metadata, scope, workspace, tier, archived, expired) instead of only workspace
+- `metadata_value_to_param` visibility changed to `pub(crate)` for reuse in count query
+
 ## [0.4.0] - 2026-02-12
 
 ### Added - Salience & Context Quality (Phases 8-9)

@@ -56,9 +56,9 @@ docker run -v engram-data:/data ghcr.io/limaronaldo/engram-server:latest
 
 ## Configure MCP for AI Tools
 
-Engram speaks the [Model Context Protocol](https://modelcontextprotocol.io/) (MCP), so it integrates directly with Claude Code, Cursor, and other MCP-compatible tools.
+Engram speaks the [Model Context Protocol](https://modelcontextprotocol.io/) (MCP), so it integrates with Claude Code, Cursor, VS Code MCP clients (like Cline/Roo Code), and other MCP-compatible tools.
 
-### Claude Code
+### Claude Code (Example)
 
 Add to `~/.claude/mcp.json`:
 
@@ -94,6 +94,10 @@ Add to `.cursor/mcp.json` in your project root:
 }
 ```
 
+### Other MCP Clients
+
+Use the same `mcpServers.engram` JSON block in your client's MCP config location.
+
 ### Verify Connection
 
 Once configured, your AI tool will have access to 136+ MCP tools. Ask it to run `memory_stats` to verify the connection is working.
@@ -115,11 +119,15 @@ engram-cli create "Deploy to staging before production" --type decision --tags "
 engram-cli create "User auth flow uses OAuth2" --workspace my-project
 ```
 
-### Using MCP (via Claude Code)
+### Using MCP (Any MCP Client)
 
-Just tell your AI assistant:
+In Claude Code, Cursor, VS Code MCP clients, or any MCP-enabled assistant, you can use prompts like:
 
 > "Remember that our API uses JWT tokens for authentication"
+
+> "Store this as a decision memory: deploy to staging before production"
+
+> "Search my memories for authentication notes"
 
 The AI will call `memory_create` automatically.
 
