@@ -41,8 +41,9 @@ use crate::storage::migrations::SCHEMA_VERSION;
 use crate::storage::queries::compute_content_hash;
 use crate::types::{
     normalize_workspace, CreateMemoryInput, CrossReference, EdgeType, LifecycleState, ListOptions,
-    MatchInfo, Memory, MemoryId, MemoryScope, MemoryTier, MemoryType, RelationSource, SearchOptions,
-    SearchResult, SearchStrategy, SortField, SortOrder, UpdateMemoryInput, Visibility,
+    MatchInfo, Memory, MemoryId, MemoryScope, MemoryTier, MemoryType, RelationSource,
+    SearchOptions, SearchResult, SearchStrategy, SortField, SortOrder, UpdateMemoryInput,
+    Visibility,
 };
 
 use super::backend::{
@@ -390,8 +391,8 @@ impl TursoBackend {
             "INSERT INTO schema_version (version) VALUES (?)",
             libsql::params![SCHEMA_VERSION],
         )
-            .await
-            .map_err(|e| EngramError::Storage(e.to_string()))?;
+        .await
+        .map_err(|e| EngramError::Storage(e.to_string()))?;
 
         Ok(())
     }
@@ -467,9 +468,9 @@ impl TursoBackend {
         let importance: f32 = row
             .get::<f64>(3)
             .map_err(|e| EngramError::Storage(e.to_string()))? as f32;
-        let access_count: i32 = row
-            .get::<i64>(4)
-            .map_err(|e| EngramError::Storage(e.to_string()))? as i32;
+        let access_count: i32 =
+            row.get::<i64>(4)
+                .map_err(|e| EngramError::Storage(e.to_string()))? as i32;
         let created_at: String = row
             .get(5)
             .map_err(|e| EngramError::Storage(e.to_string()))?;
@@ -488,22 +489,16 @@ impl TursoBackend {
         let version: i32 = row
             .get::<i64>(10)
             .map_err(|e| EngramError::Storage(e.to_string()))? as i32;
-        let has_embedding: i32 = row
-            .get::<i64>(11)
-            .map_err(|e| EngramError::Storage(e.to_string()))? as i32;
+        let has_embedding: i32 =
+            row.get::<i64>(11)
+                .map_err(|e| EngramError::Storage(e.to_string()))? as i32;
         let metadata_str: String = row
             .get(12)
             .map_err(|e| EngramError::Storage(e.to_string()))?;
-        let scope_type: String = row
-            .get(13)
-            .unwrap_or_else(|_| "global".to_string());
+        let scope_type: String = row.get(13).unwrap_or_else(|_| "global".to_string());
         let scope_id: Option<String> = row.get(14).unwrap_or(None);
-        let workspace: String = row
-            .get(15)
-            .unwrap_or_else(|_| "default".to_string());
-        let tier_str: String = row
-            .get(16)
-            .unwrap_or_else(|_| "permanent".to_string());
+        let workspace: String = row.get(15).unwrap_or_else(|_| "default".to_string());
+        let tier_str: String = row.get(16).unwrap_or_else(|_| "permanent".to_string());
         let expires_at: Option<String> = row.get(17).unwrap_or(None);
         let content_hash: Option<String> = row.get(18).unwrap_or(None);
         let event_time: Option<String> = row.get(19).unwrap_or(None);
@@ -1194,11 +1189,14 @@ impl StorageBackend for TursoBackend {
 
         rt.block_on(async {
             let conn = self.conn.read();
-            let mut stmt = conn.prepare(
-                "SELECT from_id, to_id, edge_type, score, confidence, strength, source,
+            let mut stmt = conn
+                .prepare(
+                    "SELECT from_id, to_id, edge_type, score, confidence, strength, source,
                         source_context, created_at, valid_from, valid_to, pinned, metadata
-                 FROM crossrefs WHERE (from_id = ? OR to_id = ?) AND valid_to IS NULL"
-            ).await.map_err(|e| EngramError::Storage(e.to_string()))?;
+                 FROM crossrefs WHERE (from_id = ? OR to_id = ?) AND valid_to IS NULL",
+                )
+                .await
+                .map_err(|e| EngramError::Storage(e.to_string()))?;
 
             let rows = stmt
                 .query(libsql::params![memory_id, memory_id])
@@ -1213,8 +1211,7 @@ impl StorageBackend for TursoBackend {
                 .await
                 .map_err(|e| EngramError::Storage(e.to_string()))?
             {
-                let edge_type_str: String =
-                    row.get(2).unwrap_or_else(|_| "related_to".to_string());
+                let edge_type_str: String = row.get(2).unwrap_or_else(|_| "related_to".to_string());
                 let source_str: String = row.get(6).unwrap_or_else(|_| "auto".to_string());
                 let created_at_str: String = row.get(8).unwrap_or_else(|_| Utc::now().to_rfc3339());
                 let valid_from_str: String = row.get(9).unwrap_or_else(|_| Utc::now().to_rfc3339());

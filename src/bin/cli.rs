@@ -387,11 +387,11 @@ fn main() -> Result<()> {
                             ttl_seconds: None,
                             dedup_mode: Default::default(),
                             dedup_threshold: None,
-                event_time: None,
-                event_duration_seconds: None,
-                trigger_pattern: None,
-                summary_of_id: None,
-            };
+                            event_time: None,
+                            event_duration_seconds: None,
+                            trigger_pattern: None,
+                            summary_of_id: None,
+                        };
                         match storage.with_transaction(|conn| create_memory(conn, &input)) {
                             Ok(memory) => println!("Created #{}", memory.id),
                             Err(e) => println!("Error: {}", e),

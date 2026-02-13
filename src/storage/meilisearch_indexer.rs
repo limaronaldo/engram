@@ -1,8 +1,8 @@
 use super::{MeilisearchBackend, SqliteBackend, StorageBackend};
 use crate::error::EngramError;
 use crate::types::{ListOptions, SortField, SortOrder};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 use tracing::{error, info};
 

@@ -314,7 +314,7 @@ impl<'a> TemporalQueryEngine<'a> {
                     tier: MemoryTier::Permanent,
                     version: row.get(10)?,
                     has_embedding: row.get(11)?,
-                    expires_at: None, // Temporal queries don't track expiration
+                    expires_at: None,   // Temporal queries don't track expiration
                     content_hash: None, // Temporal queries don't track content hash
                     event_time: None,
                     event_duration_seconds: None,
