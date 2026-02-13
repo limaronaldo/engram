@@ -3,8 +3,8 @@
 **Memory for production AI agents — built for predictable latency.**  
 Hybrid search, knowledge graphs, and optional cloud sync — shipped as a single Rust binary.
 
-[![Crates.io](https://img.shields.io/crates/v/engram)](https://crates.io/crates/engram)
-[![docs.rs](https://img.shields.io/docsrs/engram)](https://docs.rs/engram)
+[![Crates.io](https://img.shields.io/crates/v/engram-core)](https://crates.io/crates/engram-core)
+[![docs.rs](https://img.shields.io/docsrs/engram-core)](https://docs.rs/engram-core)
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
@@ -60,7 +60,10 @@ engram-cli search "why did we choose postgres"
 ## Quick Start
 
 ```bash
-# Install
+# Install from crates.io
+cargo install engram-core
+
+# Or from source
 git clone https://github.com/limaronaldo/engram.git
 cd engram && cargo install --path .
 
