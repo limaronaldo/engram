@@ -364,7 +364,7 @@ If you built from source instead of installing via Homebrew, use the full path t
 | `embedding_cache_stats` | Cache hit/miss statistics |
 | `embedding_cache_clear` | Clear embedding cache |
 
-**140+ MCP tools total.** See [CHANGELOG.md](CHANGELOG.md) for the full list.
+**144+ MCP tools total.** See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
 ---
 

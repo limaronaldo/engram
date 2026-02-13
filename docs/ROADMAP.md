@@ -11,11 +11,11 @@
 | 4 | Search Caching | Done | v0.3.0 | Embedding-based LRU cache, adaptive similarity threshold, feedback loop |
 | 5 | Memory Lifecycle | Done | v0.3.0 | Active/Stale/Archived states, configurable thresholds, dry-run support |
 | 6 | Turso/libSQL | Done | v0.3.0 | Distributed SQLite via Turso, full `StorageBackend` implementation |
-| 7 | Meilisearch | Done | v0.5.0* | Full `StorageBackend` + background indexer, 4 MCP tools (feature-gated) |
+| 7 | Meilisearch | Done | v0.5.0 | Full `StorageBackend` + background indexer, 4 MCP tools (feature-gated) |
 | 8 | Salience Scoring | Done | v0.4.0 | Multi-signal salience (recency, frequency, importance, feedback), session context |
 | 9 | Context Quality | Done | v0.4.0 | 5-component quality scoring, near-duplicate detection, conflict resolution, source trust |
 
-*Phase 7 is implemented and tested. Will ship as v0.5.0.
+All 10 phases complete. Published as v0.5.0.
 
 ---
 
@@ -84,7 +84,7 @@ Distributed SQLite for edge deployments.
 - Embedded replicas with sync to Turso cloud
 - Feature-gated behind `--features turso`
 
-### Phase 7: Meilisearch (implemented, releasing as v0.5.0)
+### Phase 7: Meilisearch (v0.5.0)
 
 Offload search to Meilisearch for larger deployments.
 
@@ -138,4 +138,4 @@ All 10 planned phases are complete. Future directions under consideration:
 | v0.3.0 | 2026-01-30 | 0-6 | 130+ |
 | v0.4.0 | 2026-02-12 | 0-6, 8-9 | 140+ |
 | v0.4.1 | 2026-02-13 | 0-6, 8-9 | 140+ |
-| v0.5.0 | TBD | 0-9 (all) | 144+ |
+| v0.5.0 | 2026-02-13 | 0-9 (all) | 144+ |
