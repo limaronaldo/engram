@@ -6,8 +6,11 @@ authors = ["Ronaldo Lima"]
 description = "AI Memory Infrastructure - Persistent memory for AI agents with semantic search"
 license = "MIT"
 repository = "https://github.com/limaronaldo/engram"
+homepage = "https://github.com/limaronaldo/engram"
+documentation = "https://docs.rs/engram"
 keywords = ["ai", "memory", "mcp", "semantic-search", "sqlite"]
 categories = ["database", "text-processing"]
+readme = "README.md"
 
 [lib]
 name = "engram"
