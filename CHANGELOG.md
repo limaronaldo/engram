@@ -5,9 +5,11 @@ All notable changes to Engram will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-02-13
 
 ### Added - Meilisearch Integration (Phase 7)
+
+All 10 planned phases (0-9) are now complete.
 
 #### Phase 7: Meilisearch Backend (ENG-58)
 
@@ -40,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `count_memories` now applies all filters (tags, type, metadata, scope, workspace, tier, archived, expired) instead of only workspace
 - `metadata_value_to_param` visibility changed to `pub(crate)` for reuse in count query
+- Resolved 20 clippy `await_holding_lock` warnings in Turso backend by switching to `tokio::sync::RwLock`
+
+### Changed
+- Published to crates.io as `engram-core` (lib name remains `engram` for API compatibility)
+- 144+ MCP tools total (4 new Meilisearch tools)
 
 ## [0.4.0] - 2026-02-12
 
@@ -321,12 +328,15 @@ This release brings Engram to full feature parity with [Memora](https://github.c
 
 ## Version History
 
+- **0.5.0** - Meilisearch Integration (Phase 7) — All phases complete
+- **0.4.1** - Published as engram-core on crates.io
 - **0.4.0** - Salience & Context Quality (Phases 8-9)
 - **0.3.0** - Context Engineering Platform (Phases 1-5)
 - **0.2.0** - Memora Feature Parity (24 new tools)
 - **0.1.0** - Initial release with full feature set
 
-[Unreleased]: https://github.com/limaronaldo/engram/compare/v0.4.0...HEAD
+[0.5.0]: https://github.com/limaronaldo/engram/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/limaronaldo/engram/releases/tag/v0.4.1
 [0.4.0]: https://github.com/limaronaldo/engram/releases/tag/v0.4.0
 [0.3.0]: https://github.com/limaronaldo/engram/releases/tag/v0.3.0
 [0.2.0]: https://github.com/limaronaldo/engram/releases/tag/v0.2.0
