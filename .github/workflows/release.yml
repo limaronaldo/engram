@@ -1,0 +1,157 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: engram-${{ github.ref_name }}-aarch64-apple-darwin.tar.gz
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive: engram-${{ github.ref_name }}-x86_64-apple-darwin.tar.gz
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: engram-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            archive: engram-${{ github.ref_name }}-aarch64-unknown-linux-gnu.tar.gz
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo '[target.aarch64-unknown-linux-gnu]' >> ~/.cargo/config.toml
+          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
+
+      - name: Build release binaries
+        run: cargo build --release --target ${{ matrix.target }} --bin engram-server --bin engram-cli
+
+      - name: Package (Unix)
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar -czf ../../../${{ matrix.archive }} engram-server engram-cli
+          cd ../../..
+          shasum -a 256 ${{ matrix.archive }} > ${{ matrix.archive }}.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            ${{ matrix.archive }}
+            ${{ matrix.archive }}.sha256
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release files
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.sha256' \) -exec cp {} release/ \;
+          echo "## SHA256 Checksums" > release/CHECKSUMS.md
+          echo '```' >> release/CHECKSUMS.md
+          cat release/*.sha256 >> release/CHECKSUMS.md
+          echo '```' >> release/CHECKSUMS.md
+          cat release/CHECKSUMS.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          generate_release_notes: true
+          files: |
+            release/*.tar.gz
+            release/*.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-homebrew:
+    name: Update Homebrew Formula
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download SHA256 files
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Checkout homebrew-engram
+        uses: actions/checkout@v4
+        with:
+          repository: limaronaldo/homebrew-engram
+          token: ${{ secrets.GITHUB_TOKEN }}
+          path: homebrew-engram
+
+      - name: Update formula
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+
+          # Read SHA256 hashes
+          ARM64_MAC=$(cat artifacts/aarch64-apple-darwin/*.sha256 | awk '{print $1}')
+          X86_64_MAC=$(cat artifacts/x86_64-apple-darwin/*.sha256 | awk '{print $1}')
+          ARM64_LINUX=$(cat artifacts/aarch64-unknown-linux-gnu/*.sha256 | awk '{print $1}')
+          X86_64_LINUX=$(cat artifacts/x86_64-unknown-linux-gnu/*.sha256 | awk '{print $1}')
+
+          cd homebrew-engram
+
+          # Update version
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" Formula/engram.rb
+
+          # Update SHA256 hashes (replace any existing hash or placeholder)
+          # macOS arm64
+          sed -i "/aarch64-apple-darwin/{ n; s/sha256 \".*\"/sha256 \"${ARM64_MAC}\"/ }" Formula/engram.rb
+          # macOS x86_64
+          sed -i "/x86_64-apple-darwin/{ n; s/sha256 \".*\"/sha256 \"${X86_64_MAC}\"/ }" Formula/engram.rb
+          # Linux arm64
+          sed -i "/aarch64-unknown-linux-gnu/{ n; s/sha256 \".*\"/sha256 \"${ARM64_LINUX}\"/ }" Formula/engram.rb
+          # Linux x86_64
+          sed -i "/x86_64-unknown-linux-gnu/{ n; s/sha256 \".*\"/sha256 \"${X86_64_LINUX}\"/ }" Formula/engram.rb
+
+          echo "Updated formula:"
+          cat Formula/engram.rb
+
+      - name: Commit and push
+        run: |
+          cd homebrew-engram
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/engram.rb
+          git commit -m "chore: update engram to ${GITHUB_REF_NAME}" || echo "No changes"
+          git push
