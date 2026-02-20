@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 15;
+pub const SCHEMA_VERSION: i32 = 16;
 
 /// Run all migrations
 pub fn run_migrations(conn: &Connection) -> Result<()> {
@@ -82,8 +82,12 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         migrate_v14(conn)?;
     }
 
-    if current_version < SCHEMA_VERSION {
+    if current_version < 15 {
         migrate_v15(conn)?;
+    }
+
+    if current_version < SCHEMA_VERSION {
+        migrate_v16(conn)?;
     }
 
     Ok(())
@@ -1073,6 +1077,39 @@ fn ensure_session_context_schema(conn: &Connection) -> Result<()> {
 
         tracing::info!("  ✓ Rebuilt session_memories with sessions(session_id) foreign key");
     }
+
+    Ok(())
+}
+
+/// Schema v16: Retention policies per workspace
+fn migrate_v16(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v16: Adding retention policies table...");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS retention_policies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace TEXT NOT NULL,
+            max_age_days INTEGER,
+            max_memories INTEGER,
+            compress_after_days INTEGER,
+            compress_max_importance REAL DEFAULT 0.3,
+            compress_min_access INTEGER DEFAULT 3,
+            auto_delete_after_days INTEGER,
+            exclude_types TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(workspace)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_retention_policies_workspace
+            ON retention_policies(workspace);
+        "#,
+    )?;
+
+    conn.execute("INSERT INTO schema_version (version) VALUES (16)", [])?;
+
+    tracing::info!("Migration v16 complete: retention policies table added");
 
     Ok(())
 }

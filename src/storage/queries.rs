@@ -1,7 +1,7 @@
 //! Database queries for memory operations
 
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, Row};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -353,6 +353,8 @@ pub enum DuplicateMatchType {
     ExactHash,
     /// High similarity score from crossrefs
     HighSimilarity,
+    /// Semantic similarity via embedding cosine distance
+    EmbeddingSimilarity,
 }
 
 /// Find all potential duplicate memory pairs
@@ -517,6 +519,93 @@ pub fn find_duplicates_in_workspace(
             });
         }
     }
+
+    Ok(duplicates)
+}
+
+/// Find semantically similar memories using embedding cosine similarity.
+/// This is "LLM-powered" dedup — goes beyond hash/n-gram matching to detect
+/// memories that convey the same information with different wording.
+pub fn find_duplicates_by_embedding(
+    conn: &Connection,
+    threshold: f32,
+    workspace: Option<&str>,
+    limit: usize,
+) -> Result<Vec<DuplicatePair>> {
+    use crate::embedding::{cosine_similarity, get_embedding};
+
+    let now = Utc::now().to_rfc3339();
+
+    // Get all memory IDs with embeddings (scoped to workspace if provided)
+    let (sql, params_vec): (&str, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(ws) = workspace {
+        (
+            "SELECT id FROM memories
+             WHERE has_embedding = 1 AND valid_to IS NULL
+               AND (expires_at IS NULL OR expires_at > ?)
+               AND COALESCE(lifecycle_state, 'active') = 'active'
+               AND workspace = ?
+             ORDER BY id",
+            vec![Box::new(now), Box::new(ws.to_string())],
+        )
+    } else {
+        (
+            "SELECT id FROM memories
+             WHERE has_embedding = 1 AND valid_to IS NULL
+               AND (expires_at IS NULL OR expires_at > ?)
+               AND COALESCE(lifecycle_state, 'active') = 'active'
+             ORDER BY id",
+            vec![Box::new(now)],
+        )
+    };
+
+    let mut stmt = conn.prepare(sql)?;
+    let ids: Vec<i64> = stmt
+        .query_map(
+            rusqlite::params_from_iter(params_vec.iter().map(|p| p.as_ref())),
+            |row| row.get(0),
+        )?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    // Load all embeddings into memory for pairwise comparison
+    let mut embeddings: Vec<(i64, Vec<f32>)> = Vec::with_capacity(ids.len());
+    for &id in &ids {
+        if let Ok(Some(emb)) = get_embedding(conn, id) {
+            embeddings.push((id, emb));
+        }
+    }
+
+    let mut duplicates = Vec::new();
+
+    // Pairwise comparison (O(n^2) — bounded by limit)
+    for i in 0..embeddings.len() {
+        if duplicates.len() >= limit {
+            break;
+        }
+        for j in (i + 1)..embeddings.len() {
+            if duplicates.len() >= limit {
+                break;
+            }
+            let sim = cosine_similarity(&embeddings[i].1, &embeddings[j].1);
+            if sim >= threshold {
+                let memory_a = get_memory_internal(conn, embeddings[i].0, false)?;
+                let memory_b = get_memory_internal(conn, embeddings[j].0, false)?;
+                duplicates.push(DuplicatePair {
+                    memory_a,
+                    memory_b,
+                    similarity_score: sim as f64,
+                    match_type: DuplicateMatchType::EmbeddingSimilarity,
+                });
+            }
+        }
+    }
+
+    // Sort by similarity descending
+    duplicates.sort_by(|a, b| {
+        b.similarity_score
+            .partial_cmp(&a.similarity_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     Ok(duplicates)
 }
@@ -1345,6 +1434,195 @@ pub fn list_memories(conn: &Connection, options: &ListOptions) -> Result<Vec<Mem
     Ok(memories)
 }
 
+/// Query episodic memories ordered by event_time within a time range.
+pub fn get_episodic_timeline(
+    conn: &Connection,
+    start_time: Option<DateTime<Utc>>,
+    end_time: Option<DateTime<Utc>>,
+    workspace: Option<&str>,
+    tags: Option<&[String]>,
+    limit: i64,
+) -> Result<Vec<Memory>> {
+    let now = Utc::now().to_rfc3339();
+
+    let mut sql = String::from(
+        "SELECT DISTINCT m.id, m.content, m.memory_type, m.importance, m.access_count,
+                m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
+                m.visibility, m.version, m.has_embedding, m.metadata,
+                m.scope_type, m.scope_id, m.workspace, m.tier, m.expires_at, m.content_hash,
+                m.event_time, m.event_duration_seconds, m.trigger_pattern,
+                m.procedure_success_count, m.procedure_failure_count, m.summary_of_id,
+                m.lifecycle_state
+         FROM memories m",
+    );
+
+    let mut conditions = vec![
+        "m.valid_to IS NULL".to_string(),
+        "(m.expires_at IS NULL OR m.expires_at > ?)".to_string(),
+        "m.memory_type = 'episodic'".to_string(),
+        "m.event_time IS NOT NULL".to_string(),
+    ];
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
+
+    if let Some(start) = start_time {
+        conditions.push("m.event_time >= ?".to_string());
+        params.push(Box::new(start.to_rfc3339()));
+    }
+
+    if let Some(end) = end_time {
+        conditions.push("m.event_time <= ?".to_string());
+        params.push(Box::new(end.to_rfc3339()));
+    }
+
+    if let Some(ws) = workspace {
+        conditions.push("m.workspace = ?".to_string());
+        params.push(Box::new(ws.to_string()));
+    }
+
+    if let Some(tag_list) = tags {
+        if !tag_list.is_empty() {
+            sql.push_str(
+                " JOIN memory_tags mt ON m.id = mt.memory_id
+                  JOIN tags t ON mt.tag_id = t.id",
+            );
+            let placeholders: Vec<String> = tag_list.iter().map(|_| "?".to_string()).collect();
+            conditions.push(format!("t.name IN ({})", placeholders.join(", ")));
+            for tag in tag_list {
+                params.push(Box::new(tag.clone()));
+            }
+        }
+    }
+
+    sql.push_str(" WHERE ");
+    sql.push_str(&conditions.join(" AND "));
+    sql.push_str(" ORDER BY m.event_time ASC");
+    sql.push_str(&format!(" LIMIT {}", limit));
+
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+
+    let memories: Vec<Memory> = stmt
+        .query_map(param_refs.as_slice(), memory_from_row)?
+        .filter_map(|r| r.ok())
+        .map(|mut m| {
+            m.tags = load_tags(conn, m.id).unwrap_or_default();
+            m
+        })
+        .collect();
+
+    Ok(memories)
+}
+
+/// Query procedural memories, optionally filtered by trigger pattern and success rate.
+pub fn get_procedural_memories(
+    conn: &Connection,
+    trigger_pattern: Option<&str>,
+    workspace: Option<&str>,
+    min_success_rate: Option<f32>,
+    limit: i64,
+) -> Result<Vec<Memory>> {
+    let now = Utc::now().to_rfc3339();
+
+    let sql_base = "SELECT m.id, m.content, m.memory_type, m.importance, m.access_count,
+                m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
+                m.visibility, m.version, m.has_embedding, m.metadata,
+                m.scope_type, m.scope_id, m.workspace, m.tier, m.expires_at, m.content_hash,
+                m.event_time, m.event_duration_seconds, m.trigger_pattern,
+                m.procedure_success_count, m.procedure_failure_count, m.summary_of_id,
+                m.lifecycle_state
+         FROM memories m";
+
+    let mut conditions = vec![
+        "m.valid_to IS NULL".to_string(),
+        "(m.expires_at IS NULL OR m.expires_at > ?)".to_string(),
+        "m.memory_type = 'procedural'".to_string(),
+    ];
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(now)];
+
+    if let Some(pattern) = trigger_pattern {
+        conditions.push("m.trigger_pattern LIKE ?".to_string());
+        params.push(Box::new(format!("%{}%", pattern)));
+    }
+
+    if let Some(ws) = workspace {
+        conditions.push("m.workspace = ?".to_string());
+        params.push(Box::new(ws.to_string()));
+    }
+
+    if let Some(min_rate) = min_success_rate {
+        // Filter: success / (success + failure) >= min_rate
+        // Only apply when there's at least one execution
+        conditions.push("(m.procedure_success_count + m.procedure_failure_count) > 0".to_string());
+        conditions.push(
+            "CAST(m.procedure_success_count AS REAL) / (m.procedure_success_count + m.procedure_failure_count) >= ?"
+                .to_string(),
+        );
+        params.push(Box::new(min_rate as f64));
+    }
+
+    let sql = format!(
+        "{} WHERE {} ORDER BY m.procedure_success_count DESC LIMIT {}",
+        sql_base,
+        conditions.join(" AND "),
+        limit
+    );
+
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+
+    let memories: Vec<Memory> = stmt
+        .query_map(param_refs.as_slice(), memory_from_row)?
+        .filter_map(|r| r.ok())
+        .map(|mut m| {
+            m.tags = load_tags(conn, m.id).unwrap_or_default();
+            m
+        })
+        .collect();
+
+    Ok(memories)
+}
+
+/// Record a success or failure outcome for a procedural memory.
+pub fn record_procedure_outcome(
+    conn: &Connection,
+    memory_id: i64,
+    success: bool,
+) -> Result<Memory> {
+    let column = if success {
+        "procedure_success_count"
+    } else {
+        "procedure_failure_count"
+    };
+
+    let now = Utc::now().to_rfc3339();
+
+    // Verify the memory exists and is procedural
+    let memory_type: String = conn
+        .query_row(
+            "SELECT memory_type FROM memories WHERE id = ? AND valid_to IS NULL",
+            params![memory_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| EngramError::NotFound(memory_id))?;
+
+    if memory_type != "procedural" {
+        return Err(EngramError::InvalidInput(format!(
+            "Memory {} is type '{}', not 'procedural'",
+            memory_id, memory_type
+        )));
+    }
+
+    conn.execute(
+        &format!(
+            "UPDATE memories SET {} = {} + 1, updated_at = ? WHERE id = ?",
+            column, column
+        ),
+        params![now, memory_id],
+    )?;
+
+    get_memory(conn, memory_id)
+}
+
 /// Create a cross-reference between memories
 pub fn create_crossref(conn: &Connection, input: &CreateCrossRefInput) -> Result<CrossReference> {
     let now = Utc::now().to_rfc3339();
@@ -1642,6 +1920,316 @@ pub fn count_expired_memories(conn: &Connection) -> Result<i64> {
     )?;
 
     Ok(count)
+}
+
+/// A per-workspace retention policy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetentionPolicy {
+    pub id: i64,
+    pub workspace: String,
+    pub max_age_days: Option<i64>,
+    pub max_memories: Option<i64>,
+    pub compress_after_days: Option<i64>,
+    pub compress_max_importance: f32,
+    pub compress_min_access: i32,
+    pub auto_delete_after_days: Option<i64>,
+    pub exclude_types: Vec<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Get retention policy for a workspace.
+pub fn get_retention_policy(conn: &Connection, workspace: &str) -> Result<Option<RetentionPolicy>> {
+    conn.query_row(
+        "SELECT id, workspace, max_age_days, max_memories, compress_after_days,
+                compress_max_importance, compress_min_access, auto_delete_after_days,
+                exclude_types, created_at, updated_at
+         FROM retention_policies WHERE workspace = ?",
+        params![workspace],
+        |row| {
+            let exclude_str: Option<String> = row.get(8)?;
+            Ok(RetentionPolicy {
+                id: row.get(0)?,
+                workspace: row.get(1)?,
+                max_age_days: row.get(2)?,
+                max_memories: row.get(3)?,
+                compress_after_days: row.get(4)?,
+                compress_max_importance: row.get::<_, f32>(5).unwrap_or(0.3),
+                compress_min_access: row.get::<_, i32>(6).unwrap_or(3),
+                auto_delete_after_days: row.get(7)?,
+                exclude_types: exclude_str
+                    .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
+                    .unwrap_or_default(),
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(EngramError::from)
+}
+
+/// List all retention policies.
+pub fn list_retention_policies(conn: &Connection) -> Result<Vec<RetentionPolicy>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, workspace, max_age_days, max_memories, compress_after_days,
+                compress_max_importance, compress_min_access, auto_delete_after_days,
+                exclude_types, created_at, updated_at
+         FROM retention_policies ORDER BY workspace",
+    )?;
+
+    let policies = stmt
+        .query_map([], |row| {
+            let exclude_str: Option<String> = row.get(8)?;
+            Ok(RetentionPolicy {
+                id: row.get(0)?,
+                workspace: row.get(1)?,
+                max_age_days: row.get(2)?,
+                max_memories: row.get(3)?,
+                compress_after_days: row.get(4)?,
+                compress_max_importance: row.get::<_, f32>(5).unwrap_or(0.3),
+                compress_min_access: row.get::<_, i32>(6).unwrap_or(3),
+                auto_delete_after_days: row.get(7)?,
+                exclude_types: exclude_str
+                    .map(|s| s.split(',').map(|t| t.trim().to_string()).collect())
+                    .unwrap_or_default(),
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(policies)
+}
+
+/// Upsert a retention policy for a workspace.
+pub fn set_retention_policy(
+    conn: &Connection,
+    workspace: &str,
+    max_age_days: Option<i64>,
+    max_memories: Option<i64>,
+    compress_after_days: Option<i64>,
+    compress_max_importance: Option<f32>,
+    compress_min_access: Option<i32>,
+    auto_delete_after_days: Option<i64>,
+    exclude_types: Option<Vec<String>>,
+) -> Result<RetentionPolicy> {
+    let now = Utc::now().to_rfc3339();
+    let exclude_str = exclude_types.map(|v| v.join(","));
+
+    conn.execute(
+        "INSERT INTO retention_policies (workspace, max_age_days, max_memories, compress_after_days,
+            compress_max_importance, compress_min_access, auto_delete_after_days, exclude_types,
+            created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
+         ON CONFLICT(workspace) DO UPDATE SET
+            max_age_days = COALESCE(?2, max_age_days),
+            max_memories = COALESCE(?3, max_memories),
+            compress_after_days = COALESCE(?4, compress_after_days),
+            compress_max_importance = COALESCE(?5, compress_max_importance),
+            compress_min_access = COALESCE(?6, compress_min_access),
+            auto_delete_after_days = COALESCE(?7, auto_delete_after_days),
+            exclude_types = COALESCE(?8, exclude_types),
+            updated_at = ?9",
+        params![
+            workspace,
+            max_age_days,
+            max_memories,
+            compress_after_days,
+            compress_max_importance.unwrap_or(0.3),
+            compress_min_access.unwrap_or(3),
+            auto_delete_after_days,
+            exclude_str,
+            now,
+        ],
+    )?;
+
+    get_retention_policy(conn, workspace)?.ok_or_else(|| EngramError::NotFound(0))
+}
+
+/// Delete a retention policy for a workspace.
+pub fn delete_retention_policy(conn: &Connection, workspace: &str) -> Result<bool> {
+    let affected = conn.execute(
+        "DELETE FROM retention_policies WHERE workspace = ?",
+        params![workspace],
+    )?;
+    Ok(affected > 0)
+}
+
+/// Apply all retention policies. Returns total memories affected across all workspaces.
+pub fn apply_retention_policies(conn: &Connection) -> Result<i64> {
+    let policies = list_retention_policies(conn)?;
+    let mut total_affected = 0i64;
+
+    for policy in &policies {
+        // 1. Auto-compress based on compress_after_days
+        if let Some(compress_days) = policy.compress_after_days {
+            let compressed = compress_old_memories(
+                conn,
+                compress_days,
+                policy.compress_max_importance,
+                policy.compress_min_access,
+                100,
+            )?;
+            total_affected += compressed;
+        }
+
+        // 2. Enforce max_memories limit per workspace
+        if let Some(max_mem) = policy.max_memories {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM memories WHERE workspace = ? AND valid_to IS NULL
+                     AND COALESCE(lifecycle_state, 'active') = 'active'",
+                    params![policy.workspace],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+
+            if count > max_mem {
+                // Archive excess (oldest, lowest importance first)
+                let excess = count - max_mem;
+                let archived = conn.execute(
+                    "UPDATE memories SET lifecycle_state = 'archived'
+                     WHERE id IN (
+                        SELECT id FROM memories
+                        WHERE workspace = ? AND valid_to IS NULL
+                          AND COALESCE(lifecycle_state, 'active') = 'active'
+                          AND memory_type NOT IN ('summary', 'checkpoint')
+                        ORDER BY importance ASC, access_count ASC, created_at ASC
+                        LIMIT ?
+                     )",
+                    params![policy.workspace, excess],
+                )?;
+                total_affected += archived as i64;
+            }
+        }
+
+        // 3. Auto-delete very old archived memories
+        if let Some(delete_days) = policy.auto_delete_after_days {
+            let cutoff = (Utc::now() - chrono::Duration::days(delete_days)).to_rfc3339();
+            let now = Utc::now().to_rfc3339();
+            let deleted = conn.execute(
+                "UPDATE memories SET valid_to = ?
+                 WHERE workspace = ? AND valid_to IS NULL
+                   AND lifecycle_state = 'archived'
+                   AND created_at < ?",
+                params![now, policy.workspace, cutoff],
+            )?;
+            total_affected += deleted as i64;
+        }
+    }
+
+    Ok(total_affected)
+}
+
+/// Auto-compress old, rarely-accessed memories by creating summaries and archiving originals.
+/// Returns the number of memories archived.
+pub fn compress_old_memories(
+    conn: &Connection,
+    max_age_days: i64,
+    max_importance: f32,
+    min_access_count: i32,
+    batch_limit: usize,
+) -> Result<i64> {
+    let cutoff = (Utc::now() - chrono::Duration::days(max_age_days)).to_rfc3339();
+    let now = Utc::now().to_rfc3339();
+
+    // Find candidates: old, low-importance, rarely-accessed, not already archived/summary
+    let mut stmt = conn.prepare(
+        "SELECT id, content, memory_type, importance, tags, workspace
+         FROM (
+            SELECT m.id, m.content, m.memory_type, m.importance, m.access_count, m.workspace,
+                   COALESCE(m.lifecycle_state, 'active') as lifecycle_state,
+                   (SELECT GROUP_CONCAT(t.name, ',') FROM memory_tags mt JOIN tags t ON mt.tag_id = t.id WHERE mt.memory_id = m.id) as tags
+            FROM memories m
+            WHERE m.valid_to IS NULL
+              AND (m.expires_at IS NULL OR m.expires_at > ?1)
+              AND m.created_at < ?2
+              AND m.importance <= ?3
+              AND m.access_count < ?4
+              AND m.memory_type NOT IN ('summary', 'checkpoint')
+              AND COALESCE(m.lifecycle_state, 'active') = 'active'
+            ORDER BY m.created_at ASC
+            LIMIT ?5
+         )",
+    )?;
+
+    let candidates: Vec<(i64, String, String, f32, Option<String>, String)> = stmt
+        .query_map(
+            params![
+                now,
+                cutoff,
+                max_importance,
+                min_access_count,
+                batch_limit as i64
+            ],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get::<_, String>(5)
+                        .unwrap_or_else(|_| "default".to_string()),
+                ))
+            },
+        )?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let mut archived = 0i64;
+
+    for (id, content, memory_type, importance, tags_csv, workspace) in &candidates {
+        // Create compressed summary
+        let summary_text = if content.len() > 200 {
+            let head: String = content.chars().take(120).collect();
+            let tail: String = content
+                .chars()
+                .rev()
+                .take(60)
+                .collect::<String>()
+                .chars()
+                .rev()
+                .collect();
+            format!("{}...{}", head, tail)
+        } else {
+            content.clone()
+        };
+
+        let tags: Vec<String> = tags_csv
+            .as_deref()
+            .unwrap_or("")
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
+
+        let input = CreateMemoryInput {
+            content: format!("[Archived {}] {}", memory_type, summary_text),
+            memory_type: MemoryType::Summary,
+            importance: Some(*importance),
+            tags,
+            workspace: Some(workspace.clone()),
+            tier: MemoryTier::Permanent,
+            summary_of_id: Some(*id),
+            ..Default::default()
+        };
+
+        if create_memory(conn, &input).is_ok()
+            && conn
+                .execute(
+                    "UPDATE memories SET lifecycle_state = 'archived' WHERE id = ? AND valid_to IS NULL",
+                    params![id],
+                )
+                .is_ok()
+        {
+            archived += 1;
+        }
+    }
+
+    Ok(archived)
 }
 
 /// A compact memory representation for efficient list views.

@@ -93,6 +93,23 @@ struct Args {
     #[arg(long, env = "ENGRAM_CLEANUP_INTERVAL", default_value = "3600")]
     cleanup_interval_seconds: u64,
 
+    /// Compression scheduler interval in seconds (0 = disabled)
+    /// Auto-summarizes old, rarely-accessed memories at this interval
+    #[arg(long, env = "ENGRAM_COMPRESSION_INTERVAL", default_value = "0")]
+    compression_interval_seconds: u64,
+
+    /// Max age in days before a memory is eligible for auto-compression
+    #[arg(long, env = "ENGRAM_COMPRESSION_MAX_AGE_DAYS", default_value = "90")]
+    compression_max_age_days: i64,
+
+    /// Max importance for auto-compression eligibility (0.0-1.0)
+    #[arg(long, env = "ENGRAM_COMPRESSION_MAX_IMPORTANCE", default_value = "0.3")]
+    compression_max_importance: f32,
+
+    /// Min access count to skip auto-compression
+    #[arg(long, env = "ENGRAM_COMPRESSION_MIN_ACCESS", default_value = "3")]
+    compression_min_access: i32,
+
     /// WebSocket server port for real-time events (0 = disabled)
     #[arg(long, env = "ENGRAM_WS_PORT", default_value = "0")]
     ws_port: u16,
@@ -227,6 +244,7 @@ impl EngramHandler {
             "memory_cleanup_expired" => self.tool_cleanup_expired(params),
             // Deduplication tools (RML-931)
             "memory_find_duplicates" => self.tool_find_duplicates(params),
+            "memory_find_semantic_duplicates" => self.tool_find_semantic_duplicates(params),
             // Workspace management tools
             "workspace_list" => self.tool_workspace_list(params),
             "workspace_stats" => self.tool_workspace_stats(params),
@@ -283,6 +301,7 @@ impl EngramHandler {
             "memory_create_procedural" => self.tool_memory_create_procedural(params),
             "memory_get_timeline" => self.tool_memory_get_timeline(params),
             "memory_get_procedures" => self.tool_memory_get_procedures(params),
+            "memory_record_procedure_outcome" => self.tool_record_procedure_outcome(params),
             // Phase 2: Context Compression Engine (ENG-34)
             "memory_summarize" => self.tool_memory_summarize(params),
             "memory_get_full" => self.tool_memory_get_full(params),
@@ -308,6 +327,12 @@ impl EngramHandler {
             "lifecycle_run" => self.tool_lifecycle_run(params),
             "memory_set_lifecycle" => self.tool_memory_set_lifecycle(params),
             "lifecycle_config" => self.tool_lifecycle_config(params),
+            // Retention policies
+            "retention_policy_set" => self.tool_retention_policy_set(params),
+            "retention_policy_get" => self.tool_retention_policy_get(params),
+            "retention_policy_list" => self.tool_retention_policy_list(params),
+            "retention_policy_delete" => self.tool_retention_policy_delete(params),
+            "retention_policy_apply" => self.tool_retention_policy_apply(params),
             // Event system
             "memory_events_poll" => self.tool_memory_events_poll(params),
             "memory_events_clear" => self.tool_memory_events_clear(params),
@@ -2076,6 +2101,29 @@ impl EngramHandler {
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }
 
+    fn tool_find_semantic_duplicates(&self, params: Value) -> Value {
+        use engram::storage::queries::find_duplicates_by_embedding;
+
+        let threshold = params
+            .get("threshold")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.92) as f32;
+        let workspace = params.get("workspace").and_then(|v| v.as_str());
+        let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(50) as usize;
+
+        self.storage
+            .with_connection(|conn| {
+                let duplicates = find_duplicates_by_embedding(conn, threshold, workspace, limit)?;
+                Ok(json!({
+                    "count": duplicates.len(),
+                    "threshold": threshold,
+                    "method": "embedding_cosine_similarity",
+                    "duplicates": duplicates
+                }))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
     // Workspace management tools
 
     fn tool_workspace_list(&self, _params: Value) -> Value {
@@ -3214,11 +3262,10 @@ impl EngramHandler {
             .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }
 
-    #[allow(dead_code)]
     fn tool_memory_get_timeline(&self, params: Value) -> Value {
-        // // use engram::storage::queries::get_episodic_timeline; // TODO: implement // TODO: implement
+        use engram::storage::queries::get_episodic_timeline;
 
-        let _start_time = params
+        let start_time = params
             .get("start_time")
             .and_then(|v| v.as_str())
             .and_then(|s| {
@@ -3226,7 +3273,7 @@ impl EngramHandler {
                     .ok()
                     .map(|dt| dt.with_timezone(&chrono::Utc))
             });
-        let _end_time = params
+        let end_time = params
             .get("end_time")
             .and_then(|v| v.as_str())
             .and_then(|s| {
@@ -3234,32 +3281,72 @@ impl EngramHandler {
                     .ok()
                     .map(|dt| dt.with_timezone(&chrono::Utc))
             });
-        let _workspace = params.get("workspace").and_then(|v| v.as_str());
-        let _tags: Option<Vec<String>> = params.get("tags").and_then(|v| v.as_array()).map(|arr| {
+        let workspace = params.get("workspace").and_then(|v| v.as_str());
+        let tags: Option<Vec<String>> = params.get("tags").and_then(|v| v.as_array()).map(|arr| {
             arr.iter()
                 .filter_map(|v| v.as_str().map(String::from))
                 .collect()
         });
-        let _limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(50);
+        let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(50);
 
-        // Episodic timeline queries not yet implemented
-        json!({"error": "Episodic timeline queries not yet implemented"})
+        self.storage
+            .with_connection(|conn| {
+                let memories = get_episodic_timeline(
+                    conn,
+                    start_time,
+                    end_time,
+                    workspace,
+                    tags.as_deref(),
+                    limit,
+                )?;
+                Ok(json!(memories))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }
 
-    #[allow(dead_code)]
     fn tool_memory_get_procedures(&self, params: Value) -> Value {
-        // // use engram::storage::queries::get_procedural_memories; // TODO: implement // TODO: implement
+        use engram::storage::queries::get_procedural_memories;
 
-        let _trigger_pattern = params.get("trigger_pattern").and_then(|v| v.as_str());
-        let _workspace = params.get("workspace").and_then(|v| v.as_str());
-        let _min_success_rate = params
+        let trigger_pattern = params.get("trigger_pattern").and_then(|v| v.as_str());
+        let workspace = params.get("workspace").and_then(|v| v.as_str());
+        let min_success_rate = params
             .get("min_success_rate")
             .and_then(|v| v.as_f64())
             .map(|f| f as f32);
-        let _limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(50);
+        let limit = params.get("limit").and_then(|v| v.as_i64()).unwrap_or(50);
 
-        // Procedural memory queries not yet implemented
-        json!({"error": "Procedural memory queries not yet implemented"})
+        self.storage
+            .with_connection(|conn| {
+                let memories = get_procedural_memories(
+                    conn,
+                    trigger_pattern,
+                    workspace,
+                    min_success_rate,
+                    limit,
+                )?;
+                Ok(json!(memories))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_record_procedure_outcome(&self, params: Value) -> Value {
+        use engram::storage::queries::record_procedure_outcome;
+
+        let id = match params.get("id").and_then(|v| v.as_i64()) {
+            Some(id) => id,
+            None => return json!({"error": "id is required"}),
+        };
+        let success = match params.get("success").and_then(|v| v.as_bool()) {
+            Some(s) => s,
+            None => return json!({"error": "success (boolean) is required"}),
+        };
+
+        self.storage
+            .with_transaction(|conn| {
+                let memory = record_procedure_outcome(conn, id, success)?;
+                Ok(json!(memory))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }
 
     // =========================================================================
@@ -4327,6 +4414,136 @@ impl EngramHandler {
                 .unwrap_or(true),
             "note": "Pass values to update configuration"
         })
+    }
+
+    // =========================================================================
+    // Retention Policies
+    // =========================================================================
+
+    fn tool_retention_policy_set(&self, params: Value) -> Value {
+        use engram::storage::queries::set_retention_policy;
+
+        let workspace = match params.get("workspace").and_then(|v| v.as_str()) {
+            Some(w) => w,
+            None => return json!({"error": "workspace is required"}),
+        };
+        let max_age_days = params.get("max_age_days").and_then(|v| v.as_i64());
+        let max_memories = params.get("max_memories").and_then(|v| v.as_i64());
+        let compress_after_days = params.get("compress_after_days").and_then(|v| v.as_i64());
+        let compress_max_importance = params
+            .get("compress_max_importance")
+            .and_then(|v| v.as_f64())
+            .map(|f| f as f32);
+        let compress_min_access = params
+            .get("compress_min_access")
+            .and_then(|v| v.as_i64())
+            .map(|i| i as i32);
+        let auto_delete_after_days = params
+            .get("auto_delete_after_days")
+            .and_then(|v| v.as_i64());
+        let exclude_types: Option<Vec<String>> = params
+            .get("exclude_types")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            });
+
+        self.storage
+            .with_transaction(|conn| {
+                let policy = set_retention_policy(
+                    conn,
+                    workspace,
+                    max_age_days,
+                    max_memories,
+                    compress_after_days,
+                    compress_max_importance,
+                    compress_min_access,
+                    auto_delete_after_days,
+                    exclude_types,
+                )?;
+                Ok(json!(policy))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_retention_policy_get(&self, params: Value) -> Value {
+        use engram::storage::queries::get_retention_policy;
+
+        let workspace = match params.get("workspace").and_then(|v| v.as_str()) {
+            Some(w) => w,
+            None => return json!({"error": "workspace is required"}),
+        };
+
+        self.storage
+            .with_connection(|conn| {
+                match get_retention_policy(conn, workspace)? {
+                    Some(policy) => Ok(json!(policy)),
+                    None => Ok(json!({"workspace": workspace, "policy": null, "note": "No retention policy set for this workspace"})),
+                }
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_retention_policy_list(&self, _params: Value) -> Value {
+        use engram::storage::queries::list_retention_policies;
+
+        self.storage
+            .with_connection(|conn| {
+                let policies = list_retention_policies(conn)?;
+                Ok(json!({"policies": policies, "count": policies.len()}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_retention_policy_delete(&self, params: Value) -> Value {
+        use engram::storage::queries::delete_retention_policy;
+
+        let workspace = match params.get("workspace").and_then(|v| v.as_str()) {
+            Some(w) => w,
+            None => return json!({"error": "workspace is required"}),
+        };
+
+        self.storage
+            .with_transaction(|conn| {
+                let deleted = delete_retention_policy(conn, workspace)?;
+                Ok(json!({"deleted": deleted, "workspace": workspace}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
+    }
+
+    fn tool_retention_policy_apply(&self, params: Value) -> Value {
+        use engram::storage::queries::apply_retention_policies;
+
+        let dry_run = params
+            .get("dry_run")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if dry_run {
+            // In dry-run mode, just list what policies exist
+            use engram::storage::queries::list_retention_policies;
+            return self
+                .storage
+                .with_connection(|conn| {
+                    let policies = list_retention_policies(conn)?;
+                    Ok(json!({
+                        "dry_run": true,
+                        "policies_count": policies.len(),
+                        "policies": policies,
+                        "note": "Set dry_run=false to apply"
+                    }))
+                })
+                .unwrap_or_else(|e| json!({"error": e.to_string()}));
+        }
+
+        self.storage
+            .with_transaction(|conn| {
+                let affected = apply_retention_policies(conn)?;
+                Ok(json!({"applied": true, "memories_affected": affected}))
+            })
+            .unwrap_or_else(|e| json!({"error": e.to_string()}))
     }
 
     // =========================================================================
@@ -5919,6 +6136,44 @@ fn main() -> Result<()> {
                     }
                     Err(e) => {
                         tracing::error!("Error cleaning up expired memories: {}", e);
+                    }
+                }
+            }
+        });
+    }
+
+    // Start background compression scheduler if enabled
+    if args.compression_interval_seconds > 0 {
+        let compression_storage = storage.clone();
+        let interval = std::time::Duration::from_secs(args.compression_interval_seconds);
+        let max_age = args.compression_max_age_days;
+        let max_imp = args.compression_max_importance;
+        let min_acc = args.compression_min_access;
+
+        std::thread::spawn(move || {
+            tracing::info!(
+                "Compression scheduler started (interval: {}s, max_age: {}d, max_importance: {}, min_access: {})",
+                interval.as_secs(),
+                max_age,
+                max_imp,
+                min_acc,
+            );
+
+            loop {
+                std::thread::sleep(interval);
+
+                match compression_storage.with_transaction(|conn| {
+                    engram::storage::queries::compress_old_memories(
+                        conn, max_age, max_imp, min_acc, 100, // batch limit per cycle
+                    )
+                }) {
+                    Ok(archived) => {
+                        if archived > 0 {
+                            tracing::info!("Compression scheduler archived {} memories", archived);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Compression scheduler error: {}", e);
                     }
                 }
             }

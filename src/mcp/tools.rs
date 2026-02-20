@@ -461,6 +461,18 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
         }"#,
     ),
     (
+        "memory_find_semantic_duplicates",
+        "Find semantically similar memories using embedding cosine similarity (LLM-powered dedup). Goes beyond hash/n-gram to detect paraphrased content.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "threshold": {"type": "number", "default": 0.92, "description": "Cosine similarity threshold (0.92 = very similar)"},
+                "workspace": {"type": "string", "description": "Filter by workspace (optional)"},
+                "limit": {"type": "integer", "default": 50, "description": "Maximum duplicate pairs to return"}
+            }
+        }"#,
+    ),
+    (
         "memory_merge",
         "Merge duplicate memories",
         r#"{
@@ -1176,6 +1188,18 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
         }"#,
     ),
     (
+        "memory_record_procedure_outcome",
+        "Record a success or failure for a procedural memory. Increments the corresponding counter.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Procedural memory ID"},
+                "success": {"type": "boolean", "description": "true = success, false = failure"}
+            },
+            "required": ["id", "success"]
+        }"#,
+    ),
+    (
         "memory_boost",
         "Temporarily boost a memory's importance score. The boost can optionally decay over time.",
         r#"{
@@ -1404,6 +1428,65 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "archive_days": {"type": "integer", "description": "Days before auto-archiving"},
                 "min_importance": {"type": "number", "description": "Importance threshold for lifecycle"},
                 "min_access_count": {"type": "integer", "description": "Access count threshold"}
+            }
+        }"#,
+    ),
+    // Retention Policies
+    (
+        "retention_policy_set",
+        "Set a retention policy for a workspace. Controls auto-compression, max memory count, and auto-deletion.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Workspace name"},
+                "max_age_days": {"type": "integer", "description": "Hard age limit — auto-delete after this many days"},
+                "max_memories": {"type": "integer", "description": "Maximum active memories in this workspace"},
+                "compress_after_days": {"type": "integer", "description": "Auto-compress memories older than this"},
+                "compress_max_importance": {"type": "number", "description": "Only compress memories with importance <= this (default 0.3)"},
+                "compress_min_access": {"type": "integer", "description": "Skip compression if access_count >= this (default 3)"},
+                "auto_delete_after_days": {"type": "integer", "description": "Auto-delete archived memories older than this"},
+                "exclude_types": {"type": "array", "items": {"type": "string"}, "description": "Memory types exempt from policy (e.g. [\"decision\", \"checkpoint\"])"}
+            },
+            "required": ["workspace"]
+        }"#,
+    ),
+    (
+        "retention_policy_get",
+        "Get the retention policy for a workspace.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Workspace name"}
+            },
+            "required": ["workspace"]
+        }"#,
+    ),
+    (
+        "retention_policy_list",
+        "List all retention policies across all workspaces.",
+        r#"{
+            "type": "object",
+            "properties": {}
+        }"#,
+    ),
+    (
+        "retention_policy_delete",
+        "Delete a retention policy for a workspace.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Workspace name"}
+            },
+            "required": ["workspace"]
+        }"#,
+    ),
+    (
+        "retention_policy_apply",
+        "Apply all retention policies now. Compresses, caps, and deletes per workspace rules.",
+        r#"{
+            "type": "object",
+            "properties": {
+                "dry_run": {"type": "boolean", "default": false, "description": "Preview what would happen without making changes"}
             }
         }"#,
     ),
