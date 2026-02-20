@@ -5,6 +5,33 @@ All notable changes to Engram will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Semantic duplicate detection** — `memory_find_semantic_duplicates` MCP tool
+  - Cosine similarity over embeddings for LLM-powered dedup
+  - Configurable threshold, workspace scoping, bounded by limit
+- **Procedural memory tracking** — Phase 1 complete
+  - `memory_get_timeline`: query episodic memories by time range
+  - `memory_get_procedures`: query procedural memories by trigger pattern/success rate
+  - `memory_record_procedure_outcome`: increment success/failure counters
+- **Retention policies** — automated memory lifecycle management
+  - Schema v16: `retention_policies` table
+  - 5 MCP tools: `retention_policy_set/get/list/delete/apply`
+  - 3-phase apply: auto-compress → max memory enforcement → hard age limit
+  - Background compression scheduler (configurable interval)
+  - Dry-run mode for previewing policy effects
+- **Python SDK** (`sdks/python/`) — `engram-client` 0.1.0 for PyPI
+- **TypeScript SDK** (`sdks/typescript/`) — `engram-client` 0.1.0 for npm
+
+### Changed
+
+- CI: Criterion benchmark tracking with regression alerts (15% PR threshold, 20% nightly)
+- Schema: v15 → v16 (additive: `retention_policies` table)
+
+---
+
 ## [0.5.0] - 2026-02-13
 
 ### Added - Meilisearch Integration (Phase 7)
