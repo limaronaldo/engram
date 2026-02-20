@@ -120,18 +120,34 @@ jobs:
   # =============================================================================
 
   bench-full:
-    name: Full Benchmarks
+    name: Full Benchmarks (with regression tracking)
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
       - name: Run all benchmarks
-        run: cargo bench
+        run: cargo bench -- --output-format bencher | tee bench-output.txt
 
-      - name: Upload benchmark results
+      - name: Track benchmark results
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Engram Performance (Nightly)
+          tool: cargo
+          output-file-path: bench-output.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          alert-threshold: '120%'
+          comment-on-alert: true
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench-nightly
+
+      - name: Upload raw Criterion reports
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: nightly-benchmarks
           path: target/criterion/

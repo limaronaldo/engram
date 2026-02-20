@@ -139,19 +139,41 @@ jobs:
       - run: cargo bench --no-run
 
   bench:
-    name: Benchmarks
+    name: Benchmark Regression Check
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      - name: Run benchmarks
-        run: cargo bench -- --noplot
+      - name: Run benchmarks (Criterion JSON output)
+        run: cargo bench -- --output-format bencher | tee bench-output.txt
 
       - name: Store benchmark results
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Engram Performance
+          tool: cargo
+          output-file-path: bench-output.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # On main: update baseline and publish to gh-pages
+          auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          # On PRs: compare against baseline and comment
+          comment-on-alert: true
+          comment-always: ${{ github.event_name == 'pull_request' }}
+          # Fail if any benchmark regresses by more than 15%
+          alert-threshold: '115%'
+          fail-on-alert: ${{ github.event_name == 'pull_request' }}
+          # Store history in gh-pages branch
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench
+
+      - name: Upload raw Criterion reports
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: benchmark-results
           path: target/criterion/
