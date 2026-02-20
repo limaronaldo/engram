@@ -412,7 +412,7 @@ If you built from source instead of installing via Homebrew, use the full path t
 
 ## Contributing
 
-Contributions welcome! See [CLAUDE.md](CLAUDE.md) for conventions.
+Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions.
 
 ```bash
 cargo test           # Run all tests
