@@ -21,6 +21,7 @@ pub mod mmr;
 mod rerank;
 pub mod result_cache;
 pub mod semantic_cache;
+pub mod utility;
 
 #[cfg(feature = "neural-rerank")]
 pub mod neural_rerank;
