@@ -33,6 +33,10 @@ name = "engram-watcher"
 path = "src/bin/watcher.rs"
 required-features = ["watcher"]
 
+[[bin]]
+name = "engram-agent"
+path = "src/bin/agent.rs"
+
 [features]
 default = ["cloud", "openai"]
 
@@ -87,8 +91,20 @@ context-engineering = []
 # Temporal knowledge graph support
 temporal-graph = []
 
+# Semantic compression: compress/decompress memory content, context-window packing
+compression = []
+
+# Agentic evolution: emotional analysis, memory updates, utility scoring, reflections
+agentic-evolution = []
+
+# Advanced graph: coactivation edges, conflict detection, SPARQL-like triplet queries
+advanced-graph = []
+
+# Autonomous agent: full agentic loop combining all advanced capabilities
+autonomous-agent = ["compression", "agentic-evolution", "advanced-graph"]
+
 # All features
-full = ["cloud", "openai", "pdf", "langfuse", "turso", "meilisearch", "watcher", "multimodal", "emergent-graph", "ollama", "cohere", "voyage", "onnx-embed", "neural-rerank", "retrieval-excellence", "context-engineering", "temporal-graph"]
+full = ["cloud", "openai", "pdf", "langfuse", "turso", "meilisearch", "watcher", "multimodal", "emergent-graph", "ollama", "cohere", "voyage", "onnx-embed", "neural-rerank", "retrieval-excellence", "context-engineering", "temporal-graph", "compression", "agentic-evolution", "advanced-graph", "autonomous-agent"]
 
 [dependencies]
 # Async runtime

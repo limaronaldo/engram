@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 25;
+pub const SCHEMA_VERSION: i32 = 30;
 
 /// Run all migrations
 pub fn run_migrations(conn: &Connection) -> Result<()> {
@@ -122,8 +122,28 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         migrate_v24(conn)?;
     }
 
-    if current_version < SCHEMA_VERSION {
+    if current_version < 25 {
         migrate_v25(conn)?;
+    }
+
+    if current_version < 26 {
+        migrate_v26(conn)?;
+    }
+
+    if current_version < 27 {
+        migrate_v27(conn)?;
+    }
+
+    if current_version < 28 {
+        migrate_v28(conn)?;
+    }
+
+    if current_version < 29 {
+        migrate_v29(conn)?;
+    }
+
+    if current_version < SCHEMA_VERSION {
+        migrate_v30(conn)?;
     }
 
     Ok(())
@@ -1442,6 +1462,163 @@ fn migrate_v25(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// v26: Compression columns on memories table
+fn migrate_v26(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v26: Adding compression columns to memories...");
+
+    conn.execute_batch(
+        r#"
+        ALTER TABLE memories ADD COLUMN compressed_content TEXT;
+        ALTER TABLE memories ADD COLUMN compression_ratio REAL;
+        ALTER TABLE memories ADD COLUMN compression_method TEXT;
+
+        INSERT INTO schema_version (version) VALUES (26);
+        "#,
+    )?;
+
+    tracing::info!("Migration v26 complete: compression columns added");
+
+    Ok(())
+}
+
+/// v27: Consolidated memories table
+fn migrate_v27(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v27: Creating consolidated_memories table...");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS consolidated_memories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_ids TEXT NOT NULL DEFAULT '[]',
+            summary TEXT NOT NULL,
+            strategy_used TEXT NOT NULL DEFAULT 'content_overlap',
+            tokens_before INTEGER NOT NULL DEFAULT 0,
+            tokens_after INTEGER NOT NULL DEFAULT 0,
+            workspace TEXT DEFAULT 'default',
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+
+        INSERT INTO schema_version (version) VALUES (27);
+        "#,
+    )?;
+
+    tracing::info!("Migration v27 complete: consolidated_memories table created");
+
+    Ok(())
+}
+
+/// v28: Utility feedback + update log tables
+fn migrate_v28(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v28: Creating utility_feedback and update_log tables...");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS utility_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            memory_id INTEGER NOT NULL,
+            was_useful INTEGER NOT NULL DEFAULT 1,
+            query TEXT,
+            timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_utility_memory ON utility_feedback(memory_id);
+
+        CREATE TABLE IF NOT EXISTS update_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            memory_id INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            old_content_hash TEXT,
+            new_content_hash TEXT,
+            reason TEXT NOT NULL DEFAULT '',
+            timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+
+        INSERT INTO schema_version (version) VALUES (28);
+        "#,
+    )?;
+
+    tracing::info!("Migration v28 complete: utility_feedback and update_log tables created");
+
+    Ok(())
+}
+
+/// v29: Sentiment columns + reflections + query_log tables
+fn migrate_v29(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v29: Adding sentiment columns and creating reflections/query_log tables...");
+
+    conn.execute_batch(
+        r#"
+        ALTER TABLE memories ADD COLUMN sentiment_score REAL;
+        ALTER TABLE memories ADD COLUMN sentiment_label TEXT;
+
+        CREATE TABLE IF NOT EXISTS reflections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content TEXT NOT NULL,
+            source_ids TEXT NOT NULL DEFAULT '[]',
+            depth TEXT NOT NULL DEFAULT 'surface',
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS query_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            query TEXT NOT NULL,
+            workspace TEXT DEFAULT 'default',
+            timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+
+        INSERT INTO schema_version (version) VALUES (29);
+        "#,
+    )?;
+
+    tracing::info!("Migration v29 complete: sentiment columns, reflections and query_log created");
+
+    Ok(())
+}
+
+/// v30: Coactivation edges + graph conflicts + garden log tables
+fn migrate_v30(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v30: Creating coactivation_edges, graph_conflicts, and garden_log tables...");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS coactivation_edges (
+            from_id INTEGER NOT NULL,
+            to_id INTEGER NOT NULL,
+            strength REAL NOT NULL DEFAULT 0.1,
+            coactivation_count INTEGER NOT NULL DEFAULT 1,
+            last_coactivated TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            PRIMARY KEY (from_id, to_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS graph_conflicts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conflict_type TEXT NOT NULL,
+            edge_ids TEXT NOT NULL DEFAULT '[]',
+            description TEXT NOT NULL DEFAULT '',
+            severity TEXT NOT NULL DEFAULT 'medium',
+            resolved_at TEXT,
+            resolution_strategy TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS garden_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            workspace TEXT DEFAULT 'default',
+            actions TEXT NOT NULL DEFAULT '[]',
+            memories_pruned INTEGER NOT NULL DEFAULT 0,
+            memories_merged INTEGER NOT NULL DEFAULT 0,
+            memories_archived INTEGER NOT NULL DEFAULT 0,
+            tokens_freed INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+
+        INSERT INTO schema_version (version) VALUES (30);
+        "#,
+    )?;
+
+    tracing::info!("Migration v30 complete: coactivation_edges, graph_conflicts, garden_log created");
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1463,12 +1640,12 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query schema version");
-        assert_eq!(version, 25);
+        assert_eq!(version, 30);
     }
 
     #[test]
     fn test_schema_version_constant_is_19() {
-        assert_eq!(SCHEMA_VERSION, 25);
+        assert_eq!(SCHEMA_VERSION, 30);
     }
 
     #[test]
@@ -1566,7 +1743,10 @@ mod tests {
             "INSERT INTO auto_links (from_id, to_id, link_type, score) VALUES (?1, ?2, 'semantic', 0.8)",
             rusqlite::params![memory_id, memory_id],
         );
-        assert!(result.is_err(), "duplicate pair+type should violate unique index");
+        assert!(
+            result.is_err(),
+            "duplicate pair+type should violate unique index"
+        );
     }
 
     #[test]
@@ -1620,7 +1800,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query schema version");
-        assert_eq!(version, 25, "should reach v25 after full migration");
+        assert_eq!(version, 30, "should reach v30 after full migration");
 
         // Verify both new tables exist
         let auto_links_exists: i32 = conn

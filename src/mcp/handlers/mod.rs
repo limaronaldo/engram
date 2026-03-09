@@ -14,7 +14,10 @@ use crate::search::{FuzzyEngine, SearchConfig, SearchResultCache};
 use crate::storage::Storage;
 
 pub mod agent;
+pub mod autonomous;
+pub mod compression;
 pub mod context;
+pub mod evolution;
 pub mod graph;
 pub mod identity;
 pub mod lifecycle;
@@ -91,9 +94,7 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         "memory_create_procedural" => memory_crud::memory_create_procedural(ctx, params),
         "memory_get_timeline" => memory_crud::memory_get_timeline(ctx, params),
         "memory_get_procedures" => memory_crud::memory_get_procedures(ctx, params),
-        "memory_record_procedure_outcome" => {
-            memory_crud::record_procedure_outcome(ctx, params)
-        }
+        "memory_record_procedure_outcome" => memory_crud::record_procedure_outcome(ctx, params),
         "memory_set_expiration" => memory_crud::set_expiration(ctx, params),
         "memory_cleanup_expired" => memory_crud::cleanup_expired(ctx, params),
         "memory_create_batch" => memory_crud::memory_create_batch(ctx, params),
@@ -157,9 +158,7 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         "session_context_get" => session::session_context_get(ctx, params),
         "session_context_list" => session::session_context_list(ctx, params),
         "session_context_search" => session::session_context_search(ctx, params),
-        "session_context_update_summary" => {
-            session::session_context_update_summary(ctx, params)
-        }
+        "session_context_update_summary" => session::session_context_update_summary(ctx, params),
         "session_context_end" => session::session_context_end(ctx, params),
         "session_context_export" => session::session_context_export(ctx, params),
 
@@ -323,6 +322,34 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         "memory_explain_search" => search::memory_explain_search(ctx, params),
         "memory_feedback" => search::memory_feedback(ctx, params),
         "memory_feedback_stats" => search::memory_feedback_stats(ctx, params),
+
+        // ── Compression (semantic compression + context packing + consolidation) ─
+        "memory_compress" => compression::memory_compress(ctx, params),
+        "memory_decompress" => compression::memory_decompress(ctx, params),
+        "memory_compress_for_context" => compression::memory_compress_for_context(ctx, params),
+        "memory_consolidate" => compression::memory_consolidate(ctx, params),
+        "memory_synthesis" => compression::memory_synthesis(ctx, params),
+
+        // ── Evolution (update detection, utility, sentiment, reflection) ──────
+        "memory_detect_updates" => evolution::memory_detect_updates(ctx, params),
+        "memory_utility_score" => evolution::memory_utility_score(ctx, params),
+        "memory_sentiment_analyze" => evolution::memory_sentiment_analyze(ctx, params),
+        "memory_sentiment_timeline" => evolution::memory_sentiment_timeline(ctx, params),
+        "memory_reflect" => evolution::memory_reflect(ctx, params),
+
+        // ── Autonomous (conflicts, coactivation, triplets, garden, agent) ─────
+        "memory_detect_conflicts" => autonomous::memory_detect_conflicts(ctx, params),
+        "memory_resolve_conflict" => autonomous::memory_resolve_conflict(ctx, params),
+        "memory_coactivation_report" => autonomous::memory_coactivation_report(ctx, params),
+        "memory_query_triplets" => autonomous::memory_query_triplets(ctx, params),
+        "memory_knowledge_stats" => autonomous::memory_knowledge_stats(ctx, params),
+        "memory_suggest_acquisitions" => autonomous::memory_suggest_acquisitions(ctx, params),
+        "memory_garden" => autonomous::memory_garden(ctx, params),
+        "memory_garden_preview" => autonomous::memory_garden_preview(ctx, params),
+        "memory_agent_start" => autonomous::memory_agent_start(ctx, params),
+        "memory_agent_stop" => autonomous::memory_agent_stop(ctx, params),
+        "memory_agent_status" => autonomous::memory_agent_status(ctx, params),
+        "memory_agent_metrics" => autonomous::memory_agent_metrics(ctx, params),
 
         _ => json!({"error": format!("Unknown tool: {}", tool_name)}),
     }
