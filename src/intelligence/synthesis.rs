@@ -113,7 +113,7 @@ pub struct BufferEntry {
 ///
 /// # Usage
 /// ```rust
-/// use engram::intelligence::{SynthesisConfig, SynthesisEngine, SynthesisStrategy};
+/// use engram::intelligence::synthesis::{SynthesisConfig, SynthesisEngine, SynthesisStrategy};
 ///
 /// let mut engine = SynthesisEngine::new(SynthesisConfig::default());
 /// engine.add_to_buffer(1, "Rust ownership model uses borrow checker rules");
