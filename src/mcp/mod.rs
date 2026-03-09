@@ -2,6 +2,7 @@
 //!
 //! JSON-RPC over stdio for AI tool integration.
 
+pub mod handlers;
 pub mod protocol;
 pub mod tools;
 
