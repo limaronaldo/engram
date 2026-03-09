@@ -15,6 +15,7 @@ mod bm25;
 mod fuzzy;
 mod hybrid;
 mod metadata;
+pub mod mmr;
 mod rerank;
 pub mod result_cache;
 
@@ -23,6 +24,7 @@ pub use bm25::*;
 pub use fuzzy::*;
 pub use hybrid::*;
 pub use metadata::*;
+pub use mmr::*;
 pub use rerank::*;
 pub use result_cache::*;
 
