@@ -18,6 +18,7 @@ mod metadata;
 pub mod mmr;
 mod rerank;
 pub mod result_cache;
+pub mod semantic_cache;
 
 pub use aggregation::*;
 pub use bm25::*;
