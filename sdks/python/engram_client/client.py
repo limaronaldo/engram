@@ -183,6 +183,64 @@ class EngramClient:
             {"from_id": from_id, "to_id": to_id, "edge_type": edge_type},
         )
 
+    # -- Daily (ephemeral) memories --
+
+    def create_daily(
+        self,
+        content: str,
+        *,
+        tags: list[str] | None = None,
+        workspace: str | None = None,
+        ttl_seconds: int = 86400,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create a daily memory that auto-expires after ``ttl_seconds``.
+
+        Uses the ``memory_create_daily`` MCP tool which sets ``tier='daily'``
+        and computes ``expires_at`` from ``ttl_seconds``.
+        """
+        params: dict[str, Any] = {
+            "content": content,
+            "ttl_seconds": ttl_seconds,
+        }
+        if tags:
+            params["tags"] = tags
+        if workspace:
+            params["workspace"] = workspace
+        if metadata:
+            params["metadata"] = metadata
+        return self._mcp_call("memory_create_daily", params)
+
+    # -- Identity --
+
+    def create_identity(
+        self,
+        canonical_id: str,
+        display_name: str,
+        aliases: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create or update an identity with optional aliases.
+
+        Maps to the ``identity_create`` MCP tool.
+        """
+        params: dict[str, Any] = {
+            "canonical_id": canonical_id,
+            "display_name": display_name,
+        }
+        if aliases:
+            params["aliases"] = aliases
+        if metadata:
+            params["metadata"] = metadata
+        return self._mcp_call("identity_create", params)
+
+    def resolve_identity(self, alias: str) -> dict[str, Any]:
+        """Resolve an alias to its canonical identity.
+
+        Maps to the ``identity_resolve`` MCP tool.
+        """
+        return self._mcp_call("identity_resolve", {"alias": alias})
+
     # -- Stats --
 
     def stats(self) -> dict[str, Any]:

@@ -24,6 +24,7 @@ dependencies = [
 
 [project.optional-dependencies]
 langchain = ["langchain-core>=0.3.0"]
+crewai = ["crewai>=0.86.0"]
 
 [project.urls]
 Homepage = "https://github.com/limaronaldo/engram"
