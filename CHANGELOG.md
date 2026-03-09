@@ -9,6 +9,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.11.0] - 2026-03-09
+
+### Added — Cognitive Evolution & Platform Excellence (Phases E-K)
+
+This release implements two major roadmap rounds spanning 7 new phases, 46+ new MCP tools, and schema v17 → v30.
+
+#### Phase E: Memory Compression & Consolidation (RML-1207..1211)
+
+Feature flag: `compression`
+
+- **Semantic Structured Compression** — SimpleMem-inspired 30x token reduction via filler removal, SVO extraction, and deduplication (`src/intelligence/compression_semantic.rs`)
+- **Online Semantic Synthesis** — Intra-session dedup with Jaccard overlap detection (`src/intelligence/synthesis.rs`)
+- **Sleep-time Consolidation** — LightMem-inspired offline batch consolidation (`src/intelligence/consolidation_offline.rs`)
+- **Active Context Compression** — Token-budget aware adaptive compression (`src/intelligence/context_compression.rs`)
+- MCP tools: `memory_compress`, `memory_decompress`, `memory_compress_for_context`, `memory_consolidate`, `memory_synthesis`
+
+#### Phase F: Agentic Memory Evolution (RML-1212..1215)
+
+Feature flag: `agentic-evolution`
+
+- **Historical Memory Update** — A-Mem-inspired auto-update with contradiction/supplement detection (`src/intelligence/memory_update.rs`)
+- **Retrieval Utility Scoring** — MemRL-inspired Q-value utility with temporal decay (`src/search/utility.rs`)
+- **Emotional & Reflective Memory** — Rule-based sentiment analysis + reflection engine (`src/intelligence/emotional.rs`)
+- MCP tools: `memory_detect_updates`, `memory_utility_score`, `memory_sentiment_analyze`, `memory_sentiment_timeline`, `memory_reflect`
+
+#### Phase G: Advanced Graph Intelligence (RML-1216..1219)
+
+Feature flag: `advanced-graph`
+
+- **Graph Conflict Detection & Resolution** — Mem0g-inspired contradiction, cycle, and orphan detection (`src/graph/conflicts.rs`)
+- **Temporal Coactivation / Hebbian Learning** — "Neurons that fire together wire together" edge strengthening (`src/graph/coactivation.rs`)
+- **Semantic Triplet Matching** — SPARQL-like SPO pattern matching with transitive inference (`src/graph/triplets.rs`)
+- MCP tools: `memory_detect_conflicts`, `memory_resolve_conflict`, `memory_coactivation_report`, `memory_query_triplets`, `memory_add_knowledge`
+
+#### Phase H: Autonomous Memory Agent (RML-1220..1223)
+
+Feature flag: `autonomous-agent` (depends on compression + agentic-evolution + advanced-graph)
+
+- **Proactive Memory Acquisition** — Gap detection + interest tracking (`src/intelligence/proactive.rs`)
+- **Autonomous Pruning & Gardening** — 4-pass pipeline: dedup, compress, prune, link (`src/intelligence/gardening.rs`)
+- **Memory Agent Loop** — Observe→decide→act tick-based agent (`src/intelligence/agent_loop.rs`)
+- New binary: `engram-agent` (run/status/garden/suggest)
+- MCP tools: `memory_agent_start`, `memory_agent_stop`, `memory_agent_status`, `memory_agent_metrics`, `memory_agent_configure`, `memory_garden`, `memory_garden_preview`, `memory_garden_undo`, `memory_suggest_acquisition`, `memory_proactive_scan`
+
+#### Phase I: Retrieval Excellence (RML-1224..1231, RML-1242..1243)
+
+Feature flags: `retrieval-excellence`, `ollama`, `cohere`, `voyage`, `onnx-embed`, `neural-rerank`
+
+- **Multi-Provider Embeddings** — EmbeddingProvider trait + registry supporting Ollama, Cohere, Voyage AI, ONNX Runtime (`src/embedding/provider.rs`, `ollama.rs`, `cohere.rs`, `voyage.rs`, `onnx.rs`)
+- **MMR Diversity-Aware Retrieval** — Maximal Marginal Relevance for result diversity (`src/search/mmr.rs`)
+- **Semantic Query Cache** — Cosine-similarity DashMap cache with TTL and LRU (`src/search/semantic_cache.rs`)
+- **Cross-Encoder Neural Reranking** — ONNX Runtime ms-marco-MiniLM reranker (`src/search/neural_rerank.rs`)
+- **Search Explainability** — Per-result scoring breakdown with signal contributions (`src/search/explain.rs`)
+- **Relevance Feedback Loop** — Useful/irrelevant signals with Laplace-smoothed boost (`src/search/feedback.rs`)
+- MCP tools: `memory_cache_stats`, `memory_cache_clear`, `memory_embedding_providers`, `memory_embedding_migrate`, `memory_explain_search`, `memory_feedback`, `memory_feedback_stats`
+
+#### Phase J: Context Engineering (RML-1225, RML-1232..1234)
+
+Feature flag: `context-engineering`
+
+- **Automatic Fact Extraction** — Rule-based SPO triple extraction with 80% compression target (`src/intelligence/fact_extraction.rs`)
+- **Memory-Aware Prompt Construction** — 3 strategies (Greedy/Balanced/Recency) with token counting (`src/intelligence/context_builder.rs`)
+- **Self-Editing Memory Blocks** — Letta-inspired 3-tier blocks with edit log (`src/storage/memory_blocks.rs`)
+- MCP tools: `memory_extract_facts`, `memory_list_facts`, `memory_fact_graph`, `memory_build_context`, `memory_prompt_template`, `memory_token_estimate`, `memory_block_get`, `memory_block_edit`, `memory_block_list`, `memory_block_create`
+
+#### Phase K: Temporal Graph & Platform Maturity (RML-1226, RML-1235..1237)
+
+Feature flag: `temporal-graph`
+
+- **Temporal Knowledge Graph** — Zep/Graphiti-inspired edges with validity periods, contradiction detection, snapshot-at-time (`src/graph/temporal.rs`)
+- **Hierarchical Memory Scoping** — 5-level scope: Global > Org > User > Session > Agent (`src/storage/scoping.rs`)
+- **Standardized Benchmark Suite** — LOCOMO, LongMemEval, MemBench frameworks (`src/bench/`)
+- New binary: `engram-bench` (LOCOMO/LongMemEval/MemBench suites)
+- MCP tools: `memory_temporal_create`, `memory_temporal_invalidate`, `memory_temporal_snapshot`, `memory_temporal_contradictions`, `memory_temporal_evolve`, `memory_scope_set`, `memory_scope_get`, `memory_scope_list`, `memory_scope_inherit`, `memory_scope_isolate`
+
+### Changed
+
+- Schema: v17 → v30 (14 additive migrations)
+- Feature flags: 12 new (`compression`, `agentic-evolution`, `advanced-graph`, `autonomous-agent`, `retrieval-excellence`, `ollama`, `cohere`, `voyage`, `onnx-embed`, `neural-rerank`, `context-engineering`, `temporal-graph`)
+- Binaries: 2 new (`engram-agent`, `engram-bench`)
+- MCP tools: 161+ → 207+ (46 new tools across 7 phases)
+- Tests: 300+ → 672+
+
+---
+
+## [0.8.1] - 2026-03-09
+
+### Added — Reactive Infrastructure (Phase 11)
+
+- **Emergent Graph** — Auto-generated semantic, temporal, and co-occurrence links with community detection
+- **Document Ingestion** — Markdown and PDF ingestion with chunking and metadata
+- Bumped from 0.7.0 with Round 1 infrastructure additions
+
+---
+
 ## [0.7.0] - 2026-03-09
 
 ### Added
@@ -394,13 +489,21 @@ This release brings Engram to full feature parity with [Memora](https://github.c
 
 ## Version History
 
-- **0.5.0** - Meilisearch Integration (Phase 7) — All phases complete
+- **0.11.0** - Cognitive Evolution & Platform Excellence (Phases E-K) — 46+ new MCP tools, schema v30
+- **0.8.1** - Reactive Infrastructure (Phase 11) — Emergent graph, document ingestion
+- **0.7.0** - SSE Event Streaming, Agent Registry (Phase 11)
+- **0.6.0** - MCP Modernization (Phase 10) — Resources, Prompts, HTTP transport
+- **0.5.0** - Meilisearch Integration (Phase 7)
 - **0.4.1** - Published as engram-core on crates.io
 - **0.4.0** - Salience & Context Quality (Phases 8-9)
 - **0.3.0** - Context Engineering Platform (Phases 1-5)
 - **0.2.0** - Memora Feature Parity (24 new tools)
 - **0.1.0** - Initial release with full feature set
 
+[0.11.0]: https://github.com/limaronaldo/engram/compare/v0.8.1...v0.11.0
+[0.8.1]: https://github.com/limaronaldo/engram/compare/v0.7.0...v0.8.1
+[0.7.0]: https://github.com/limaronaldo/engram/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/limaronaldo/engram/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/limaronaldo/engram/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/limaronaldo/engram/releases/tag/v0.4.1
 [0.4.0]: https://github.com/limaronaldo/engram/releases/tag/v0.4.0

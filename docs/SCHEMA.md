@@ -1,7 +1,7 @@
 # Engram Database Schema
 
-**Date:** February 12, 2026  
-**Current Version:** v15  
+**Date:** March 9, 2026
+**Current Version:** v30
 **Engine:** SQLite with WAL mode
 
 ---
@@ -9,7 +9,7 @@
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Schema (v15)](#schema-v15)
+2. [Schema (v30)](#schema-v30)
 3. [Migration History](#migration-history)
 4. [Indexes](#indexes)
 5. [Migration Strategy](#migration-strategy)
@@ -31,6 +31,14 @@ Engram uses SQLite with WAL (Write-Ahead Logging) mode for its storage layer. Th
 - Multi-agent synchronization and sharing
 - Salience scoring with trend history
 - Quality scoring with conflict detection
+- Retrieval excellence (embeddings, cache, neural reranking, feedback)
+- Context engineering (facts, memory blocks, prompt construction)
+- Temporal knowledge graph with validity periods
+- Hierarchical memory scoping (5-level)
+- Memory compression and consolidation
+- Agentic memory evolution (utility scoring, sentiment, reflections)
+- Advanced graph intelligence (conflicts, coactivation, triplets)
+- Autonomous memory agent (gardening, proactive acquisition)
 
 ### Design Principles
 
@@ -41,7 +49,7 @@ Engram uses SQLite with WAL (Write-Ahead Logging) mode for its storage layer. Th
 
 ---
 
-## Schema (v15)
+## Schema (v30)
 
 ### Entity Relationship Diagram
 
@@ -165,7 +173,39 @@ CREATE TABLE memories (
 
     -- Quality (v15)
     quality_score REAL DEFAULT 0.5,
-    validation_status TEXT DEFAULT 'unverified'
+    validation_status TEXT DEFAULT 'unverified',
+
+    -- Retention (v16)
+    -- (retention_policies is a separate table)
+
+    -- Agents (v17)
+    -- (agents is a separate table)
+
+    -- Emergent Graph (v18-19)
+    -- (communities, emergent links via crossrefs)
+
+    -- Retrieval Excellence (v20-21)
+    embedding_model TEXT DEFAULT 'default',
+
+    -- Context Engineering (v22-23)
+    -- (facts, memory_blocks, block_edit_log are separate tables)
+
+    -- Temporal Graph (v24)
+    -- (temporal_edges is a separate table)
+
+    -- Hierarchical Scoping (v25)
+    scope_path TEXT,
+
+    -- Compression (v26)
+    compressed_content TEXT,
+    compression_ratio REAL,
+    compression_method TEXT,
+
+    -- Agentic Evolution (v27-28)
+    utility_score REAL DEFAULT 0.5,
+    sentiment_score REAL,
+    sentiment_label TEXT,
+    reflection_depth INTEGER DEFAULT 0
 );
 ```
 
@@ -202,6 +242,15 @@ CREATE TABLE memories (
 | lifecycle_state | TEXT | v13 | active, stale, or archived |
 | quality_score | REAL | v15 | 0.0-1.0 computed quality |
 | validation_status | TEXT | v15 | unverified, verified, disputed, stale |
+| embedding_model | TEXT | v20 | Embedding provider used (default, openai, ollama, etc.) |
+| scope_path | TEXT | v25 | Hierarchical scope path (e.g., `global/org1/user1`) |
+| compressed_content | TEXT | v26 | Compressed version of content |
+| compression_ratio | REAL | v26 | Compression ratio achieved |
+| compression_method | TEXT | v26 | Compression method used |
+| utility_score | REAL | v27 | Q-value utility score for retrieval |
+| sentiment_score | REAL | v28 | Sentiment score (-1.0 to 1.0) |
+| sentiment_label | TEXT | v28 | Sentiment label (positive/negative/neutral) |
+| reflection_depth | INTEGER | v28 | Depth of reflection analysis |
 
 #### tags
 
@@ -717,6 +766,257 @@ CREATE TABLE schema_version (
 
 ---
 
+### Retrieval Excellence Tables (v20-21)
+
+#### search_feedback (v21)
+
+Relevance feedback signals for search result quality.
+
+```sql
+CREATE TABLE search_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    query TEXT NOT NULL,
+    memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    signal TEXT NOT NULL,          -- 'useful' or 'irrelevant'
+    query_embedding BLOB,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### Context Engineering Tables (v22-23)
+
+#### facts (v22)
+
+SPO (Subject-Predicate-Object) triples extracted from memories.
+
+```sql
+CREATE TABLE facts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    subject TEXT NOT NULL,
+    predicate TEXT NOT NULL,
+    object TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 0.8,
+    source TEXT DEFAULT 'extraction',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+#### memory_blocks (v23)
+
+Letta-inspired self-editing memory blocks (system/persona/human tiers).
+
+```sql
+CREATE TABLE memory_blocks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    block_type TEXT NOT NULL,       -- 'system', 'persona', 'human'
+    label TEXT NOT NULL,
+    content TEXT NOT NULL,
+    workspace TEXT NOT NULL DEFAULT 'default',
+    max_tokens INTEGER DEFAULT 2048,
+    archived INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(block_type, label, workspace)
+);
+```
+
+#### block_edit_log (v23)
+
+Edit history for memory blocks.
+
+```sql
+CREATE TABLE block_edit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    block_id INTEGER NOT NULL REFERENCES memory_blocks(id) ON DELETE CASCADE,
+    old_content TEXT NOT NULL,
+    new_content TEXT NOT NULL,
+    edit_reason TEXT,
+    edited_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### Temporal Graph Tables (v24)
+
+#### temporal_edges (v24)
+
+Knowledge graph edges with temporal validity periods.
+
+```sql
+CREATE TABLE temporal_edges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    from_entity TEXT NOT NULL,
+    to_entity TEXT NOT NULL,
+    relation TEXT NOT NULL,
+    valid_from TEXT NOT NULL,
+    valid_to TEXT,                  -- NULL = still valid
+    confidence REAL NOT NULL DEFAULT 1.0,
+    source_memory_id INTEGER REFERENCES memories(id) ON DELETE SET NULL,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    invalidated_at TEXT,
+    invalidated_by INTEGER REFERENCES temporal_edges(id),
+    UNIQUE(from_entity, to_entity, relation, valid_from)
+);
+```
+
+### Compression Tables (v26)
+
+Schema v26 adds `compressed_content`, `compression_ratio`, `compression_method` columns to the `memories` table (see above).
+
+#### consolidated_memories (v26)
+
+Tracks which memories were consolidated together.
+
+```sql
+CREATE TABLE consolidated_memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    target_memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    consolidated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### Agentic Evolution Tables (v27-28)
+
+#### utility_feedback (v27)
+
+Feedback signals for retrieval utility scoring.
+
+```sql
+CREATE TABLE utility_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    signal TEXT NOT NULL,          -- 'positive' or 'negative'
+    context TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+#### update_log (v27)
+
+History of automatic memory updates (contradiction/supplement detection).
+
+```sql
+CREATE TABLE update_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    update_type TEXT NOT NULL,     -- 'contradiction', 'supplement', 'refinement'
+    old_content TEXT,
+    new_content TEXT,
+    detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+#### reflections (v28)
+
+Reflective analysis of memory patterns and insights.
+
+```sql
+CREATE TABLE reflections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id INTEGER REFERENCES memories(id) ON DELETE SET NULL,
+    reflection_type TEXT NOT NULL,  -- 'pattern', 'insight', 'question'
+    content TEXT NOT NULL,
+    depth INTEGER NOT NULL DEFAULT 1,
+    workspace TEXT NOT NULL DEFAULT 'default',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+### Advanced Graph Tables (v29)
+
+#### coactivation_edges (v29)
+
+Hebbian learning edges tracking co-accessed memory pairs.
+
+```sql
+CREATE TABLE coactivation_edges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_a_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    memory_b_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    strength REAL NOT NULL DEFAULT 0.1,
+    co_access_count INTEGER NOT NULL DEFAULT 1,
+    last_coactivated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(memory_a_id, memory_b_id)
+);
+```
+
+#### graph_conflicts (v29)
+
+Knowledge graph conflict tracking (contradictions, cycles, orphans).
+
+```sql
+CREATE TABLE graph_conflicts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conflict_type TEXT NOT NULL,    -- 'contradiction', 'cycle', 'orphan'
+    entity_a TEXT,
+    entity_b TEXT,
+    edge_id INTEGER,
+    description TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'medium',
+    resolved INTEGER NOT NULL DEFAULT 0,
+    resolution TEXT,
+    detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TEXT
+);
+```
+
+#### knowledge_triplets (v29)
+
+SPO triplets for SPARQL-like graph queries.
+
+```sql
+CREATE TABLE knowledge_triplets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    subject TEXT NOT NULL,
+    predicate TEXT NOT NULL,
+    object TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 1.0,
+    source_memory_id INTEGER REFERENCES memories(id) ON DELETE SET NULL,
+    valid_from TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    valid_to TEXT,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(subject, predicate, object)
+);
+```
+
+### Autonomous Agent Tables (v30)
+
+#### garden_log (v30)
+
+Log of autonomous gardening operations.
+
+```sql
+CREATE TABLE garden_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    operation TEXT NOT NULL,       -- 'dedup', 'compress', 'prune', 'link'
+    memory_id INTEGER REFERENCES memories(id) ON DELETE SET NULL,
+    details TEXT NOT NULL DEFAULT '{}',
+    undone INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+#### query_log (v30)
+
+Log of agent queries for proactive acquisition analysis.
+
+```sql
+CREATE TABLE query_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    query TEXT NOT NULL,
+    result_count INTEGER NOT NULL DEFAULT 0,
+    workspace TEXT,
+    agent_id TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+---
+
 ## Migration History
 
 | Version | Phase | Description | Key Changes |
@@ -736,6 +1036,21 @@ CREATE TABLE schema_version (
 | v13 | Phase 5 | Lifecycle (ENG-37) | `lifecycle_state` column |
 | v14 | Phase 8 | Salience & sessions (ENG-66+) | `salience_history`, `session_memories` tables; session extensions |
 | v15 | Phase 9 | Context quality (ENG-48+) | `quality_history`, `memory_conflicts`, `source_trust_scores`, `duplicate_candidates` tables |
+| v16 | Phase 10 | Retention policies | `retention_policies` table |
+| v17 | Phase 11 | Agent registry | `agents` table with capabilities and heartbeat |
+| v18 | Round 1 | Emergent graph | Community detection, auto-links |
+| v19 | Round 1 | Document ingestion | Markdown/PDF chunking support |
+| v20 | Phase I | Embedding model tracking | `embedding_model` column on memories |
+| v21 | Phase I | Search feedback | `search_feedback` table |
+| v22 | Phase J | Fact extraction | `facts` table (SPO triples) |
+| v23 | Phase J | Memory blocks | `memory_blocks`, `block_edit_log` tables |
+| v24 | Phase K | Temporal graph | `temporal_edges` table |
+| v25 | Phase K | Hierarchical scoping | `scope_path` column |
+| v26 | Phase E | Compression | `compressed_content`, `compression_ratio`, `compression_method` columns; `consolidated_memories` table |
+| v27 | Phase F | Agentic evolution | `utility_score` column; `utility_feedback`, `update_log` tables |
+| v28 | Phase F | Emotional memory | `sentiment_score`, `sentiment_label`, `reflection_depth` columns; `reflections` table |
+| v29 | Phase G | Advanced graph | `coactivation_edges`, `graph_conflicts`, `knowledge_triplets` tables |
+| v30 | Phase H | Autonomous agent | `garden_log`, `query_log` tables |
 
 ---
 
@@ -870,4 +1185,4 @@ All migrations are located in `src/storage/migrations.rs`.
 
 ---
 
-**Last Updated:** February 12, 2026
+**Last Updated:** March 9, 2026

@@ -15,8 +15,16 @@
 | 8 | Salience Scoring | Done | v0.4.0 | Multi-signal salience (recency, frequency, importance, feedback), session context |
 | 9 | Context Quality | Done | v0.4.0 | 5-component quality scoring, near-duplicate detection, conflict resolution, source trust |
 | 10 | MCP Modernization | Done | v0.6.0 | MCP 2025-11-25 protocol, Resources, Prompts, tool annotations, HTTP transport, server modularization |
+| 11 | Reactive Infrastructure | Done | v0.7.0 | SSE event streaming, agent registry, MCP dispatch benchmark |
+| E | Memory Compression & Consolidation | Done | v0.11.0 | Semantic compression (30x), online synthesis, sleep-time consolidation, context compression |
+| F | Agentic Memory Evolution | Done | v0.11.0 | Historical memory update, retrieval utility scoring, emotional & reflective memory |
+| G | Advanced Graph Intelligence | Done | v0.11.0 | Conflict detection/resolution, Hebbian coactivation, semantic triplet matching |
+| H | Autonomous Memory Agent | Done | v0.11.0 | Proactive acquisition, autonomous gardening, observe→decide→act agent loop |
+| I | Retrieval Excellence | Done | v0.11.0 | Multi-provider embeddings, MMR diversity, semantic cache, neural reranking, explainability, feedback |
+| J | Context Engineering | Done | v0.11.0 | Fact extraction, prompt construction, self-editing memory blocks |
+| K | Temporal Graph & Platform Maturity | Done | v0.11.0 | Temporal knowledge graph, hierarchical scoping, benchmark suite |
 
-All 11 phases complete. Published as v0.6.0.
+All 19 phases complete. Published as v0.11.0.
 
 ---
 
@@ -137,11 +145,87 @@ Real-time event delivery, multi-agent federation foundation, and performance ben
 - **MCP Dispatch Benchmark**: Criterion suite covering 5 tool dispatch paths (create, search, list, stats, error)
 - **Benchmark Baseline Scripts**: `bench-baseline.sh` and `bench-compare.sh` for local performance tracking
 
+### Phase E: Memory Compression & Consolidation (v0.11.0)
+
+Cognitive-inspired memory compression and consolidation. Feature flag: `compression`.
+
+- **Semantic Structured Compression**: SimpleMem-inspired 30x token reduction via filler removal, SVO extraction, dedup
+- **Online Semantic Synthesis**: Intra-session dedup with Jaccard overlap detection
+- **Sleep-time Consolidation**: LightMem-inspired offline batch consolidation
+- **Active Context Compression**: Token-budget aware adaptive compression
+- Schema v26: `compressed_content`, `compression_ratio`, `compression_method` columns
+- 5 MCP tools: `memory_compress`, `memory_decompress`, `memory_compress_for_context`, `memory_consolidate`, `memory_synthesis`
+
+### Phase F: Agentic Memory Evolution (v0.11.0)
+
+Self-improving memory with utility scoring and emotional awareness. Feature flag: `agentic-evolution`.
+
+- **Historical Memory Update**: A-Mem-inspired auto-update with contradiction/supplement detection
+- **Retrieval Utility Scoring**: MemRL-inspired Q-value with `Q(m) = Q(m) + α * (reward - Q(m))` and temporal decay
+- **Emotional & Reflective Memory**: Rule-based sentiment analysis + reflection engine
+- Schema v27-28: `utility_score`, `utility_feedback`, `update_log`, `sentiment_score`, `sentiment_label`, `reflections` tables
+- 5 MCP tools: `memory_detect_updates`, `memory_utility_score`, `memory_sentiment_analyze`, `memory_sentiment_timeline`, `memory_reflect`
+
+### Phase G: Advanced Graph Intelligence (v0.11.0)
+
+Advanced knowledge graph capabilities. Feature flag: `advanced-graph` (depends on `emergent-graph`).
+
+- **Conflict Detection & Resolution**: Mem0g-inspired contradiction, cycle, and orphan detection
+- **Temporal Coactivation / Hebbian Learning**: "Neurons that fire together wire together" edge strengthening
+- **Semantic Triplet Matching**: SPARQL-like SPO pattern matching with transitive inference
+- Schema v29: `coactivation_edges`, `graph_conflicts`, `knowledge_triplets` tables
+- 5 MCP tools: `memory_detect_conflicts`, `memory_resolve_conflict`, `memory_coactivation_report`, `memory_query_triplets`, `memory_add_knowledge`
+
+### Phase H: Autonomous Memory Agent (v0.11.0)
+
+Full autonomous agent loop. Feature flag: `autonomous-agent` (depends on compression + agentic-evolution + advanced-graph).
+
+- **Proactive Memory Acquisition**: Gap detection + interest tracking
+- **Autonomous Pruning & Gardening**: 4-pass pipeline (dedup → compress → prune → link)
+- **Memory Agent Loop**: Observe→decide→act tick-based agent
+- Schema v30: `garden_log`, `query_log` tables
+- New binary: `engram-agent`
+- 10 MCP tools: `memory_agent_start/stop/status/metrics/configure`, `memory_garden/garden_preview/garden_undo`, `memory_suggest_acquisition`, `memory_proactive_scan`
+
+### Phase I: Retrieval Excellence (v0.11.0)
+
+State-of-the-art retrieval with multi-provider embeddings. Feature flags: `retrieval-excellence`, `ollama`, `cohere`, `voyage`, `onnx-embed`, `neural-rerank`.
+
+- **Multi-Provider Embeddings**: EmbeddingProvider trait + registry (Ollama, Cohere, Voyage AI, ONNX)
+- **MMR Diversity-Aware Retrieval**: Maximal Marginal Relevance for result diversity
+- **Semantic Query Cache**: Cosine-similarity DashMap cache (threshold 0.92, TTL, LRU)
+- **Cross-Encoder Neural Reranking**: ONNX Runtime ms-marco-MiniLM
+- **Search Explainability**: Per-result scoring breakdown with signal contributions
+- **Relevance Feedback Loop**: Useful/irrelevant signals with Laplace-smoothed boost
+- Schema v20-21: `embedding_model` column, `search_feedback` table
+- 7 MCP tools: `memory_cache_stats`, `memory_cache_clear`, `memory_embedding_providers`, `memory_embedding_migrate`, `memory_explain_search`, `memory_feedback`, `memory_feedback_stats`
+
+### Phase J: Context Engineering (v0.11.0)
+
+LLM context optimization pipeline. Feature flag: `context-engineering`.
+
+- **Automatic Fact Extraction**: Rule-based SPO triple extraction (80% compression target)
+- **Memory-Aware Prompt Construction**: 3 strategies (Greedy/Balanced/Recency) with token counting
+- **Self-Editing Memory Blocks**: Letta-inspired 3-tier blocks (system/persona/human) with edit log
+- Schema v22-23: `facts`, `memory_blocks`, `block_edit_log` tables
+- 10 MCP tools: `memory_extract_facts`, `memory_list_facts`, `memory_fact_graph`, `memory_build_context`, `memory_prompt_template`, `memory_token_estimate`, `memory_block_get/edit/list/create`
+
+### Phase K: Temporal Graph & Platform Maturity (v0.11.0)
+
+Temporal knowledge graphs and hierarchical scoping. Feature flag: `temporal-graph`.
+
+- **Temporal Knowledge Graph**: Zep/Graphiti-inspired edges with validity periods, auto-invalidation, snapshot-at-time
+- **Hierarchical Memory Scoping**: 5-level scope: Global > Org > User > Session > Agent
+- **Standardized Benchmark Suite**: LOCOMO, LongMemEval, MemBench frameworks
+- Schema v24-25: `temporal_edges` table, `scope_path` column
+- New binary: `engram-bench`
+- 10 MCP tools: `memory_temporal_create/invalidate/snapshot/contradictions/evolve`, `memory_scope_set/get/list/inherit/isolate`
+
 ---
 
 ## What's Next
 
-All 12 planned phases are complete. Future directions under consideration:
+All 19 phases complete. Future directions under consideration:
 
 - **OpenClaw integration**: Memory plugin for the 192K-star AI assistant platform
 - **Multi-agent memory sharing**: Cross-agent memory federation with shared workspaces
@@ -163,3 +247,5 @@ All 12 planned phases are complete. Future directions under consideration:
 | v0.5.0 | 2026-02-13 | 0-9 (all) | 144+ |
 | v0.6.0 | 2026-03-09 | 0-10 (all) | 155+ |
 | v0.7.0 | 2026-03-09 | 0-11 (all) | 161+ |
+| v0.8.1 | 2026-03-09 | 0-11, Round 1 | 161+ |
+| v0.11.0 | 2026-03-09 | All (0-K) | 207+ |
