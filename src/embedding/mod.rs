@@ -13,10 +13,12 @@
 //! - `openai`: Enables OpenAI embedding backend (requires API key)
 
 mod cache;
+mod provider;
 mod queue;
 mod tfidf;
 
 pub use cache::{EmbeddingCache, EmbeddingCacheStats};
+pub use provider::{EmbeddingProvider, EmbeddingProviderInfo, EmbeddingRegistry};
 pub use queue::{get_embedding, get_embedding_status, EmbeddingQueue, EmbeddingWorker};
 pub use tfidf::TfIdfEmbedder;
 
