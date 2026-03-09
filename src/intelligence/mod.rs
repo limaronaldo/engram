@@ -19,6 +19,7 @@
 //! - Emotional analysis and reflective memory (RML-1215)
 //! - Autonomous memory garden maintenance (RML-1222)
 
+pub mod agent_loop;
 pub mod auto_capture;
 pub mod auto_tagging;
 pub mod compression;

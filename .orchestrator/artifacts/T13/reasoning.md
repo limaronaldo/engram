@@ -1,30 +1,37 @@
-## Task: T13 — Standardized Benchmark Suite
+## Task: T13 — Memory Agent Loop (RML-1223)
 
 ### Approach
 
-Implemented a benchmark framework and three benchmark modules, plus a CLI binary. Used `Storage::open_in_memory()` instead of direct `rusqlite::Connection` to stay within the public API (the `migrations` module is private). Each benchmark generates synthetic data at runtime and cleans up temporary files after running.
+Created `src/intelligence/agent_loop.rs` with a pure observe→decide→act struct.
+The agent is not a background thread — it exposes a `tick(conn)` method that the
+caller invokes at the desired interval. One cycle: run `MemoryGardener` in dry-run
+mode to surface prune/merge/archive candidates, run `GapDetector` to surface
+acquisition suggestions, then cap the combined list at `max_actions_per_cycle`.
+No DB writes are made by `tick()` itself; the caller (MCP handler) decides whether
+to apply them.
 
 ### Files Changed
 
-- `src/bench/mod.rs` — Core framework: `BenchmarkResult`, `Benchmark` trait, `BenchmarkSuite` with JSON/Markdown/CSV reporting, `default_suite()` factory. 5 tests.
-- `src/bench/locomo.rs` — LOCOMO benchmark: synthetic multi-session conversations, keyword-based retrieval, precision/recall/F1. 3 tests.
-- `src/bench/longmemeval.rs` — LongMemEval benchmark: 5 dimensions (retention, temporal, knowledge update, multi-hop, contradiction detection) with configurable weights. 4 tests.
-- `src/bench/membench.rs` — MemBench: CRUD throughput (create/get/search per-sec) and search quality (NDCG@10, MRR) with a synthetic corpus. 5 tests.
-- `src/lib.rs` — Added `pub mod bench;` registration.
-- `Cargo.toml` — Added `[[bin]] name = "engram-bench" path = "src/bin/bench.rs"`.
-- `src/bin/bench.rs` — CLI binary with `run` and `list` subcommands, supports suite selection, output format (json/md/csv), and size overrides.
+- `src/intelligence/agent_loop.rs` — new file: `AgentConfig`, `AgentState`,
+  `AgentAction`, `AgentMetrics`, `CycleResult`, `MemoryAgent` with `new`, `start`,
+  `stop`, `is_running`, `tick`, `should_garden`, `metrics`, `configure`, `status`.
+  12 unit tests.
+- `src/intelligence/mod.rs` — added `pub mod agent_loop;`
 
 ### Decisions Made
 
-- Used `Storage::open_in_memory()` over raw `rusqlite::Connection` because the `migrations` module is private — this keeps the benchmark code within the public API.
-- Used file-based storage with a `.{benchmark}_bench.db` suffix and cleanup for non-memory paths, to isolate benchmark data from production databases.
-- `UpdateMemoryInput` fields set explicitly (no `Default` derive on it) — constructed all `None` fields inline.
-- NDCG and MRR computed purely in Rust without external dependencies.
-- Benchmarks use simple `LIKE` queries rather than hybrid search to keep them dependency-free and deterministic.
+- Dry-run gardener inside tick: avoids any accidental DB mutation from the observe
+  phase; the returned GardenReport provides all candidate action data without side
+  effects.
+- Garden action in the result signals to the caller that it should invoke
+  MemoryGardener::garden() directly, keeping tick() side-effect-free.
+- Separate counters for each action type needed to populate AgentMetrics without
+  re-scanning the actions list.
+- last_acquisition_at set on every tick that scanned for gaps (not just when
+  suggestions were produced): accurately reflects "last time we checked".
 
 ### Verification
 
-- Tests pass: yes (19/19)
-- Lint clean: yes (0 warnings after fixes)
-- Type check: yes (builds cleanly)
-- Binary smoke tests: `engram-bench list` and `engram-bench run --suite membench` both work correctly
+- Tests pass: yes (12/12)
+- Lint clean: yes (no clippy warnings in new file)
+- Type check: yes (compiles cleanly)
