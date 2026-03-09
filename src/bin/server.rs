@@ -13,7 +13,8 @@ use engram::embedding::create_embedder;
 use engram::error::Result;
 use engram::mcp::{
     get_tool_definitions, handlers, methods, InitializeResult, McpHandler, McpRequest, McpResponse,
-    McpServer, ToolCallResult,
+    McpServer, ToolCallResult, MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_LEGACY,
+    PromptCapabilities, ResourceCapabilities, ServerCapabilities, ToolsCapability,
 };
 use engram::realtime::{RealtimeManager, RealtimeServer};
 use engram::search::{FuzzyEngine, SearchConfig};
@@ -220,7 +221,45 @@ impl McpHandler for EngramHandler {
     fn handle_request(&self, request: McpRequest) -> McpResponse {
         match request.method.as_str() {
             methods::INITIALIZE => {
-                let result = InitializeResult::default();
+                // Negotiate protocol version: if the client requests the legacy version, respond
+                // with that version and omit resources/prompts from capabilities.
+                let client_version = request
+                    .params
+                    .get("protocolVersion")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(MCP_PROTOCOL_VERSION);
+
+                let result = if client_version == MCP_PROTOCOL_VERSION_LEGACY {
+                    // Legacy mode: respond with 2024-11-05, no resources/prompts capabilities
+                    InitializeResult {
+                        protocol_version: MCP_PROTOCOL_VERSION_LEGACY.to_string(),
+                        capabilities: ServerCapabilities {
+                            tools: Some(ToolsCapability {
+                                list_changed: false,
+                            }),
+                            resources: None,
+                            prompts: None,
+                        },
+                        ..InitializeResult::default()
+                    }
+                } else {
+                    // Current mode: 2025-11-25 with full capabilities
+                    InitializeResult {
+                        protocol_version: MCP_PROTOCOL_VERSION.to_string(),
+                        capabilities: ServerCapabilities {
+                            tools: Some(ToolsCapability {
+                                list_changed: false,
+                            }),
+                            resources: Some(ResourceCapabilities {
+                                subscribe: false,
+                                list_changed: false,
+                            }),
+                            prompts: Some(PromptCapabilities { list_changed: false }),
+                        },
+                        ..InitializeResult::default()
+                    }
+                };
+
                 McpResponse::success(request.id, json!(result))
             }
             methods::INITIALIZED => {
@@ -246,6 +285,22 @@ impl McpHandler for EngramHandler {
                 let result = self.handle_tool_call(name, arguments);
                 let tool_result = ToolCallResult::json(&result);
                 McpResponse::success(request.id, json!(tool_result))
+            }
+            methods::LIST_RESOURCES => {
+                // Resources are not yet implemented; return empty list (T4 will implement)
+                McpResponse::success(request.id, json!({"resources": []}))
+            }
+            methods::READ_RESOURCE => {
+                // Resources are not yet implemented (T4 will implement)
+                McpResponse::error(request.id, -32002, "Resource not found".to_string())
+            }
+            methods::LIST_PROMPTS => {
+                // Prompts are not yet implemented; return empty list (T5 will implement)
+                McpResponse::success(request.id, json!({"prompts": []}))
+            }
+            methods::GET_PROMPT => {
+                // Prompts are not yet implemented (T5 will implement)
+                McpResponse::error(request.id, -32002, "Prompt not found".to_string())
             }
             _ => McpResponse::error(
                 request.id,
