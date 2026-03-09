@@ -12,6 +12,11 @@
 //! let opts = SemanticLinkOptions::default();
 //! let result = run_semantic_linker(&conn, &embedder, &opts)?;
 //! println!("Created {} links over {} memories", result.links_created, result.memories_processed);
+//!
+//! // Temporal proximity linking
+//! let t_opts = TemporalLinkOptions::default();
+//! let t_result = run_temporal_linker(&conn, &t_opts)?;
+//! println!("Created {} temporal links", t_result.links_created);
 //! ```
 
 use rusqlite::{params, Connection};
@@ -55,6 +60,37 @@ impl Default for SemanticLinkOptions {
             max_links_per_memory: 5,
             workspace: None,
             batch_size: 100,
+        }
+    }
+}
+
+/// Configuration for temporal proximity auto-linking.
+///
+/// Links memories that were created close together in time, reflecting the idea
+/// that co-temporal thoughts are often related (session clustering, task batches, etc.).
+#[derive(Debug, Clone)]
+pub struct TemporalLinkOptions {
+    /// Time window in minutes. Memories created within this window of each other
+    /// will be considered for linking. Default: 30 minutes.
+    pub window_minutes: u64,
+    /// Maximum temporal links created *per memory*. Default: 5.
+    pub max_links_per_memory: usize,
+    /// Minimum temporal overlap in seconds. When set, only memories whose
+    /// creation times overlap within this tighter bound are linked. This can be
+    /// used to restrict linking to memories within the same "session".
+    /// Default: `None` (no additional constraint beyond `window_minutes`).
+    pub min_overlap_secs: Option<u64>,
+    /// Restrict processing to a single workspace. `None` processes all workspaces.
+    pub workspace: Option<String>,
+}
+
+impl Default for TemporalLinkOptions {
+    fn default() -> Self {
+        Self {
+            window_minutes: 30,
+            max_links_per_memory: 5,
+            min_overlap_secs: None,
+            workspace: None,
         }
     }
 }
@@ -209,6 +245,157 @@ pub fn run_semantic_linker(
     })
 }
 
+/// Run the temporal proximity auto-linker over memories.
+///
+/// The algorithm:
+/// 1. Fetch all active memories ordered by `created_at` (optionally workspace-filtered).
+/// 2. For each memory `m`, walk forward and backward in the sorted list to find
+///    others whose `created_at` lies within `options.window_minutes` of `m`.
+/// 3. Compute a proximity score: `score = 1.0 - (time_diff_minutes / window_minutes)`.
+///    Memories created at exactly the same time receive score 1.0; memories at the
+///    edge of the window receive score approaching 0.0.
+/// 4. Optionally apply `min_overlap_secs` as an additional tighter bound.
+/// 5. Collect candidates per memory, sort descending by score, take top
+///    `max_links_per_memory`, then insert with `link_type = "temporal"` using
+///    `INSERT OR IGNORE` for idempotency.
+///
+/// # Notes
+/// - Links are directional in the table (from_id < to_id is *not* enforced), but the
+///   UNIQUE index on `(from_id, to_id, link_type)` prevents exact duplicates.
+/// - The function uses a linear scan of the sorted result set, so complexity is O(n × k)
+///   where k is the average number of memories per window — efficient in practice.
+pub fn run_temporal_linker(
+    conn: &Connection,
+    options: &TemporalLinkOptions,
+) -> Result<AutoLinkResult> {
+    let start = std::time::Instant::now();
+    let mut links_created = 0usize;
+
+    let window_secs = options.window_minutes as f64 * 60.0;
+
+    // -----------------------------------------------------------------------
+    // 1. Load all active memories with their creation timestamps.
+    //    We store (id, created_secs) tuples for fast arithmetic comparisons.
+    // -----------------------------------------------------------------------
+
+    // Helper: convert raw (id, ts_string) pairs into (id, unix_secs) pairs.
+    fn collect_rows(raw: Vec<(i64, String)>) -> Vec<(i64, f64)> {
+        raw.into_iter()
+            .filter_map(|(id, ts)| parse_timestamp_to_secs(&ts).map(|s| (id, s)))
+            .collect()
+    }
+
+    let rows: Vec<(i64, f64)> = if let Some(ws) = &options.workspace {
+        let mut stmt = conn.prepare(
+            "SELECT id, created_at
+             FROM memories
+             WHERE valid_to IS NULL AND workspace = ?1
+             ORDER BY created_at ASC",
+        )?;
+        let raw: Vec<(i64, String)> = stmt
+            .query_map(params![ws], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .filter_map(|r| r.ok())
+            .collect();
+        collect_rows(raw)
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT id, created_at
+             FROM memories
+             WHERE valid_to IS NULL
+             ORDER BY created_at ASC",
+        )?;
+        let raw: Vec<(i64, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .filter_map(|r| r.ok())
+            .collect();
+        collect_rows(raw)
+    };
+
+    let memories_processed = rows.len();
+
+    if memories_processed < 2 {
+        return Ok(AutoLinkResult {
+            links_created: 0,
+            memories_processed,
+            duration_ms: start.elapsed().as_millis() as u64,
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // 2. Pairwise scan within window — rows are sorted by created_at, so
+    //    for each i we only need to walk forward until the time delta exceeds
+    //    window_secs (early exit).
+    // -----------------------------------------------------------------------
+
+    // Collect all qualifying candidates: (score, from_id, to_id).
+    let mut candidates: Vec<(f64, i64, i64)> = Vec::new();
+
+    for i in 0..memories_processed {
+        for j in (i + 1)..memories_processed {
+            let diff_secs = rows[j].1 - rows[i].1;
+
+            // Sorted ascending → once diff exceeds window, no point continuing.
+            if diff_secs > window_secs {
+                break;
+            }
+
+            // Optional minimum-overlap check: skip if diff is ABOVE min_overlap_secs.
+            // (min_overlap_secs constrains how *close* they must be, acting as a tighter window.)
+            if let Some(min_secs) = options.min_overlap_secs {
+                if diff_secs > min_secs as f64 {
+                    continue;
+                }
+            }
+
+            // Score: 1.0 when diff=0, approaches 0.0 at diff=window_secs.
+            let score = if window_secs > 0.0 {
+                1.0 - (diff_secs / window_secs)
+            } else {
+                1.0
+            };
+
+            candidates.push((score, rows[i].0, rows[j].0));
+        }
+    }
+
+    // Sort by score descending to honour max_links_per_memory with strongest links first.
+    candidates.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    // -----------------------------------------------------------------------
+    // 3. Enforce per-memory link cap, then insert.
+    // -----------------------------------------------------------------------
+    let mut link_counts: std::collections::HashMap<i64, usize> =
+        std::collections::HashMap::new();
+
+    for (score, from_id, to_id) in candidates {
+        {
+            let from_count = link_counts.entry(from_id).or_insert(0);
+            if *from_count >= options.max_links_per_memory {
+                continue;
+            }
+        }
+        {
+            let to_count = link_counts.entry(to_id).or_insert(0);
+            if *to_count >= options.max_links_per_memory {
+                continue;
+            }
+        }
+
+        let inserted = insert_auto_link(conn, from_id, to_id, "temporal", score)?;
+        if inserted {
+            links_created += 1;
+            *link_counts.entry(from_id).or_insert(0) += 1;
+            *link_counts.entry(to_id).or_insert(0) += 1;
+        }
+    }
+
+    Ok(AutoLinkResult {
+        links_created,
+        memories_processed,
+        duration_ms: start.elapsed().as_millis() as u64,
+    })
+}
+
 /// List auto-links, optionally filtered by `link_type`.
 ///
 /// Results are ordered by score descending.  `limit` is capped to 1000 to
@@ -281,6 +468,23 @@ pub fn auto_link_stats(conn: &Connection) -> Result<serde_json::Value> {
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
+
+/// Parse a timestamp string (RFC3339 or SQLite CURRENT_TIMESTAMP format) into
+/// UNIX seconds as f64.  Returns `None` if parsing fails — those rows are
+/// silently skipped by the temporal linker.
+fn parse_timestamp_to_secs(ts: &str) -> Option<f64> {
+    // Try RFC 3339 first (the canonical engram format).
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
+        return Some(dt.timestamp() as f64 + dt.timestamp_subsec_nanos() as f64 * 1e-9);
+    }
+    // Fall back to SQLite's CURRENT_TIMESTAMP format: "YYYY-MM-DD HH:MM:SS"
+    if let Ok(ndt) =
+        chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S")
+    {
+        return Some(ndt.and_utc().timestamp() as f64);
+    }
+    None
+}
 
 fn row_to_auto_link(row: &rusqlite::Row) -> rusqlite::Result<AutoLink> {
     Ok(AutoLink {
@@ -586,5 +790,277 @@ mod tests {
         let conn = setup_db();
         let stats = auto_link_stats(&conn).expect("stats");
         assert!(stats.as_object().unwrap().is_empty());
+    }
+
+    // ------------------------------------------------------------------
+    // run_temporal_linker tests
+    // ------------------------------------------------------------------
+
+    /// Insert a minimal memory with an explicit created_at timestamp (RFC3339).
+    fn insert_memory_at(conn: &Connection, content: &str, created_at: &str) -> i64 {
+        conn.execute(
+            "INSERT INTO memories (content, memory_type, created_at)
+             VALUES (?1, 'note', ?2)",
+            params![content, created_at],
+        )
+        .expect("insert memory with timestamp");
+        conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn test_temporal_linker_creates_link_for_close_memories() {
+        let conn = setup_db();
+
+        // Two memories 5 minutes apart — within the default 30-minute window.
+        let a = insert_memory_at(&conn, "first thought", "2024-01-01T10:00:00Z");
+        let b = insert_memory_at(&conn, "second thought", "2024-01-01T10:05:00Z");
+
+        let opts = TemporalLinkOptions::default();
+        let result = run_temporal_linker(&conn, &opts).expect("temporal linker");
+
+        assert_eq!(result.memories_processed, 2);
+        assert_eq!(result.links_created, 1, "one temporal link for the nearby pair");
+
+        // Verify link is stored with the correct type.
+        let links = list_auto_links(&conn, Some("temporal"), 10).expect("list");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].from_id, a);
+        assert_eq!(links[0].to_id, b);
+        assert_eq!(links[0].link_type, "temporal");
+    }
+
+    #[test]
+    fn test_temporal_linker_no_link_outside_window() {
+        let conn = setup_db();
+
+        // Two memories 60 minutes apart — outside the default 30-minute window.
+        let _a = insert_memory_at(&conn, "morning thought", "2024-01-01T08:00:00Z");
+        let _b = insert_memory_at(&conn, "afternoon thought", "2024-01-01T09:00:00Z");
+
+        let opts = TemporalLinkOptions::default(); // window_minutes = 30
+        let result = run_temporal_linker(&conn, &opts).expect("temporal linker");
+
+        assert_eq!(result.memories_processed, 2);
+        assert_eq!(result.links_created, 0, "memories 60m apart should not be linked");
+    }
+
+    #[test]
+    fn test_temporal_score_formula_closer_means_higher_score() {
+        let conn = setup_db();
+
+        // Three memories: A at T=0, B at T=5min, C at T=25min (within 30-min window).
+        let _a = insert_memory_at(&conn, "A", "2024-01-01T10:00:00Z");
+        let _b = insert_memory_at(&conn, "B", "2024-01-01T10:05:00Z");
+        let _c = insert_memory_at(&conn, "C", "2024-01-01T10:25:00Z");
+
+        let opts = TemporalLinkOptions {
+            window_minutes: 30,
+            max_links_per_memory: 10,
+            min_overlap_secs: None,
+            workspace: None,
+        };
+        run_temporal_linker(&conn, &opts).expect("linker");
+
+        // A-B are 5 min apart → score = 1 - (5/30) ≈ 0.833
+        // A-C are 25 min apart → score = 1 - (25/30) ≈ 0.167
+        // B-C are 20 min apart → score = 1 - (20/30) ≈ 0.333
+        let links = list_auto_links(&conn, Some("temporal"), 10).expect("list");
+        assert_eq!(links.len(), 3, "all three pairs within window");
+
+        // List is sorted by score descending; A-B should be first.
+        assert!(
+            links[0].score > links[1].score,
+            "higher score should come first"
+        );
+        assert!(
+            links[0].score > 0.8,
+            "A-B score should be ~0.833, got {}",
+            links[0].score
+        );
+    }
+
+    #[test]
+    fn test_temporal_linker_idempotent() {
+        let conn = setup_db();
+
+        let _a = insert_memory_at(&conn, "A", "2024-01-01T10:00:00Z");
+        let _b = insert_memory_at(&conn, "B", "2024-01-01T10:10:00Z");
+
+        let opts = TemporalLinkOptions::default();
+
+        let first = run_temporal_linker(&conn, &opts).expect("first run");
+        let second = run_temporal_linker(&conn, &opts).expect("second run");
+
+        assert_eq!(first.links_created, 1);
+        assert_eq!(second.links_created, 0, "second run should create no new links");
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM auto_links WHERE link_type = 'temporal'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1, "exactly one temporal link should exist");
+    }
+
+    #[test]
+    fn test_temporal_linker_max_links_per_memory_respected() {
+        let conn = setup_db();
+
+        // Five memories all within a 10-minute window — all pairs qualify.
+        // With max_links_per_memory=2, each memory gets at most 2 links.
+        for i in 0..5i64 {
+            let ts = format!("2024-01-01T10:{:02}:00Z", i * 2); // 0, 2, 4, 6, 8 minutes
+            insert_memory_at(&conn, &format!("mem {}", i), &ts);
+        }
+
+        let opts = TemporalLinkOptions {
+            window_minutes: 30,
+            max_links_per_memory: 2,
+            min_overlap_secs: None,
+            workspace: None,
+        };
+        run_temporal_linker(&conn, &opts).expect("linker");
+
+        // Verify per-memory link counts.
+        let mut stmt = conn
+            .prepare(
+                "SELECT mem_id, COUNT(*) as cnt FROM (
+                     SELECT from_id AS mem_id FROM auto_links WHERE link_type = 'temporal'
+                     UNION ALL
+                     SELECT to_id AS mem_id FROM auto_links WHERE link_type = 'temporal'
+                 ) GROUP BY mem_id",
+            )
+            .unwrap();
+
+        let counts: Vec<i64> = stmt
+            .query_map([], |r| r.get(1))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+
+        for cnt in &counts {
+            assert!(
+                *cnt <= 2,
+                "a memory has more than max_links_per_memory=2 links: {}",
+                cnt
+            );
+        }
+    }
+
+    #[test]
+    fn test_temporal_linker_workspace_filter() {
+        let conn = setup_db();
+
+        // Memories in two different workspaces, both within the time window.
+        conn.execute(
+            "INSERT INTO memories (content, memory_type, workspace, created_at)
+             VALUES ('ws-alpha-1', 'note', 'alpha', '2024-01-01T10:00:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memories (content, memory_type, workspace, created_at)
+             VALUES ('ws-alpha-2', 'note', 'alpha', '2024-01-01T10:05:00Z')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO memories (content, memory_type, workspace, created_at)
+             VALUES ('ws-beta-1', 'note', 'beta', '2024-01-01T10:02:00Z')",
+            [],
+        )
+        .unwrap();
+
+        // Only process workspace "alpha".
+        let opts = TemporalLinkOptions {
+            workspace: Some("alpha".to_string()),
+            ..Default::default()
+        };
+        let result = run_temporal_linker(&conn, &opts).expect("linker");
+
+        // Should process 2 alpha memories and create 1 link between them.
+        assert_eq!(result.memories_processed, 2);
+        assert_eq!(result.links_created, 1);
+
+        // The beta memory must not appear in any link.
+        let beta_id: i64 = conn
+            .query_row(
+                "SELECT id FROM memories WHERE workspace = 'beta'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let beta_link_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM auto_links
+                 WHERE (from_id = ?1 OR to_id = ?1) AND link_type = 'temporal'",
+                params![beta_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(beta_link_count, 0, "beta workspace memory should not be linked");
+    }
+
+    #[test]
+    fn test_temporal_linker_min_overlap_secs_restricts_candidates() {
+        let conn = setup_db();
+
+        // Three memories: A at T=0, B at T=2min, C at T=10min.
+        // window_minutes=30 so all qualify by window, but min_overlap_secs=120 (2 min)
+        // means only A-B (exactly 120s apart) qualify; A-C and B-C exceed 120s.
+        let _a = insert_memory_at(&conn, "A", "2024-01-01T10:00:00Z");
+        let _b = insert_memory_at(&conn, "B", "2024-01-01T10:02:00Z");
+        let _c = insert_memory_at(&conn, "C", "2024-01-01T10:10:00Z");
+
+        let opts = TemporalLinkOptions {
+            window_minutes: 30,
+            max_links_per_memory: 5,
+            min_overlap_secs: Some(120), // 2 minutes
+            workspace: None,
+        };
+        let result = run_temporal_linker(&conn, &opts).expect("linker");
+
+        assert_eq!(result.memories_processed, 3);
+        // A-B: 120s diff = exactly at the boundary (diff <= min_overlap_secs=120) → linked.
+        // A-C: 600s > 120 → not linked.  B-C: 480s > 120 → not linked.
+        assert_eq!(result.links_created, 1, "only A-B qualifies under min_overlap_secs=120");
+    }
+
+    #[test]
+    fn test_temporal_linker_empty_database_returns_zero() {
+        let conn = setup_db();
+        let opts = TemporalLinkOptions::default();
+        let result = run_temporal_linker(&conn, &opts).expect("linker");
+        assert_eq!(result.memories_processed, 0);
+        assert_eq!(result.links_created, 0);
+    }
+
+    #[test]
+    fn test_parse_timestamp_to_secs_rfc3339() {
+        let secs = parse_timestamp_to_secs("2024-01-01T10:00:00Z");
+        assert!(secs.is_some(), "should parse RFC3339 timestamp");
+
+        let secs2 = parse_timestamp_to_secs("2024-01-01T10:05:00Z");
+        assert!(secs2.is_some());
+
+        // 5 minutes = 300 seconds difference.
+        let diff = secs2.unwrap() - secs.unwrap();
+        assert!(
+            (diff - 300.0).abs() < 1.0,
+            "difference should be ~300s, got {}",
+            diff
+        );
+    }
+
+    #[test]
+    fn test_parse_timestamp_to_secs_sqlite_format() {
+        let secs = parse_timestamp_to_secs("2024-01-01 10:00:00");
+        assert!(secs.is_some(), "should parse SQLite CURRENT_TIMESTAMP format");
+    }
+
+    #[test]
+    fn test_parse_timestamp_to_secs_invalid_returns_none() {
+        let result = parse_timestamp_to_secs("not-a-date");
+        assert!(result.is_none(), "invalid timestamp should return None");
     }
 }

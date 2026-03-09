@@ -46,8 +46,8 @@ pub use agent_registry::{
     register_agent, update_agent_capabilities, Agent, RegisterAgentInput,
 };
 pub use auto_linker::{
-    auto_link_stats, insert_auto_link, list_auto_links, run_semantic_linker, AutoLink,
-    AutoLinkResult, SemanticLinkOptions,
+    auto_link_stats, insert_auto_link, list_auto_links, run_semantic_linker,
+    run_temporal_linker, AutoLink, AutoLinkResult, SemanticLinkOptions, TemporalLinkOptions,
 };
 pub use audit::*;
 pub use backend::{
