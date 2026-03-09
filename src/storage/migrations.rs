@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 24;
+pub const SCHEMA_VERSION: i32 = 25;
 
 /// Run all migrations
 pub fn run_migrations(conn: &Connection) -> Result<()> {
@@ -118,8 +118,12 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         migrate_v23(conn)?;
     }
 
-    if current_version < SCHEMA_VERSION {
+    if current_version < 24 {
         migrate_v24(conn)?;
+    }
+
+    if current_version < SCHEMA_VERSION {
+        migrate_v25(conn)?;
     }
 
     Ok(())
@@ -1408,6 +1412,36 @@ fn migrate_v24(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn migrate_v25(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v25: Creating search_feedback table...");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS search_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            query TEXT NOT NULL,
+            query_embedding_hash TEXT,
+            memory_id INTEGER NOT NULL,
+            signal TEXT NOT NULL CHECK(signal IN ('useful', 'irrelevant')),
+            rank_position INTEGER,
+            original_score REAL,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            workspace TEXT DEFAULT 'default'
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_feedback_memory ON search_feedback(memory_id);
+        CREATE INDEX IF NOT EXISTS idx_feedback_query ON search_feedback(query);
+        CREATE INDEX IF NOT EXISTS idx_feedback_workspace ON search_feedback(workspace);
+
+        INSERT INTO schema_version (version) VALUES (25);
+        "#,
+    )?;
+
+    tracing::info!("Migration v25 complete: search_feedback table created");
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1429,12 +1463,12 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query schema version");
-        assert_eq!(version, 24);
+        assert_eq!(version, 25);
     }
 
     #[test]
     fn test_schema_version_constant_is_19() {
-        assert_eq!(SCHEMA_VERSION, 24);
+        assert_eq!(SCHEMA_VERSION, 25);
     }
 
     #[test]
@@ -1586,7 +1620,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query schema version");
-        assert_eq!(version, 24, "should reach v24 after full migration");
+        assert_eq!(version, 25, "should reach v25 after full migration");
 
         // Verify both new tables exist
         let auto_links_exists: i32 = conn

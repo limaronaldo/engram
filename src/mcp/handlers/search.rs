@@ -254,3 +254,103 @@ pub fn search_cache_clear(ctx: &HandlerContext, params: Value) -> Value {
         json!({"cleared": true, "scope": "all"})
     }
 }
+
+// ── Search Explainability (RML-1242) ────────────────────────────────────────
+
+pub fn memory_explain_search(_ctx: &HandlerContext, params: Value) -> Value {
+    use crate::search::explain::SearchExplainer;
+
+    let results = match params.get("results").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return json!({"error": "results array is required (each with memory_id, bm25, vector, fuzzy, recency, importance, final_score, and optional rerank_score)"}),
+    };
+
+    let reranking_active = params
+        .get("reranking_active")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let rrf_k = params
+        .get("rrf_k")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(60.0) as f32;
+
+    let explainer = SearchExplainer::new(rrf_k, reranking_active);
+
+    let batch: Vec<_> = results
+        .iter()
+        .filter_map(|r| {
+            let memory_id = r.get("memory_id")?.as_i64()?;
+            let bm25 = r.get("bm25").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+            let vector = r.get("vector").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+            let fuzzy = r.get("fuzzy").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+            let recency = r.get("recency").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+            let importance = r.get("importance").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+            let rerank = r.get("rerank_score").and_then(|v| v.as_f64()).map(|v| v as f32);
+            let final_score = r.get("final_score").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+            Some((memory_id, bm25, vector, fuzzy, recency, importance, rerank, final_score))
+        })
+        .collect();
+
+    let explanations = explainer.explain_batch(batch);
+    json!({
+        "count": explanations.len(),
+        "explanations": explanations
+    })
+}
+
+// ── Relevance Feedback (RML-1243) ───────────────────────────────────────────
+
+pub fn memory_feedback(ctx: &HandlerContext, params: Value) -> Value {
+    use crate::search::feedback::{record_feedback, FeedbackSignal};
+
+    let query = match params.get("query").and_then(|v| v.as_str()) {
+        Some(q) => q,
+        None => return json!({"error": "query is required"}),
+    };
+
+    let memory_id = match params.get("memory_id").and_then(|v| v.as_i64()) {
+        Some(id) => id,
+        None => return json!({"error": "memory_id is required"}),
+    };
+
+    let signal = match params.get("signal").and_then(|v| v.as_str()) {
+        Some("useful") => FeedbackSignal::Useful,
+        Some("irrelevant") => FeedbackSignal::Irrelevant,
+        _ => return json!({"error": "signal must be 'useful' or 'irrelevant'"}),
+    };
+
+    let rank_position = params.get("rank_position").and_then(|v| v.as_i64()).map(|v| v as i32);
+    let original_score = params.get("original_score").and_then(|v| v.as_f64()).map(|v| v as f32);
+    let workspace = params
+        .get("workspace")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default");
+
+    ctx.storage
+        .with_connection(|conn| {
+            let fb = record_feedback(
+                conn,
+                query,
+                memory_id,
+                signal,
+                rank_position,
+                original_score,
+                workspace,
+            )?;
+            Ok(json!(fb))
+        })
+        .unwrap_or_else(|e| json!({"error": e.to_string()}))
+}
+
+pub fn memory_feedback_stats(ctx: &HandlerContext, params: Value) -> Value {
+    use crate::search::feedback::feedback_stats;
+
+    let workspace = params.get("workspace").and_then(|v| v.as_str());
+
+    ctx.storage
+        .with_connection(|conn| {
+            let stats = feedback_stats(conn, workspace)?;
+            Ok(json!(stats))
+        })
+        .unwrap_or_else(|e| json!({"error": e.to_string()}))
+}

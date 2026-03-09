@@ -319,6 +319,11 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         "scope_search" => temporal::scope_search(ctx, params),
         "scope_tree" => temporal::scope_tree_handler(ctx, params),
 
+        // ── Search explainability & feedback (RML-1242, RML-1243) ──────────
+        "memory_explain_search" => search::memory_explain_search(ctx, params),
+        "memory_feedback" => search::memory_feedback(ctx, params),
+        "memory_feedback_stats" => search::memory_feedback_stats(ctx, params),
+
         _ => json!({"error": format!("Unknown tool: {}", tool_name)}),
     }
 }
