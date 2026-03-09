@@ -12,10 +12,10 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use engram::embedding::create_embedder;
 use engram::error::Result;
 use engram::mcp::{
-    get_prompt, get_tool_definitions, handlers, http_transport, list_prompts, methods,
-    InitializeResult, McpHandler, McpRequest, McpResponse, McpServer, ToolCallResult,
-    MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_LEGACY, PromptCapabilities, ResourceCapabilities,
-    ServerCapabilities, ToolsCapability,
+    get_prompt, get_tool_definitions, handlers, http_transport, list_prompts, list_resources,
+    methods, read_resource, InitializeResult, McpHandler, McpRequest, McpResponse, McpServer,
+    ToolCallResult, MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_LEGACY, PromptCapabilities,
+    ResourceCapabilities, ServerCapabilities, ToolsCapability,
 };
 use engram::realtime::{RealtimeManager, RealtimeServer};
 use engram::search::{FuzzyEngine, SearchConfig};
@@ -311,12 +311,53 @@ impl McpHandler for EngramHandler {
                 McpResponse::success(request.id, json!(tool_result))
             }
             methods::LIST_RESOURCES => {
-                // Resources are not yet implemented; return empty list (T4 will implement)
-                McpResponse::success(request.id, json!({"resources": []}))
+                let templates = list_resources();
+                let resources: Vec<Value> = templates
+                    .into_iter()
+                    .map(|t| {
+                        json!({
+                            "uri": t.uri_template,
+                            "name": t.name,
+                            "description": t.description,
+                            "mimeType": t.mime_type,
+                        })
+                    })
+                    .collect();
+                McpResponse::success(request.id, json!({"resources": resources}))
             }
             methods::READ_RESOURCE => {
-                // Resources are not yet implemented (T4 will implement)
-                McpResponse::error(request.id, -32002, "Resource not found".to_string())
+                let uri = match request
+                    .params
+                    .get("uri")
+                    .and_then(|v| v.as_str())
+                {
+                    Some(u) => u.to_string(),
+                    None => {
+                        return McpResponse::error(
+                            request.id,
+                            -32602,
+                            "Missing required parameter: uri".to_string(),
+                        )
+                    }
+                };
+
+                match read_resource(&self.storage, &uri) {
+                    Ok(content) => {
+                        let text = serde_json::to_string_pretty(&content)
+                            .unwrap_or_else(|_| content.to_string());
+                        McpResponse::success(
+                            request.id,
+                            json!({
+                                "contents": [{
+                                    "uri": uri,
+                                    "mimeType": "application/json",
+                                    "text": text,
+                                }]
+                            }),
+                        )
+                    }
+                    Err(msg) => McpResponse::error(request.id, -32602, msg),
+                }
             }
             methods::LIST_PROMPTS => {
                 let prompts = list_prompts();

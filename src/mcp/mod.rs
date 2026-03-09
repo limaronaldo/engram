@@ -6,6 +6,7 @@ pub mod handlers;
 pub mod http_transport;
 pub mod prompts;
 pub mod protocol;
+pub mod resources;
 pub mod tools;
 
 pub use prompts::{get_prompt, list_prompts};
@@ -16,4 +17,5 @@ pub use protocol::{
     ResourceCapabilities, ResourceDefinition, ResourceTemplate,
     ServerCapabilities, ToolAnnotations, ToolCallResult, ToolsCapability,
 };
+pub use resources::{list_resources, read_resource};
 pub use tools::{get_tool_definitions, TOOL_DEFINITIONS};
