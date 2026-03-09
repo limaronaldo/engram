@@ -25,6 +25,11 @@ pub mod session;
 pub mod sync;
 pub mod workspace;
 
+#[cfg(feature = "emergent-graph")]
+pub mod emergent_graph;
+#[cfg(feature = "multimodal")]
+pub mod multimodal;
+
 /// Shared state passed to every tool handler.
 ///
 /// Mirrors the fields that were previously on `EngramHandler` in `server.rs`.
@@ -254,6 +259,32 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         "agent_list" => agent::agent_list(ctx, params),
         "agent_get" => agent::agent_get(ctx, params),
         "agent_capabilities" => agent::agent_capabilities(ctx, params),
+
+        // ── Emergent Graph (feature-gated) ──────────────────────────────────
+        #[cfg(feature = "emergent-graph")]
+        "memory_auto_link" => emergent_graph::memory_auto_link(ctx, params),
+        #[cfg(feature = "emergent-graph")]
+        "memory_list_auto_links" => emergent_graph::memory_list_auto_links(ctx, params),
+        #[cfg(feature = "emergent-graph")]
+        "memory_auto_link_stats" => emergent_graph::memory_auto_link_stats(ctx, params),
+        #[cfg(feature = "emergent-graph")]
+        "memory_cluster" => emergent_graph::memory_cluster(ctx, params),
+        #[cfg(feature = "emergent-graph")]
+        "memory_get_cluster" => emergent_graph::memory_get_cluster(ctx, params),
+        #[cfg(feature = "emergent-graph")]
+        "memory_list_clusters" => emergent_graph::memory_list_clusters(ctx, params),
+
+        // ── Multimodal (feature-gated) ──────────────────────────────────────
+        #[cfg(feature = "multimodal")]
+        "memory_describe_image" => multimodal::memory_describe_image(ctx, params),
+        #[cfg(feature = "multimodal")]
+        "memory_transcribe_audio" => multimodal::memory_transcribe_audio(ctx, params),
+        #[cfg(feature = "multimodal")]
+        "memory_capture_screenshot" => multimodal::memory_capture_screenshot(ctx, params),
+        #[cfg(feature = "multimodal")]
+        "memory_process_video" => multimodal::memory_process_video(ctx, params),
+        #[cfg(feature = "multimodal")]
+        "memory_list_media" => multimodal::memory_list_media(ctx, params),
 
         _ => json!({"error": format!("Unknown tool: {}", tool_name)}),
     }
