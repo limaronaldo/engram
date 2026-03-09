@@ -19,6 +19,8 @@
 
 pub mod agent_registry;
 pub mod auto_linker;
+#[cfg(feature = "emergent-graph")]
+pub mod clustering;
 mod audit;
 pub mod backend;
 mod confidence;
@@ -136,6 +138,10 @@ pub use queries::{
 pub use sqlite_backend::SqliteBackend;
 pub use temporal::{
     MemorySnapshot, StateDiff, TemporalMemory, TemporalQueryEngine, TemporalQueryOptions,
+};
+#[cfg(feature = "emergent-graph")]
+pub use clustering::{
+    get_cluster, list_clusters, run_louvain_clustering, Cluster, ClusteringResult, LouvainOptions,
 };
 #[cfg(feature = "turso")]
 pub use turso_backend::{TursoBackend, TursoConfig};

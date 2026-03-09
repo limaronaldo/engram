@@ -24,6 +24,11 @@ path = "src/bin/server.rs"
 name = "engram-cli"
 path = "src/bin/cli.rs"
 
+[[bin]]
+name = "engram-watcher"
+path = "src/bin/watcher.rs"
+required-features = ["watcher"]
+
 [features]
 default = ["cloud", "openai"]
 
@@ -49,7 +54,7 @@ turso = ["dep:libsql"]
 meilisearch = ["dep:meilisearch-sdk"]
 
 # File/browser/app watcher daemon
-watcher = ["dep:toml", "dep:tempfile", "dep:notify"]
+watcher = ["dep:toml", "dep:tempfile", "dep:notify", "dep:reqwest"]
 
 # Emergent graph: auto-links (semantic/temporal/co-occurrence) and community detection clusters
 emergent-graph = []
@@ -84,7 +89,7 @@ jsonrpc-core = "18.0"
 shellexpand = "3.1"
 
 # OpenAI API client (optional, feature-gated)
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false, optional = true }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "multipart"], default-features = false, optional = true }
 
 # Async trait support for vision providers (optional, feature-gated)
 async-trait = { version = "0.1", optional = true }
