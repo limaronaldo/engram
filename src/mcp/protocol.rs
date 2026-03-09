@@ -114,7 +114,13 @@ impl<H: McpHandler> McpServer<H> {
 
                     match serde_json::from_str::<McpRequest>(trimmed) {
                         Ok(request) => {
+                            // Per JSON-RPC 2.0: notifications have no id and MUST NOT
+                            // produce a response. Process for side effects only.
+                            let is_notification = request.id.is_none();
                             let response = self.handler.handle_request(request);
+                            if is_notification {
+                                continue;
+                            }
                             let response_json = serde_json::to_string(&response)?;
                             writeln!(writer, "{}", response_json)?;
                             writer.flush()?;

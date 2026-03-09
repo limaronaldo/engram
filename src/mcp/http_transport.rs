@@ -29,6 +29,7 @@ struct AppState {
 // ---------------------------------------------------------------------------
 
 /// `POST /mcp` -- accept a JSON-RPC request and return a JSON-RPC response.
+/// Per JSON-RPC 2.0, notifications (no `id`) MUST NOT produce a response.
 async fn handle_mcp(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -38,12 +39,17 @@ async fn handle_mcp(
     if let Some(ref expected) = state.api_key {
         if !check_bearer(&headers, expected) {
             let err = McpResponse::error(request.id, -32000, "Unauthorized".to_string());
-            return (StatusCode::UNAUTHORIZED, Json(err));
+            return (StatusCode::UNAUTHORIZED, Json(serde_json::to_value(err).unwrap_or_default()));
         }
     }
 
+    // Notifications have no id — process for side effects, return 202 Accepted
+    let is_notification = request.id.is_none();
     let response = state.handler.handle_request(request);
-    (StatusCode::OK, Json(response))
+    if is_notification {
+        return (StatusCode::ACCEPTED, Json(serde_json::Value::Null));
+    }
+    (StatusCode::OK, Json(serde_json::to_value(response).unwrap_or_default()))
 }
 
 /// `GET /health` -- lightweight liveness / readiness probe.
