@@ -13,6 +13,7 @@ use crate::realtime::RealtimeManager;
 use crate::search::{FuzzyEngine, SearchConfig, SearchResultCache};
 use crate::storage::Storage;
 
+pub mod agent;
 pub mod graph;
 pub mod identity;
 pub mod lifecycle;
@@ -245,6 +246,14 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         "meilisearch_status" => misc::meilisearch_status(ctx, params),
         #[cfg(feature = "meilisearch")]
         "meilisearch_config" => misc::meilisearch_config(ctx, params),
+
+        // ── Agent Registry ──────────────────────────────────────────────────
+        "agent_register" => agent::agent_register(ctx, params),
+        "agent_deregister" => agent::agent_deregister(ctx, params),
+        "agent_heartbeat" => agent::agent_heartbeat(ctx, params),
+        "agent_list" => agent::agent_list(ctx, params),
+        "agent_get" => agent::agent_get(ctx, params),
+        "agent_capabilities" => agent::agent_capabilities(ctx, params),
 
         _ => json!({"error": format!("Unknown tool: {}", tool_name)}),
     }

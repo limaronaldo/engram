@@ -2209,6 +2209,84 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
         }"#,
         annotations: ToolAnnotations::read_only(),
     },
+    // ── Agent Registry ────────────────────────────────────────────────────
+    ToolDef {
+        name: "agent_register",
+        description: "Register an AI agent with capabilities and namespace isolation. Upserts if agent_id already exists.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "Unique identifier for the agent"},
+                "display_name": {"type": "string", "description": "Human-readable name (defaults to agent_id)"},
+                "capabilities": {"type": "array", "items": {"type": "string"}, "description": "List of capabilities (e.g., 'search', 'create', 'analyze')"},
+                "namespaces": {"type": "array", "items": {"type": "string"}, "description": "Namespaces the agent operates in (default: ['default'])"},
+                "metadata": {"type": "object", "description": "Additional metadata as key-value pairs"}
+            },
+            "required": ["agent_id"]
+        }"#,
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "agent_deregister",
+        description: "Deregister an AI agent (soft delete — sets status to 'inactive').",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "ID of the agent to deregister"}
+            },
+            "required": ["agent_id"]
+        }"#,
+        annotations: ToolAnnotations::destructive(),
+    },
+    ToolDef {
+        name: "agent_heartbeat",
+        description: "Update an agent's heartbeat timestamp to indicate it is still alive.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "ID of the agent sending heartbeat"}
+            },
+            "required": ["agent_id"]
+        }"#,
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "agent_list",
+        description: "List registered agents, optionally filtered by status or namespace.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["active", "inactive"], "description": "Filter by agent status"},
+                "namespace": {"type": "string", "description": "Filter by namespace (returns agents that include this namespace)"}
+            }
+        }"#,
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "agent_get",
+        description: "Get details of a specific registered agent by ID.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "ID of the agent to retrieve"}
+            },
+            "required": ["agent_id"]
+        }"#,
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "agent_capabilities",
+        description: "Update the capabilities list of a registered agent.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "ID of the agent to update"},
+                "capabilities": {"type": "array", "items": {"type": "string"}, "description": "New capabilities list (replaces existing)"}
+            },
+            "required": ["agent_id", "capabilities"]
+        }"#,
+        annotations: ToolAnnotations::mutating(),
+    },
 ];
 
 /// Get all tool definitions as ToolDefinition structs
