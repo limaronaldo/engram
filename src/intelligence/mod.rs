@@ -25,6 +25,7 @@ pub mod consolidation;
 pub mod consolidation_offline;
 pub mod content_utils;
 pub mod context_builder;
+pub mod context_compression;
 pub mod context_quality;
 pub mod document_ingest;
 pub mod entities;
@@ -37,6 +38,7 @@ pub mod salience;
 pub mod session_context;
 pub mod session_indexing;
 pub mod suggestions;
+pub mod synthesis;
 
 pub use auto_capture::{
     AutoCaptureConfig, AutoCaptureEngine, CaptureCandidate, CaptureType, ConversationTracker,
