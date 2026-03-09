@@ -11,6 +11,7 @@
 pub mod coactivation;
 pub mod conflicts;
 pub mod temporal;
+pub mod triplets;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

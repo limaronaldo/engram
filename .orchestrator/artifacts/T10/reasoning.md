@@ -1,49 +1,36 @@
-## Task: T10 — OpenAI Assistants Threads Sync Adapter for Python SDK
+## Task: T10 — Semantic Triplet Matching (RML-1219)
 
 ### Approach
 
-Created `EngramThreadStore`, a duck-typed adapter that syncs OpenAI Assistants
-API thread messages into Engram session memories.  The implementation follows
-the exact pattern established by `langchain.py` and `crewai.py`: no hard
-import of the third-party framework package, constructor takes an
-`EngramClient` instance, and all storage goes through the existing client API.
+Created `src/graph/triplets.rs` with `TripletMatcher` — a static struct with four methods that
+operate directly on a `rusqlite::Connection` against the `facts` table from Round 3 (migration v21).
 
-Key design decisions:
-- Dedup is implemented by searching for `message:<message_id>` tag before
-  storing, then verifying the metadata's `message_id` field to avoid
-  false positives from full-text search.
-- `_get_attr()` helper supports both attribute access (real OpenAI SDK objects)
-  and dict key access (test mocks / fixtures).
-- `_extract_message_text()` handles the OpenAI content-block list format
-  (`[{type: "text", text: {value: "..."}}]`) and falls back to plain strings
-  for test convenience.
+Used `crate::intelligence::fact_extraction::Fact` directly — no local duplicate needed since the
+module is already pub and the type is compatible.
 
 ### Files Changed
 
-- `sdks/python/engram_client/integrations/__init__.py` — created; exports
-  `EngramThreadStore`
-- `sdks/python/engram_client/integrations/openai_threads.py` — created;
-  main adapter implementation with `EngramThreadStore` class and internal
-  helpers
-- `sdks/python/tests/__init__.py` — created; empty package marker for tests
-- `sdks/python/tests/test_openai_threads.py` — created; 29 mock-based tests
-  covering sync, run-scoped sync, search, dedup, edge cases, and all helpers
-- `sdks/python/pyproject.toml` — added `[project.optional-dependencies]`
-  section with `openai = ["openai>=1.0.0"]`
+- `src/graph/triplets.rs` — new file implementing `TripletPattern`, `InferenceStep`,
+  `InferencePath`, `KnowledgeStats`, and `TripletMatcher` with all four query methods + 16 tests.
+- `src/graph/mod.rs` — added `pub mod triplets;` declaration.
 
 ### Decisions Made
 
-- Chose duck typing over a hard `openai` import (same as `langchain.py`
-  pattern) so users without the openai package can still import the module.
-- Chose to verify dedup via metadata lookup after the tag search to avoid
-  false positives if free-text content happens to contain the message ID.
-- Chose `"openai-threads"` as the default workspace (clearly scoped, matches
-  the tag scheme `thread:<id>`).
-- Added `_SENTINEL` object to distinguish "attribute not present" from `None`
-  values in `_get_attr()`.
+- **Used `Fact` from `fact_extraction`** rather than a local compatible struct — avoids duplication
+  and ensures type compatibility with callers that already hold `Fact` values.
+- **Dynamic SQL for `match_pattern`** — builds WHERE clause at runtime based on which pattern
+  fields are `Some`. Uses explicit positional params (1-3) instead of rusqlite::params_from_iter
+  to stay on safe ground with the bundled rusqlite API.
+- **BFS for transitive inference** — clear, predictable semantics; cycle detection via a visited
+  set built from the current path. Branches are explored independently so all reachable paths are
+  returned, not just the longest.
+- **Entity extraction via capital-letter heuristic** — simple, no regex dependency, mirrors what
+  the spec describes ("extract capitalized words").
+- **HashSet dedup in query_knowledge** — prevents duplicate facts when two entities both
+  appear in the same fact.
 
 ### Verification
 
-- Tests pass: yes — 29/29 (python3 -m pytest tests/test_openai_threads.py -v)
-- Lint clean: yes (no unused imports, no dead code)
-- Type check: yes (all annotations use `from __future__ import annotations`)
+- Tests pass: yes (16/16)
+- Lint clean: yes (cargo clippy -- -D warnings produces no warnings in triplets.rs)
+- Type check: yes (part of successful cargo build)
