@@ -162,8 +162,8 @@ pub fn memory_share_ack(ctx: &HandlerContext, params: Value) -> Value {
 }
 
 pub fn memory_events_poll(ctx: &HandlerContext, params: Value) -> Value {
-    use chrono::DateTime;
     use crate::storage::poll_events;
+    use chrono::DateTime;
 
     let since_id = params.get("since_id").and_then(|v| v.as_i64());
     let since_time = params
@@ -186,8 +186,8 @@ pub fn memory_events_poll(ctx: &HandlerContext, params: Value) -> Value {
 }
 
 pub fn memory_events_clear(ctx: &HandlerContext, params: Value) -> Value {
-    use chrono::DateTime;
     use crate::storage::clear_events;
+    use chrono::DateTime;
 
     let before_id = params.get("before_id").and_then(|v| v.as_i64());
     let before_time = params

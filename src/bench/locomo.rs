@@ -155,9 +155,8 @@ impl Benchmark for LocomoBenchmark {
                 // Retrieve all memories for this session
                 let keyword = format!("%Session {}%", conv.session_id);
                 let retrieved_ids: Vec<i64> = storage.with_connection(|conn| {
-                    let mut stmt = conn.prepare(
-                        "SELECT id FROM memories WHERE content LIKE ?1 LIMIT 10",
-                    )?;
+                    let mut stmt =
+                        conn.prepare("SELECT id FROM memories WHERE content LIKE ?1 LIMIT 10")?;
                     let ids: Vec<i64> = stmt
                         .query_map([&keyword], |row| row.get(0))?
                         .filter_map(|r| r.ok())
@@ -213,7 +212,10 @@ impl Benchmark for LocomoBenchmark {
         metrics.insert("precision".to_string(), precision);
         metrics.insert("recall".to_string(), recall);
         metrics.insert("f1".to_string(), f1);
-        metrics.insert("num_conversations".to_string(), self.num_conversations as f64);
+        metrics.insert(
+            "num_conversations".to_string(),
+            self.num_conversations as f64,
+        );
         metrics.insert(
             "queries_per_conversation".to_string(),
             self.queries_per_conversation as f64,
@@ -269,8 +271,16 @@ mod tests {
         let recall = result.metrics["recall"];
         let f1 = result.metrics["f1"];
 
-        assert!((0.0..=1.0).contains(&precision), "precision out of range: {}", precision);
-        assert!((0.0..=1.0).contains(&recall), "recall out of range: {}", recall);
+        assert!(
+            (0.0..=1.0).contains(&precision),
+            "precision out of range: {}",
+            precision
+        );
+        assert!(
+            (0.0..=1.0).contains(&recall),
+            "recall out of range: {}",
+            recall
+        );
         assert!((0.0..=1.0).contains(&f1), "f1 out of range: {}", f1);
     }
 

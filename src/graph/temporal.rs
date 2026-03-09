@@ -147,9 +147,8 @@ pub fn add_edge(
     .map_err(EngramError::Database)?;
 
     let id = conn.last_insert_rowid();
-    get_edge_by_id(conn, id)?.ok_or_else(|| {
-        EngramError::Internal(format!("Edge {} disappeared after insert", id))
-    })
+    get_edge_by_id(conn, id)?
+        .ok_or_else(|| EngramError::Internal(format!("Edge {} disappeared after insert", id)))
 }
 
 /// Set the `valid_to` timestamp on an existing edge, effectively closing it.
@@ -223,9 +222,7 @@ pub fn relationship_timeline(
 /// operation.
 ///
 /// Returns pairs `(edge_a, edge_b)` where `edge_a.id < edge_b.id`.
-pub fn detect_contradictions(
-    conn: &Connection,
-) -> Result<Vec<(TemporalEdge, TemporalEdge)>> {
+pub fn detect_contradictions(conn: &Connection) -> Result<Vec<(TemporalEdge, TemporalEdge)>> {
     // Self-join: find pairs that share the triple and overlap.
     // Overlap condition: a.valid_from < b.valid_to_or_max AND b.valid_from < a.valid_to_or_max
     let mut stmt = conn
@@ -464,12 +461,26 @@ mod tests {
 
         // Edge valid in 2023 only.
         add_edge(
-            &conn, 1, 2, "rel", &json!({}), "2023-01-01T00:00:00Z", 1.0, "",
+            &conn,
+            1,
+            2,
+            "rel",
+            &json!({}),
+            "2023-01-01T00:00:00Z",
+            1.0,
+            "",
         )
         .unwrap();
         // Manually close it via a second edge (auto-invalidation).
         add_edge(
-            &conn, 1, 2, "rel", &json!({}), "2024-01-01T00:00:00Z", 1.0, "",
+            &conn,
+            1,
+            2,
+            "rel",
+            &json!({}),
+            "2024-01-01T00:00:00Z",
+            1.0,
+            "",
         )
         .unwrap();
 
@@ -492,15 +503,36 @@ mod tests {
         let conn = setup_db();
 
         add_edge(
-            &conn, 10, 20, "partner", &json!({}), "2020-01-01T00:00:00Z", 1.0, "",
+            &conn,
+            10,
+            20,
+            "partner",
+            &json!({}),
+            "2020-01-01T00:00:00Z",
+            1.0,
+            "",
         )
         .unwrap();
         add_edge(
-            &conn, 10, 20, "partner", &json!({}), "2021-06-01T00:00:00Z", 1.0, "",
+            &conn,
+            10,
+            20,
+            "partner",
+            &json!({}),
+            "2021-06-01T00:00:00Z",
+            1.0,
+            "",
         )
         .unwrap();
         add_edge(
-            &conn, 10, 20, "partner", &json!({}), "2022-09-01T00:00:00Z", 1.0, "",
+            &conn,
+            10,
+            20,
+            "partner",
+            &json!({}),
+            "2022-09-01T00:00:00Z",
+            1.0,
+            "",
         )
         .unwrap();
 
@@ -552,18 +584,31 @@ mod tests {
 
         // Edge A: exists in 2023 and 2024.
         add_edge(
-            &conn, 1, 2, "knows", &json!({}), "2022-01-01T00:00:00Z", 1.0, "",
+            &conn,
+            1,
+            2,
+            "knows",
+            &json!({}),
+            "2022-01-01T00:00:00Z",
+            1.0,
+            "",
         )
         .unwrap();
 
         // Edge B: appears in 2024 only.
         add_edge(
-            &conn, 3, 4, "likes", &json!({}), "2024-01-01T00:00:00Z", 1.0, "",
+            &conn,
+            3,
+            4,
+            "likes",
+            &json!({}),
+            "2024-01-01T00:00:00Z",
+            1.0,
+            "",
         )
         .unwrap();
 
-        let d = diff(&conn, "2023-01-01T00:00:00Z", "2025-01-01T00:00:00Z")
-            .expect("diff");
+        let d = diff(&conn, "2023-01-01T00:00:00Z", "2025-01-01T00:00:00Z").expect("diff");
 
         // "knows" was present at both; "likes" was added.
         assert_eq!(d.added.len(), 1);
@@ -589,8 +634,7 @@ mod tests {
         let contradictions = detect_contradictions(&conn).expect("detect");
         assert!(contradictions.is_empty());
 
-        let d = diff(&conn, "2024-01-01T00:00:00Z", "2025-01-01T00:00:00Z")
-            .expect("diff");
+        let d = diff(&conn, "2024-01-01T00:00:00Z", "2025-01-01T00:00:00Z").expect("diff");
         assert!(d.added.is_empty());
         assert!(d.removed.is_empty());
         assert!(d.changed.is_empty());
@@ -612,7 +656,14 @@ mod tests {
         });
 
         let edge = add_edge(
-            &conn, 5, 6, "employed_by", &props, "2024-03-01T00:00:00Z", 0.95, "payroll",
+            &conn,
+            5,
+            6,
+            "employed_by",
+            &props,
+            "2024-03-01T00:00:00Z",
+            0.95,
+            "payroll",
         )
         .expect("add");
 
@@ -630,7 +681,14 @@ mod tests {
         let conn = setup_db();
 
         let edge = add_edge(
-            &conn, 7, 8, "owns", &json!({}), "2024-01-01T00:00:00Z", 1.0, "legal",
+            &conn,
+            7,
+            8,
+            "owns",
+            &json!({}),
+            "2024-01-01T00:00:00Z",
+            1.0,
+            "legal",
         )
         .expect("add");
 
@@ -642,10 +700,7 @@ mod tests {
             .expect("query")
             .expect("still exists");
 
-        assert_eq!(
-            updated.valid_to.as_deref(),
-            Some("2024-12-31T23:59:59Z")
-        );
+        assert_eq!(updated.valid_to.as_deref(), Some("2024-12-31T23:59:59Z"));
     }
 
     // -------------------------------------------------------------------------
@@ -672,18 +727,31 @@ mod tests {
 
         // First version of the edge.
         add_edge(
-            &conn, 1, 2, "role", &json!({"level": "junior"}), "2022-01-01T00:00:00Z", 1.0, "",
+            &conn,
+            1,
+            2,
+            "role",
+            &json!({"level": "junior"}),
+            "2022-01-01T00:00:00Z",
+            1.0,
+            "",
         )
         .unwrap();
 
         // Supersede it (auto-invalidation closes the first).
         add_edge(
-            &conn, 1, 2, "role", &json!({"level": "senior"}), "2023-06-01T00:00:00Z", 1.0, "",
+            &conn,
+            1,
+            2,
+            "role",
+            &json!({"level": "senior"}),
+            "2023-06-01T00:00:00Z",
+            1.0,
+            "",
         )
         .unwrap();
 
-        let d = diff(&conn, "2022-07-01T00:00:00Z", "2024-01-01T00:00:00Z")
-            .expect("diff");
+        let d = diff(&conn, "2022-07-01T00:00:00Z", "2024-01-01T00:00:00Z").expect("diff");
 
         // The triple is present at both timestamps, but via a different edge id.
         assert_eq!(d.changed.len(), 1);

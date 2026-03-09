@@ -75,8 +75,10 @@ static IS_A_PATTERN: Lazy<Regex> = Lazy::new(|| {
 
 /// "{subject} is {object}"
 static IS_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b([A-Za-z][A-Za-z\s]{0,40}?)\s+is\s+([A-Za-z][A-Za-z\s]{0,60}?)\b(?:[,\.\!]|$)")
-        .expect("valid regex")
+    Regex::new(
+        r"(?i)\b([A-Za-z][A-Za-z\s]{0,40}?)\s+is\s+([A-Za-z][A-Za-z\s]{0,60}?)\b(?:[,\.\!]|$)",
+    )
+    .expect("valid regex")
 });
 
 /// "{subject} works at {object}"
@@ -93,8 +95,10 @@ static LIVES_IN_PATTERN: Lazy<Regex> = Lazy::new(|| {
 
 /// "{subject} likes {object}"
 static LIKES_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?i)\b([A-Za-z][A-Za-z\s]{0,40}?)\s+likes?\s+([A-Za-z][A-Za-z\s]{0,60}?)\b(?:[,\.\!]|$)")
-        .expect("valid regex")
+    Regex::new(
+        r"(?i)\b([A-Za-z][A-Za-z\s]{0,40}?)\s+likes?\s+([A-Za-z][A-Za-z\s]{0,60}?)\b(?:[,\.\!]|$)",
+    )
+    .expect("valid regex")
 });
 
 /// "{subject} was born in {object}"
@@ -123,8 +127,10 @@ static CREATED_PATTERN: Lazy<Regex> = Lazy::new(|| {
 
 /// Structured "Key: value" patterns
 static STRUCTURED_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"(?m)^(?:Name|Role|Location|Title|Company|Organization|Department|Team)\s*:\s*(.+)$")
-        .expect("valid regex")
+    Regex::new(
+        r"(?m)^(?:Name|Role|Location|Title|Company|Organization|Department|Team)\s*:\s*(.+)$",
+    )
+    .expect("valid regex")
 });
 
 // =============================================================================
@@ -253,9 +259,7 @@ fn title_case(s: &str) -> String {
             let mut chars = word.chars();
             match chars.next() {
                 None => String::new(),
-                Some(first) => {
-                    first.to_uppercase().to_string() + &chars.as_str().to_lowercase()
-                }
+                Some(first) => first.to_uppercase().to_string() + &chars.as_str().to_lowercase(),
             }
         })
         .collect::<Vec<_>>()
@@ -278,11 +282,7 @@ impl ConversationProcessor {
 
     /// Extract facts from a single text, deduplicating by (subject, predicate, object).
     /// When duplicates exist the one with the highest confidence is kept.
-    pub fn process_text(
-        &self,
-        text: &str,
-        source_memory_id: Option<i64>,
-    ) -> Vec<ExtractedFact> {
+    pub fn process_text(&self, text: &str, source_memory_id: Option<i64>) -> Vec<ExtractedFact> {
         let raw = self.extractor.extract_facts(text);
         let _ = source_memory_id; // kept for API symmetry; used by callers
         dedup_facts(raw)
@@ -407,7 +407,9 @@ pub fn list_facts(
                  LIMIT ?2",
             )?;
             let rows = s.query_map(params![sid, effective_limit], map_row)?;
-            return rows.collect::<std::result::Result<Vec<Fact>, _>>().map_err(Into::into);
+            return rows
+                .collect::<std::result::Result<Vec<Fact>, _>>()
+                .map_err(Into::into);
         }
         None => conn.prepare(
             "SELECT id, subject, predicate, object, confidence, source_memory_id, created_at
@@ -418,7 +420,8 @@ pub fn list_facts(
     };
 
     let rows = stmt.query_map(params![effective_limit], map_row)?;
-    rows.collect::<std::result::Result<Vec<Fact>, _>>().map_err(Into::into)
+    rows.collect::<std::result::Result<Vec<Fact>, _>>()
+        .map_err(Into::into)
 }
 
 /// Return all facts whose subject matches (case-insensitive).
@@ -430,7 +433,8 @@ pub fn get_fact_graph(conn: &Connection, subject: &str) -> Result<Vec<Fact>> {
          ORDER BY id ASC",
     )?;
     let rows = stmt.query_map(params![subject], map_row)?;
-    rows.collect::<std::result::Result<Vec<Fact>, _>>().map_err(Into::into)
+    rows.collect::<std::result::Result<Vec<Fact>, _>>()
+        .map_err(Into::into)
 }
 
 /// Delete all facts that were extracted from a given memory id.
@@ -476,7 +480,8 @@ mod tests {
 
     fn in_memory_conn() -> Connection {
         let conn = Connection::open_in_memory().expect("in-memory db");
-        conn.execute_batch(CREATE_FACTS_TABLE).expect("create table");
+        conn.execute_batch(CREATE_FACTS_TABLE)
+            .expect("create table");
         conn
     }
 
@@ -490,7 +495,9 @@ mod tests {
         let facts = ex.extract_facts("Alice is a developer");
         // Should match is_a
         assert!(!facts.is_empty(), "expected at least one fact");
-        let fact = facts.iter().find(|f| f.predicate == "is_a" || f.predicate == "is");
+        let fact = facts
+            .iter()
+            .find(|f| f.predicate == "is_a" || f.predicate == "is");
         assert!(fact.is_some(), "expected 'is_a' or 'is' predicate");
         let fact = fact.unwrap();
         assert!(
@@ -528,8 +535,12 @@ mod tests {
         let text = "Name: David\nRole: Manager";
         let facts = ex.extract_facts(text);
         // Should extract at least name and role
-        let has_name = facts.iter().any(|f| f.predicate == "name" && f.object.contains("David"));
-        let has_role = facts.iter().any(|f| f.predicate == "role" && f.object.contains("Manager"));
+        let has_name = facts
+            .iter()
+            .any(|f| f.predicate == "name" && f.object.contains("David"));
+        let has_role = facts
+            .iter()
+            .any(|f| f.predicate == "role" && f.object.contains("Manager"));
         assert!(has_name, "expected name fact, got: {:?}", facts);
         assert!(has_role, "expected role fact, got: {:?}", facts);
     }

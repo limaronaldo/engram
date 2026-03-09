@@ -17,7 +17,9 @@ use super::HandlerContext;
 /// Params:
 /// - `memory_id` (i64, required) — source memory to extract from
 pub fn memory_extract_facts(ctx: &HandlerContext, params: Value) -> Value {
-    use crate::intelligence::fact_extraction::{create_fact, ConversationProcessor, RuleBasedExtractor};
+    use crate::intelligence::fact_extraction::{
+        create_fact, ConversationProcessor, RuleBasedExtractor,
+    };
 
     let memory_id = match params.get("memory_id").and_then(|v| v.as_i64()) {
         Some(id) => id,
@@ -79,10 +81,7 @@ pub fn memory_list_facts(ctx: &HandlerContext, params: Value) -> Value {
     use crate::intelligence::fact_extraction::list_facts;
 
     let source_id = params.get("memory_id").and_then(|v| v.as_i64());
-    let limit = params
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(100) as usize;
+    let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as usize;
 
     ctx.storage
         .with_connection(|conn| {
@@ -170,10 +169,7 @@ pub fn memory_build_context(ctx: &HandlerContext, params: Value) -> Value {
         _ => Strategy::Greedy,
     };
 
-    let limit = params
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(20) as usize;
+    let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
 
     let search_opts = SearchOptions {
         workspace: params
@@ -188,7 +184,13 @@ pub fn memory_build_context(ctx: &HandlerContext, params: Value) -> Value {
     let embedding_ref = query_embedding.as_deref();
 
     let search_result = ctx.storage.with_connection(|conn| {
-        hybrid_search(conn, &query, embedding_ref, &search_opts, &ctx.search_config)
+        hybrid_search(
+            conn,
+            &query,
+            embedding_ref,
+            &search_opts,
+            &ctx.search_config,
+        )
     });
 
     let memories = match search_result {
@@ -240,11 +242,9 @@ pub fn memory_block_get(ctx: &HandlerContext, params: Value) -> Value {
     };
 
     ctx.storage
-        .with_connection(|conn| {
-            match get_block(conn, &name)? {
-                Some(block) => Ok(json!(block)),
-                None => Ok(json!({"error": format!("block '{}' not found", name)})),
-            }
+        .with_connection(|conn| match get_block(conn, &name)? {
+            Some(block) => Ok(json!(block)),
+            None => Ok(json!({"error": format!("block '{}' not found", name)})),
         })
         .unwrap_or_else(|e| json!({"error": e.to_string()}))
 }
@@ -342,7 +342,10 @@ pub fn memory_block_archive(ctx: &HandlerContext, params: Value) -> Value {
     ctx.storage
         .with_connection(|conn| {
             let block = get_block(conn, &name)?;
-            let final_content = block.as_ref().map(|b| b.content.clone()).unwrap_or_default();
+            let final_content = block
+                .as_ref()
+                .map(|b| b.content.clone())
+                .unwrap_or_default();
             let final_version = block.as_ref().map(|b| b.version).unwrap_or(0);
 
             if block.is_none() {
@@ -374,10 +377,7 @@ pub fn memory_block_history(ctx: &HandlerContext, params: Value) -> Value {
         None => return json!({"error": "name is required"}),
     };
 
-    let limit = params
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(20) as usize;
+    let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
 
     ctx.storage
         .with_connection(|conn| {

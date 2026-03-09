@@ -62,8 +62,9 @@ pub fn session_index(ctx: &HandlerContext, params: Value) -> Value {
 
     ctx.storage
         .with_connection(|conn| {
-            let session =
-                index_conversation(conn, session_id, &messages, &config, workspace, title, agent_id)?;
+            let session = index_conversation(
+                conn, session_id, &messages, &config, workspace, title, agent_id,
+            )?;
             Ok(json!({"success": true, "session": session}))
         })
         .unwrap_or_else(|e| json!({"error": e.to_string()}))
@@ -237,7 +238,8 @@ pub fn session_context_add_memory(ctx: &HandlerContext, params: Value) -> Value 
 
     ctx.storage
         .with_transaction(|conn| {
-            let link = add_memory_to_session(conn, &session_id, memory_id, relevance_score, context_role)?;
+            let link =
+                add_memory_to_session(conn, &session_id, memory_id, relevance_score, context_role)?;
             Ok(json!(link))
         })
         .unwrap_or_else(|e| json!({"error": e.to_string()}))

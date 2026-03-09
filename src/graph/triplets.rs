@@ -130,15 +130,24 @@ impl TripletMatcher {
         let mut bind_values: Vec<String> = Vec::new();
 
         if let Some(ref s) = pattern.subject {
-            conditions.push(format!("lower(subject) LIKE lower(?{})", conditions.len() + 1));
+            conditions.push(format!(
+                "lower(subject) LIKE lower(?{})",
+                conditions.len() + 1
+            ));
             bind_values.push(s.clone());
         }
         if let Some(ref p) = pattern.predicate {
-            conditions.push(format!("lower(predicate) LIKE lower(?{})", conditions.len() + 1));
+            conditions.push(format!(
+                "lower(predicate) LIKE lower(?{})",
+                conditions.len() + 1
+            ));
             bind_values.push(p.clone());
         }
         if let Some(ref o) = pattern.object {
-            conditions.push(format!("lower(object) LIKE lower(?{})", conditions.len() + 1));
+            conditions.push(format!(
+                "lower(object) LIKE lower(?{})",
+                conditions.len() + 1
+            ));
             bind_values.push(o.clone());
         }
 
@@ -312,7 +321,8 @@ impl TripletMatcher {
             .filter(|w| w.chars().next().map(|c| c.is_uppercase()).unwrap_or(false))
             .map(|w| {
                 // Strip trailing punctuation
-                w.trim_end_matches(|c: char| !c.is_alphanumeric()).to_string()
+                w.trim_end_matches(|c: char| !c.is_alphanumeric())
+                    .to_string()
             })
             .filter(|w| w.len() >= 2)
             .collect::<std::collections::HashSet<_>>() // deduplicate
@@ -357,29 +367,23 @@ impl TripletMatcher {
     ///
     /// Returns zeroes for all counts when the table is empty.
     pub fn knowledge_stats(conn: &Connection) -> Result<KnowledgeStats> {
-        let total_facts: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM facts",
-            [],
-            |row| row.get(0),
-        )?;
+        let total_facts: i64 =
+            conn.query_row("SELECT COUNT(*) FROM facts", [], |row| row.get(0))?;
 
-        let unique_subjects: i64 = conn.query_row(
-            "SELECT COUNT(DISTINCT subject) FROM facts",
-            [],
-            |row| row.get(0),
-        )?;
+        let unique_subjects: i64 =
+            conn.query_row("SELECT COUNT(DISTINCT subject) FROM facts", [], |row| {
+                row.get(0)
+            })?;
 
-        let unique_predicates: i64 = conn.query_row(
-            "SELECT COUNT(DISTINCT predicate) FROM facts",
-            [],
-            |row| row.get(0),
-        )?;
+        let unique_predicates: i64 =
+            conn.query_row("SELECT COUNT(DISTINCT predicate) FROM facts", [], |row| {
+                row.get(0)
+            })?;
 
-        let unique_objects: i64 = conn.query_row(
-            "SELECT COUNT(DISTINCT object) FROM facts",
-            [],
-            |row| row.get(0),
-        )?;
+        let unique_objects: i64 =
+            conn.query_row("SELECT COUNT(DISTINCT object) FROM facts", [], |row| {
+                row.get(0)
+            })?;
 
         // Top predicates (up to 10)
         let mut pred_stmt = conn.prepare(
@@ -390,7 +394,9 @@ impl TripletMatcher {
              LIMIT 10",
         )?;
         let top_predicates: Vec<(String, i64)> = pred_stmt
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         // Top subjects (up to 10)
@@ -402,7 +408,9 @@ impl TripletMatcher {
              LIMIT 10",
         )?;
         let top_subjects: Vec<(String, i64)> = subj_stmt
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(KnowledgeStats {
@@ -577,8 +585,7 @@ mod tests {
         insert(&conn, "Alice", "works_at", "Google", 0.9);
         insert(&conn, "Google", "works_at", "Alphabet", 0.8);
 
-        let paths =
-            TripletMatcher::infer_transitive(&conn, "Alice", "works_at", 3).expect("infer");
+        let paths = TripletMatcher::infer_transitive(&conn, "Alice", "works_at", 3).expect("infer");
 
         assert!(!paths.is_empty(), "expected at least one inference path");
         // Find the longest path (Alice -> Google -> Alphabet)
@@ -596,8 +603,7 @@ mod tests {
         seed_graph(&conn);
 
         // "Alice" has works_at, but we query "lives_in" — no path should be found
-        let paths =
-            TripletMatcher::infer_transitive(&conn, "Alice", "lives_in", 3).expect("infer");
+        let paths = TripletMatcher::infer_transitive(&conn, "Alice", "lives_in", 3).expect("infer");
         assert!(paths.is_empty());
     }
 
@@ -606,8 +612,7 @@ mod tests {
         let conn = setup();
         seed_graph(&conn);
 
-        let paths =
-            TripletMatcher::infer_transitive(&conn, "Alice", "works_at", 0).expect("infer");
+        let paths = TripletMatcher::infer_transitive(&conn, "Alice", "works_at", 0).expect("infer");
         assert!(paths.is_empty());
     }
 
@@ -653,7 +658,8 @@ mod tests {
         seed_graph(&conn);
 
         // All lowercase — no capitalized entities extracted
-        let facts = TripletMatcher::query_knowledge(&conn, "what does everyone do?").expect("query");
+        let facts =
+            TripletMatcher::query_knowledge(&conn, "what does everyone do?").expect("query");
         assert!(facts.is_empty());
     }
 

@@ -139,10 +139,14 @@ pub fn get_block(conn: &Connection, name: &str) -> Result<Option<MemoryBlock>> {
 /// Update a block's content, increment its version, and record the edit.
 ///
 /// Returns an error when the block does not exist.
-pub fn update_block(conn: &Connection, name: &str, new_content: &str, reason: &str) -> Result<MemoryBlock> {
-    let old = get_block(conn, name)?.ok_or_else(|| {
-        EngramError::Storage(format!("memory block '{}' not found", name))
-    })?;
+pub fn update_block(
+    conn: &Connection,
+    name: &str,
+    new_content: &str,
+    reason: &str,
+) -> Result<MemoryBlock> {
+    let old = get_block(conn, name)?
+        .ok_or_else(|| EngramError::Storage(format!("memory block '{}' not found", name)))?;
 
     conn.execute(
         r#"
@@ -174,8 +178,7 @@ pub fn list_blocks(conn: &Connection) -> Result<Vec<MemoryBlock>> {
         FROM memory_blocks ORDER BY name
         "#,
     )?;
-    let blocks: rusqlite::Result<Vec<MemoryBlock>> =
-        stmt.query_map([], row_to_block)?.collect();
+    let blocks: rusqlite::Result<Vec<MemoryBlock>> = stmt.query_map([], row_to_block)?.collect();
     Ok(blocks?)
 }
 
@@ -194,11 +197,7 @@ pub fn delete_block(conn: &Connection, name: &str) -> Result<()> {
 /// Retrieve the edit history for a block, most-recent first.
 ///
 /// `limit` caps the number of entries returned; pass `0` for all entries.
-pub fn get_block_history(
-    conn: &Connection,
-    name: &str,
-    limit: usize,
-) -> Result<Vec<BlockEditLog>> {
+pub fn get_block_history(conn: &Connection, name: &str, limit: usize) -> Result<Vec<BlockEditLog>> {
     let sql = if limit > 0 {
         format!(
             r#"
@@ -229,9 +228,8 @@ pub fn get_block_history(
 ///
 /// Returns `None` when the block is within budget (no write is performed).
 pub fn archive_overflow(conn: &Connection, name: &str) -> Result<Option<String>> {
-    let block = get_block(conn, name)?.ok_or_else(|| {
-        EngramError::Storage(format!("memory block '{}' not found", name))
-    })?;
+    let block = get_block(conn, name)?
+        .ok_or_else(|| EngramError::Storage(format!("memory block '{}' not found", name)))?;
 
     let max_chars = block.max_tokens * 4;
     if block.content.len() <= max_chars {

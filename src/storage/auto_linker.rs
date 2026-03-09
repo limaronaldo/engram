@@ -216,8 +216,7 @@ pub fn run_semantic_linker(
     pairs.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
     // Enforce max_links_per_memory: track how many links each memory has received.
-    let mut link_counts: std::collections::HashMap<i64, usize> =
-        std::collections::HashMap::new();
+    let mut link_counts: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
 
     for (score, from_id, to_id) in pairs {
         let from_count = link_counts.entry(from_id).or_insert(0);
@@ -364,8 +363,7 @@ pub fn run_temporal_linker(
     // -----------------------------------------------------------------------
     // 3. Enforce per-memory link cap, then insert.
     // -----------------------------------------------------------------------
-    let mut link_counts: std::collections::HashMap<i64, usize> =
-        std::collections::HashMap::new();
+    let mut link_counts: std::collections::HashMap<i64, usize> = std::collections::HashMap::new();
 
     for (score, from_id, to_id) in candidates {
         {
@@ -478,9 +476,7 @@ fn parse_timestamp_to_secs(ts: &str) -> Option<f64> {
         return Some(dt.timestamp() as f64 + dt.timestamp_subsec_nanos() as f64 * 1e-9);
     }
     // Fall back to SQLite's CURRENT_TIMESTAMP format: "YYYY-MM-DD HH:MM:SS"
-    if let Ok(ndt) =
-        chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S")
-    {
+    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S") {
         return Some(ndt.and_utc().timestamp() as f64);
     }
     None
@@ -531,10 +527,7 @@ mod tests {
 
         if let Some(emb) = embedding {
             // Serialise f32 slice as little-endian bytes (same format as EmbeddingWorker).
-            let bytes: Vec<u8> = emb
-                .iter()
-                .flat_map(|f| f.to_le_bytes())
-                .collect();
+            let bytes: Vec<u8> = emb.iter().flat_map(|f| f.to_le_bytes()).collect();
             conn.execute(
                 "INSERT INTO embeddings (memory_id, embedding, model, dimensions)
                  VALUES (?1, ?2, 'tfidf', ?3)",
@@ -819,7 +812,10 @@ mod tests {
         let result = run_temporal_linker(&conn, &opts).expect("temporal linker");
 
         assert_eq!(result.memories_processed, 2);
-        assert_eq!(result.links_created, 1, "one temporal link for the nearby pair");
+        assert_eq!(
+            result.links_created, 1,
+            "one temporal link for the nearby pair"
+        );
 
         // Verify link is stored with the correct type.
         let links = list_auto_links(&conn, Some("temporal"), 10).expect("list");
@@ -841,7 +837,10 @@ mod tests {
         let result = run_temporal_linker(&conn, &opts).expect("temporal linker");
 
         assert_eq!(result.memories_processed, 2);
-        assert_eq!(result.links_created, 0, "memories 60m apart should not be linked");
+        assert_eq!(
+            result.links_created, 0,
+            "memories 60m apart should not be linked"
+        );
     }
 
     #[test]
@@ -892,12 +891,17 @@ mod tests {
         let second = run_temporal_linker(&conn, &opts).expect("second run");
 
         assert_eq!(first.links_created, 1);
-        assert_eq!(second.links_created, 0, "second run should create no new links");
+        assert_eq!(
+            second.links_created, 0,
+            "second run should create no new links"
+        );
 
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM auto_links WHERE link_type = 'temporal'", [], |r| {
-                r.get(0)
-            })
+            .query_row(
+                "SELECT COUNT(*) FROM auto_links WHERE link_type = 'temporal'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(count, 1, "exactly one temporal link should exist");
     }
@@ -998,7 +1002,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(beta_link_count, 0, "beta workspace memory should not be linked");
+        assert_eq!(
+            beta_link_count, 0,
+            "beta workspace memory should not be linked"
+        );
     }
 
     #[test]
@@ -1023,7 +1030,10 @@ mod tests {
         assert_eq!(result.memories_processed, 3);
         // A-B: 120s diff = exactly at the boundary (diff <= min_overlap_secs=120) → linked.
         // A-C: 600s > 120 → not linked.  B-C: 480s > 120 → not linked.
-        assert_eq!(result.links_created, 1, "only A-B qualifies under min_overlap_secs=120");
+        assert_eq!(
+            result.links_created, 1,
+            "only A-B qualifies under min_overlap_secs=120"
+        );
     }
 
     #[test]
@@ -1055,7 +1065,10 @@ mod tests {
     #[test]
     fn test_parse_timestamp_to_secs_sqlite_format() {
         let secs = parse_timestamp_to_secs("2024-01-01 10:00:00");
-        assert!(secs.is_some(), "should parse SQLite CURRENT_TIMESTAMP format");
+        assert!(
+            secs.is_some(),
+            "should parse SQLite CURRENT_TIMESTAMP format"
+        );
     }
 
     #[test]

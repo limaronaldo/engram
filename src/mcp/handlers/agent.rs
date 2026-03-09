@@ -24,13 +24,21 @@ pub fn agent_register(ctx: &HandlerContext, params: Value) -> Value {
     let capabilities: Vec<String> = params
         .get("capabilities")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
     let namespaces: Vec<String> = params
         .get("namespaces")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_else(|| vec!["default".to_string()]);
 
     let metadata = params
@@ -151,7 +159,10 @@ pub fn agent_capabilities(ctx: &HandlerContext, params: Value) -> Value {
     };
 
     let capabilities: Vec<String> = match params.get("capabilities").and_then(|v| v.as_array()) {
-        Some(arr) => arr.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
+        Some(arr) => arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect(),
         None => return json!({"error": "capabilities array is required"}),
     };
 
@@ -178,9 +189,7 @@ mod tests {
         HandlerContext {
             storage,
             embedder: Arc::new(crate::embedding::TfIdfEmbedder::new(128)),
-            fuzzy_engine: Arc::new(parking_lot::Mutex::new(
-                crate::search::FuzzyEngine::new(),
-            )),
+            fuzzy_engine: Arc::new(parking_lot::Mutex::new(crate::search::FuzzyEngine::new())),
             search_config: crate::search::SearchConfig::default(),
             realtime: None,
             embedding_cache: Arc::new(crate::embedding::EmbeddingCache::default()),
@@ -251,14 +260,8 @@ mod tests {
     #[test]
     fn test_list_by_namespace() {
         let ctx = test_ctx();
-        agent_register(
-            &ctx,
-            json!({"agent_id": "ns-1", "namespaces": ["prod"]}),
-        );
-        agent_register(
-            &ctx,
-            json!({"agent_id": "ns-2", "namespaces": ["staging"]}),
-        );
+        agent_register(&ctx, json!({"agent_id": "ns-1", "namespaces": ["prod"]}));
+        agent_register(&ctx, json!({"agent_id": "ns-2", "namespaces": ["staging"]}));
         let result = agent_list(&ctx, json!({"namespace": "prod"}));
         assert_eq!(result["count"], 1);
         assert_eq!(result["namespace"], "prod");

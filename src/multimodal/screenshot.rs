@@ -124,7 +124,12 @@ impl ScreenshotCapture {
                 // Use -l <window_id> to capture the specific window
                 let window_id_str = window_id.to_string();
                 run_screencapture(
-                    &["-x", "-l", &window_id_str, output_path.to_str().unwrap_or("")],
+                    &[
+                        "-x",
+                        "-l",
+                        &window_id_str,
+                        output_path.to_str().unwrap_or(""),
+                    ],
                     &output_path,
                 )?;
             }
@@ -235,9 +240,8 @@ pub async fn describe_and_store(
 
 /// Returns the default directory for screenshots: `~/.local/share/engram/screenshots/`.
 fn default_screenshot_dir() -> Result<PathBuf> {
-    let base = dirs::data_local_dir().ok_or_else(|| {
-        EngramError::Config("Cannot determine local data directory".to_string())
-    })?;
+    let base = dirs::data_local_dir()
+        .ok_or_else(|| EngramError::Config("Cannot determine local data directory".to_string()))?;
     Ok(base.join("engram").join("screenshots"))
 }
 
@@ -249,9 +253,7 @@ fn run_screencapture(args: &[&str], expected_output: &PathBuf) -> Result<()> {
     let status = Command::new("screencapture")
         .args(args)
         .status()
-        .map_err(|e| {
-            EngramError::Storage(format!("Failed to launch screencapture: {}", e))
-        })?;
+        .map_err(|e| EngramError::Storage(format!("Failed to launch screencapture: {}", e)))?;
 
     if !status.success() {
         return Err(EngramError::Storage(format!(
@@ -281,7 +283,10 @@ fn build_result(image_path: PathBuf) -> Result<ScreenshotResult> {
 
     let file_size = metadata.len();
     let file_data = std::fs::read(&image_path).map_err(|e| {
-        EngramError::Storage(format!("Cannot read screenshot file {:?}: {}", image_path, e))
+        EngramError::Storage(format!(
+            "Cannot read screenshot file {:?}: {}",
+            image_path, e
+        ))
     })?;
 
     let file_hash = compute_sha256(&file_data);
@@ -350,10 +355,7 @@ fn sanitize_app_name(app_name: &str) -> String {
 fn find_window_id(app_name: &str) -> Option<u32> {
     // Use screencapture -L to list windows and find the one matching app_name.
     // -L outputs a JSON-ish list of windows with their IDs and owner names.
-    let output = Command::new("screencapture")
-        .args(["-L"])
-        .output()
-        .ok()?;
+    let output = Command::new("screencapture").args(["-L"]).output().ok()?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let app_name_lower = app_name.to_lowercase();
@@ -494,7 +496,10 @@ mod tests {
         assert!(!nested.exists());
 
         let _capture = ScreenshotCapture::with_dir(nested.clone()).unwrap();
-        assert!(nested.exists(), "Directory should be created by ScreenshotCapture::with_dir");
+        assert!(
+            nested.exists(),
+            "Directory should be created by ScreenshotCapture::with_dir"
+        );
     }
 
     #[test]
@@ -532,8 +537,16 @@ mod tests {
         let capture = ScreenshotCapture::with_dir(dir.path().to_path_buf()).unwrap();
         let path = capture.generate_path("screen");
         let filename = path.file_name().unwrap().to_str().unwrap();
-        assert!(filename.starts_with("screen_"), "filename should start with 'screen_', got: {}", filename);
-        assert!(filename.ends_with(".png"), "filename should end with '.png', got: {}", filename);
+        assert!(
+            filename.starts_with("screen_"),
+            "filename should start with 'screen_', got: {}",
+            filename
+        );
+        assert!(
+            filename.ends_with(".png"),
+            "filename should end with '.png', got: {}",
+            filename
+        );
     }
 
     #[test]

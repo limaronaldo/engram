@@ -117,9 +117,7 @@ pub fn quality_resolve_conflict(ctx: &HandlerContext, params: Value) -> Value {
         "keep_both" => ResolutionType::KeepBoth,
         "delete_both" => ResolutionType::DeleteBoth,
         "false_positive" => ResolutionType::FalsePositive,
-        _ => {
-            return json!({"error": format!("Invalid resolution type: {}", resolution_str)})
-        }
+        _ => return json!({"error": format!("Invalid resolution type: {}", resolution_str)}),
     };
 
     let notes = params.get("notes").and_then(|v| v.as_str());
@@ -342,12 +340,8 @@ pub fn salience_decay_run(ctx: &HandlerContext, params: Value) -> Value {
             .storage
             .with_connection(|conn| {
                 conn.execute("BEGIN IMMEDIATE", [])?;
-                let result = run_salience_decay_in_workspace(
-                    conn,
-                    &config,
-                    false,
-                    workspace.as_deref(),
-                );
+                let result =
+                    run_salience_decay_in_workspace(conn, &config, false, workspace.as_deref());
                 let _ = conn.execute("ROLLBACK", []);
                 Ok(json!({"dry_run": true, "result": result?}))
             })

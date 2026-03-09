@@ -163,7 +163,11 @@ pub fn run_louvain_clustering(
         })
         .collect();
     // Stable sort: larger clusters first, then by first member id
-    clusters.sort_by(|a, b| b.size.cmp(&a.size).then_with(|| a.members[0].cmp(&b.members[0])));
+    clusters.sort_by(|a, b| {
+        b.size
+            .cmp(&a.size)
+            .then_with(|| a.members[0].cmp(&b.members[0]))
+    });
     // Re-index after sort
     for (idx, cluster) in clusters.iter_mut().enumerate() {
         cluster.cluster_id = idx;
@@ -338,7 +342,8 @@ fn load_edges(conn: &Connection, options: &LouvainOptions) -> Result<Vec<Edge>> 
                 .iter()
                 .map(|t| Box::new(t.clone()) as Box<dyn rusqlite::ToSql>)
                 .collect();
-            let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let params_refs: Vec<&dyn rusqlite::ToSql> =
+                params.iter().map(|p| p.as_ref()).collect();
             stmt.query_map(params_refs.as_slice(), |row| {
                 Ok(Edge {
                     from: row.get(0)?,
@@ -394,20 +399,13 @@ fn louvain(adj: &AdjList, nodes: &[i64], resolution: f64) -> (HashMap<i64, usize
 
     if two_m == 0.0 {
         // No edges — every node is its own community
-        let comm: HashMap<i64, usize> = nodes
-            .iter()
-            .enumerate()
-            .map(|(i, &id)| (id, i))
-            .collect();
+        let comm: HashMap<i64, usize> = nodes.iter().enumerate().map(|(i, &id)| (id, i)).collect();
         return (comm, 0.0);
     }
 
     // Initialise: each node in its own singleton community
-    let mut community_of: HashMap<i64, usize> = nodes
-        .iter()
-        .enumerate()
-        .map(|(i, &id)| (id, i))
-        .collect();
+    let mut community_of: HashMap<i64, usize> =
+        nodes.iter().enumerate().map(|(i, &id)| (id, i)).collect();
 
     // Degree (sum of edge weights) for each node
     let degree_of: HashMap<i64, f64> = nodes
@@ -449,8 +447,8 @@ fn louvain(adj: &AdjList, nodes: &[i64], resolution: f64) -> (HashMap<i64, usize
             let k_i_in_cur = comm_weight.get(&current_comm).copied().unwrap_or(0.0);
 
             // Modularity gain of *removing* node from current community
-            let delta_remove = -(k_i_in_cur / two_m)
-                + resolution * (sigma_tot_cur - ki) * ki / (two_m * two_m);
+            let delta_remove =
+                -(k_i_in_cur / two_m) + resolution * (sigma_tot_cur - ki) * ki / (two_m * two_m);
 
             // Find best neighbour community to move to
             let mut best_gain = 0.0;
@@ -463,8 +461,8 @@ fn louvain(adj: &AdjList, nodes: &[i64], resolution: f64) -> (HashMap<i64, usize
                 let sigma_tot_cand = community_degree.get(&cand_comm).copied().unwrap_or(0.0);
 
                 // Modularity gain of *adding* node to cand_comm
-                let delta_add = (k_i_in_cand / two_m)
-                    - resolution * sigma_tot_cand * ki / (two_m * two_m);
+                let delta_add =
+                    (k_i_in_cand / two_m) - resolution * sigma_tot_cand * ki / (two_m * two_m);
 
                 let delta_q = delta_add + delta_remove;
 
@@ -686,7 +684,11 @@ mod tests {
 
         // Nodes 10, 11, 12 should not appear
         assert_eq!(result.nodes, 3);
-        let all_members: Vec<i64> = result.clusters.iter().flat_map(|c| c.members.clone()).collect();
+        let all_members: Vec<i64> = result
+            .clusters
+            .iter()
+            .flat_map(|c| c.members.clone())
+            .collect();
         assert!(!all_members.contains(&10));
         assert!(!all_members.contains(&11));
         assert!(!all_members.contains(&12));
@@ -779,8 +781,16 @@ mod tests {
     #[test]
     fn test_build_adjacency_undirected() {
         let edges = vec![
-            Edge { from: 1, to: 2, weight: 0.5 },
-            Edge { from: 2, to: 3, weight: 0.8 },
+            Edge {
+                from: 1,
+                to: 2,
+                weight: 0.5,
+            },
+            Edge {
+                from: 2,
+                to: 3,
+                weight: 0.8,
+            },
         ];
         let (adj, nodes) = build_adjacency(&edges);
 

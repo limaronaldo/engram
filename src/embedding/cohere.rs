@@ -80,10 +80,7 @@ mod inner {
             let response = self
                 .client
                 .post(&url)
-                .header(
-                    "Authorization",
-                    format!("Bearer {}", self.config.api_key),
-                )
+                .header("Authorization", format!("Bearer {}", self.config.api_key))
                 .json(&serde_json::json!({
                     "texts": [text],
                     "model": self.config.model,
@@ -101,13 +98,9 @@ mod inner {
             }
 
             let data: serde_json::Value = response.json().await?;
-            let embeddings = data["embeddings"]
-                .as_array()
-                .ok_or_else(|| {
-                    EngramError::Embedding(
-                        "Cohere response missing 'embeddings' field".to_string(),
-                    )
-                })?;
+            let embeddings = data["embeddings"].as_array().ok_or_else(|| {
+                EngramError::Embedding("Cohere response missing 'embeddings' field".to_string())
+            })?;
 
             let embedding: Vec<f32> = embeddings
                 .first()
@@ -143,10 +136,7 @@ mod inner {
             let response = self
                 .client
                 .post(&url)
-                .header(
-                    "Authorization",
-                    format!("Bearer {}", self.config.api_key),
-                )
+                .header("Authorization", format!("Bearer {}", self.config.api_key))
                 .json(&serde_json::json!({
                     "texts": texts,
                     "model": self.config.model,
@@ -164,13 +154,9 @@ mod inner {
             }
 
             let data: serde_json::Value = response.json().await?;
-            let raw = data["embeddings"]
-                .as_array()
-                .ok_or_else(|| {
-                    EngramError::Embedding(
-                        "Cohere response missing 'embeddings' field".to_string(),
-                    )
-                })?;
+            let raw = data["embeddings"].as_array().ok_or_else(|| {
+                EngramError::Embedding("Cohere response missing 'embeddings' field".to_string())
+            })?;
 
             let embeddings: Vec<Vec<f32>> = raw
                 .iter()
@@ -287,7 +273,11 @@ mod tests {
         let embedder = StubCohereEmbedder::new(1024);
         let texts = ["alpha", "beta", "gamma"];
         let results = embedder.embed_batch_stub(&texts);
-        assert_eq!(results.len(), 3, "batch result count must match input count");
+        assert_eq!(
+            results.len(),
+            3,
+            "batch result count must match input count"
+        );
         for r in &results {
             assert_eq!(r.len(), 1024);
         }

@@ -43,10 +43,7 @@ pub fn temporal_add_edge(ctx: &HandlerContext, params: Value) -> Value {
         None => return json!({"error": "valid_from is required"}),
     };
 
-    let properties = params
-        .get("properties")
-        .cloned()
-        .unwrap_or(json!({}));
+    let properties = params.get("properties").cloned().unwrap_or(json!({}));
 
     let confidence = params
         .get("confidence")
@@ -191,7 +188,7 @@ pub fn temporal_diff(ctx: &HandlerContext, params: Value) -> Value {
 /// - `memory_id` (i64, required)
 /// - `scope_path` (string, required) — e.g. "global/org:acme/user:alice"
 pub fn scope_set(ctx: &HandlerContext, params: Value) -> Value {
-    use crate::storage::scoping::{MemoryScope, set_scope};
+    use crate::storage::scoping::{set_scope, MemoryScope};
 
     let memory_id = match params.get("memory_id").and_then(|v| v.as_i64()) {
         Some(id) => id,
@@ -262,7 +259,7 @@ pub fn scope_list(ctx: &HandlerContext, _params: Value) -> Value {
 /// - `query` (string, required) — substring search
 /// - `scope_path` (string, required) — target scope
 pub fn scope_search(ctx: &HandlerContext, params: Value) -> Value {
-    use crate::storage::scoping::{MemoryScope, search_scoped};
+    use crate::storage::scoping::{search_scoped, MemoryScope};
 
     let query = match params.get("query").and_then(|v| v.as_str()) {
         Some(q) => q.to_string(),

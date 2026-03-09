@@ -246,10 +246,7 @@ impl WatcherConfig {
         })?;
 
         toml::from_str(&contents).map_err(|e| {
-            EngramError::Config(format!(
-                "Invalid TOML in watcher config {:?}: {}",
-                path, e
-            ))
+            EngramError::Config(format!("Invalid TOML in watcher config {:?}: {}", path, e))
         })
     }
 

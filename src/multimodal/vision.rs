@@ -158,10 +158,7 @@ impl VisionProvider for GeminiVisionProvider {
             )));
         }
 
-        let data: serde_json::Value = response
-            .json()
-            .await
-            .map_err(EngramError::Http)?;
+        let data: serde_json::Value = response.json().await.map_err(EngramError::Http)?;
 
         let text = data["candidates"][0]["content"]["parts"][0]["text"]
             .as_str()
@@ -260,17 +257,12 @@ impl VisionProvider for OpenAIVisionProvider {
             )));
         }
 
-        let data: serde_json::Value = response
-            .json()
-            .await
-            .map_err(EngramError::Http)?;
+        let data: serde_json::Value = response.json().await.map_err(EngramError::Http)?;
 
         let text = data["choices"][0]["message"]["content"]
             .as_str()
             .ok_or_else(|| {
-                EngramError::Internal(
-                    "Invalid OpenAI response: missing content field".to_string(),
-                )
+                EngramError::Internal("Invalid OpenAI response: missing content field".to_string())
             })?
             .to_string();
 
@@ -333,7 +325,10 @@ mod tests {
     /// Helper to clear relevant env vars and hold the env mutex until the guard is dropped.
     fn clear_vision_env() -> EnvGuard {
         let lock = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
-        EnvGuard::save_and_clear(lock, &["GEMINI_API_KEY", "OPENAI_API_KEY", "ENGRAM_VISION_MODEL"])
+        EnvGuard::save_and_clear(
+            lock,
+            &["GEMINI_API_KEY", "OPENAI_API_KEY", "ENGRAM_VISION_MODEL"],
+        )
     }
 
     /// RAII guard: holds the env mutex and restores env vars on drop.
@@ -371,8 +366,8 @@ mod tests {
         let _guard = clear_vision_env();
         std::env::set_var("GEMINI_API_KEY", "test-gemini-key");
 
-        let provider = VisionProviderFactory::from_env()
-            .expect("should succeed when GEMINI_API_KEY is set");
+        let provider =
+            VisionProviderFactory::from_env().expect("should succeed when GEMINI_API_KEY is set");
 
         assert_eq!(provider.provider_name(), "google");
     }
@@ -382,8 +377,8 @@ mod tests {
         let _guard = clear_vision_env();
         std::env::set_var("OPENAI_API_KEY", "test-openai-key");
 
-        let provider = VisionProviderFactory::from_env()
-            .expect("should succeed when OPENAI_API_KEY is set");
+        let provider =
+            VisionProviderFactory::from_env().expect("should succeed when OPENAI_API_KEY is set");
 
         assert_eq!(provider.provider_name(), "openai");
     }

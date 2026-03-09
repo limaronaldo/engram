@@ -108,7 +108,10 @@ pub fn firefox_history_path() -> Option<PathBuf> {
         }
     });
 
-    candidates.into_iter().next().map(|p| p.join("places.sqlite"))
+    candidates
+        .into_iter()
+        .next()
+        .map(|p| p.join("places.sqlite"))
 }
 
 /// Return the macOS path to the Safari history database.
@@ -411,8 +414,9 @@ impl BrowserWatcher {
         browser: &str,
         since: &DateTime<Utc>,
     ) -> Result<Vec<BrowserVisit>, BrowserWatcherError> {
-        let db_path = history_db_path(browser)
-            .ok_or_else(|| BrowserWatcherError::DatabaseError(format!("Unknown browser: {browser}")))?;
+        let db_path = history_db_path(browser).ok_or_else(|| {
+            BrowserWatcherError::DatabaseError(format!("Unknown browser: {browser}"))
+        })?;
 
         let (conn, _tmp) = open_readonly(&db_path)?;
 
@@ -467,7 +471,10 @@ mod tests {
         config.enabled = false;
         let mut watcher = BrowserWatcher::new(config);
         let visits = watcher.poll(Utc::now());
-        assert!(visits.is_empty(), "Disabled watcher should return no visits");
+        assert!(
+            visits.is_empty(),
+            "Disabled watcher should return no visits"
+        );
     }
 
     // ── T2: exclusion pattern matching ───────────────────────────────────────

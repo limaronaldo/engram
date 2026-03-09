@@ -18,22 +18,22 @@
 //! - `CloudSyncBackend` - For backends with cloud synchronization
 
 pub mod agent_registry;
+mod audit;
 pub mod auto_linker;
+pub mod backend;
 #[cfg(feature = "emergent-graph")]
 pub mod clustering;
-mod audit;
-pub mod backend;
 mod confidence;
 mod connection;
 pub mod entity_queries;
 pub mod filter;
 pub mod graph_queries;
 pub mod identity_links;
-pub mod memory_blocks;
-pub mod scoping;
 pub mod image_storage;
+pub mod memory_blocks;
 mod migrations;
 pub mod queries;
+pub mod scoping;
 pub mod sqlite_backend;
 pub mod temporal;
 
@@ -49,15 +49,19 @@ pub use agent_registry::{
     deregister_agent, get_agent, get_agents_in_namespace, heartbeat_agent, list_agents,
     register_agent, update_agent_capabilities, Agent, RegisterAgentInput,
 };
-pub use auto_linker::{
-    auto_link_stats, insert_auto_link, list_auto_links, run_semantic_linker,
-    run_temporal_linker, AutoLink, AutoLinkResult, SemanticLinkOptions, TemporalLinkOptions,
-};
 pub use audit::*;
+pub use auto_linker::{
+    auto_link_stats, insert_auto_link, list_auto_links, run_semantic_linker, run_temporal_linker,
+    AutoLink, AutoLinkResult, SemanticLinkOptions, TemporalLinkOptions,
+};
 pub use backend::{
     BatchCreateResult as BackendBatchCreateResult, BatchDeleteResult as BackendBatchDeleteResult,
     CloudSyncBackend, HealthStatus, StorageBackend, StorageStats, SyncDelta as BackendSyncDelta,
     SyncResult, SyncState, TransactionalBackend,
+};
+#[cfg(feature = "emergent-graph")]
+pub use clustering::{
+    get_cluster, list_clusters, run_louvain_clustering, Cluster, ClusteringResult, LouvainOptions,
 };
 pub use confidence::*;
 pub use connection::{Storage, StoragePool};
@@ -140,10 +144,6 @@ pub use queries::{
 pub use sqlite_backend::SqliteBackend;
 pub use temporal::{
     MemorySnapshot, StateDiff, TemporalMemory, TemporalQueryEngine, TemporalQueryOptions,
-};
-#[cfg(feature = "emergent-graph")]
-pub use clustering::{
-    get_cluster, list_clusters, run_louvain_clustering, Cluster, ClusteringResult, LouvainOptions,
 };
 #[cfg(feature = "turso")]
 pub use turso_backend::{TursoBackend, TursoConfig};

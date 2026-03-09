@@ -90,9 +90,7 @@ mod inner {
             let embedding: Vec<f32> = data["embedding"]
                 .as_array()
                 .ok_or_else(|| {
-                    EngramError::Embedding(
-                        "Ollama response missing 'embedding' field".to_string(),
-                    )
+                    EngramError::Embedding("Ollama response missing 'embedding' field".to_string())
                 })?
                 .iter()
                 .filter_map(|v| v.as_f64().map(|f| f as f32))

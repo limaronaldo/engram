@@ -225,26 +225,11 @@ static NEGATIVE_WORDS: &[&str] = &[
 
 /// Words that negate the sentiment of the following word
 static NEGATION_WORDS: &[&str] = &[
-    "not",
-    "no",
-    "never",
-    "don't",
-    "doesn't",
-    "isn't",
-    "aren't",
-    "wasn't",
-    "can't",
-    "won't",
+    "not", "no", "never", "don't", "doesn't", "isn't", "aren't", "wasn't", "can't", "won't",
 ];
 
 /// Words that amplify the magnitude of the following sentiment word
-static INTENSIFIERS: &[&str] = &[
-    "very",
-    "extremely",
-    "really",
-    "absolutely",
-    "incredibly",
-];
+static INTENSIFIERS: &[&str] = &["very", "extremely", "really", "absolutely", "incredibly"];
 
 /// Multiplier applied when an intensifier precedes a sentiment word
 const INTENSIFIER_MULTIPLIER: f32 = 1.5;
@@ -451,9 +436,9 @@ impl ReflectionEngine {
         let stopwords = &[
             "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has",
             "had", "do", "does", "did", "will", "would", "could", "should", "may", "might",
-            "shall", "can", "to", "of", "in", "for", "on", "with", "at", "by", "from", "and",
-            "or", "but", "if", "then", "that", "this", "it", "its", "i", "you", "we", "they",
-            "he", "she", "my", "your", "our", "their", "not", "no", "so",
+            "shall", "can", "to", "of", "in", "for", "on", "with", "at", "by", "from", "and", "or",
+            "but", "if", "then", "that", "this", "it", "its", "i", "you", "we", "they", "he",
+            "she", "my", "your", "our", "their", "not", "no", "so",
         ];
 
         let mut freq: HashMap<String, usize> = HashMap::new();
@@ -620,7 +605,8 @@ impl ReflectionEngine {
 
         // Add meta-insights from prior reflections
         if prior_count == 0 {
-            insights.push("No prior reflections found; this is a first-order reflection.".to_string());
+            insights
+                .push("No prior reflections found; this is a first-order reflection.".to_string());
         } else {
             insights.push(format!(
                 "Built on {} prior reflections for meta-level synthesis.",
@@ -645,7 +631,11 @@ impl ReflectionEngine {
             }
 
             // Synthesise a recurring theme from prior reflection contents
-            let prior_text: String = prior.iter().map(|r| r.content.as_str()).collect::<Vec<_>>().join(" ");
+            let prior_text: String = prior
+                .iter()
+                .map(|r| r.content.as_str())
+                .collect::<Vec<_>>()
+                .join(" ");
             let prior_sentiment = self.analyzer.analyze(&prior_text);
             insights.push(format!(
                 "Aggregate prior reflection sentiment: {} (score: {:.2}).",
@@ -789,8 +779,7 @@ fn map_reflection_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reflection> {
     let depth_str: String = row.get(3)?;
     let created_at: String = row.get(4)?;
 
-    let source_ids: Vec<i64> =
-        serde_json::from_str(&source_ids_json).unwrap_or_default();
+    let source_ids: Vec<i64> = serde_json::from_str(&source_ids_json).unwrap_or_default();
 
     let depth = match depth_str.as_str() {
         "surface" => ReflectionDepth::Surface,
@@ -820,7 +809,8 @@ mod tests {
 
     fn in_memory_conn() -> Connection {
         let conn = Connection::open_in_memory().expect("in-memory db");
-        conn.execute_batch(CREATE_REFLECTIONS_TABLE).expect("create reflections table");
+        conn.execute_batch(CREATE_REFLECTIONS_TABLE)
+            .expect("create reflections table");
         conn
     }
 
@@ -848,7 +838,10 @@ mod tests {
         let s = analyzer().analyze("This is a great and amazing product");
         assert_eq!(s.label, SentimentLabel::Positive);
         assert!(s.score > 0.0, "score should be positive, got {}", s.score);
-        assert!(s.keywords.contains(&"great".to_string()) || s.keywords.contains(&"amazing".to_string()));
+        assert!(
+            s.keywords.contains(&"great".to_string())
+                || s.keywords.contains(&"amazing".to_string())
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -860,7 +853,9 @@ mod tests {
         assert_eq!(s.label, SentimentLabel::Negative);
         assert!(s.score < 0.0, "score should be negative, got {}", s.score);
         assert!(
-            s.keywords.contains(&"broken".to_string()) || s.keywords.contains(&"terrible".to_string()) || s.keywords.contains(&"bugs".to_string())
+            s.keywords.contains(&"broken".to_string())
+                || s.keywords.contains(&"terrible".to_string())
+                || s.keywords.contains(&"bugs".to_string())
         );
     }
 
@@ -872,8 +867,12 @@ mod tests {
         let positive = analyzer().analyze("great work here");
         let negated = analyzer().analyze("not great work here");
         // Without negation: positive; with negation: should flip toward negative
-        assert!(positive.score > negated.score,
-            "negation should reduce score: positive={}, negated={}", positive.score, negated.score);
+        assert!(
+            positive.score > negated.score,
+            "negation should reduce score: positive={}, negated={}",
+            positive.score,
+            negated.score
+        );
     }
 
     #[test]
@@ -881,8 +880,12 @@ mod tests {
         let negative = analyzer().analyze("this is terrible");
         let negated = analyzer().analyze("this is not terrible");
         // Without negation: negative; with negation: should flip toward positive
-        assert!(negated.score > negative.score,
-            "negation of negative word should increase score: negative={}, negated={}", negative.score, negated.score);
+        assert!(
+            negated.score > negative.score,
+            "negation of negative word should increase score: negative={}, negated={}",
+            negative.score,
+            negated.score
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -896,8 +899,12 @@ mod tests {
         // score may be clamped, but the label should still be positive.
         assert_eq!(base.label, SentimentLabel::Positive);
         assert_eq!(intensified.label, SentimentLabel::Positive);
-        assert!(intensified.score >= base.score,
-            "intensifier should not decrease score: base={}, intensified={}", base.score, intensified.score);
+        assert!(
+            intensified.score >= base.score,
+            "intensifier should not decrease score: base={}, intensified={}",
+            base.score,
+            intensified.score
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -909,12 +916,22 @@ mod tests {
         let s = analyzer().analyze("great performance but terrible stability and broken error");
         // Either Mixed or the dominant one — accept Mixed or Positive since "great" appears
         assert!(
-            matches!(s.label, SentimentLabel::Mixed | SentimentLabel::Positive | SentimentLabel::Negative),
-            "unexpected label: {:?}", s.label
+            matches!(
+                s.label,
+                SentimentLabel::Mixed | SentimentLabel::Positive | SentimentLabel::Negative
+            ),
+            "unexpected label: {:?}",
+            s.label
         );
         // Both polarities must be represented in keywords
-        let has_positive = s.keywords.iter().any(|k| POSITIVE_WORDS.contains(&k.as_str()));
-        let has_negative = s.keywords.iter().any(|k| NEGATIVE_WORDS.contains(&k.as_str()));
+        let has_positive = s
+            .keywords
+            .iter()
+            .any(|k| POSITIVE_WORDS.contains(&k.as_str()));
+        let has_negative = s
+            .keywords
+            .iter()
+            .any(|k| NEGATIVE_WORDS.contains(&k.as_str()));
         assert!(has_positive, "expected positive keywords in mixed text");
         assert!(has_negative, "expected negative keywords in mixed text");
     }
@@ -955,12 +972,16 @@ mod tests {
         assert!(!reflection.content.is_empty());
         assert_eq!(reflection.depth, ReflectionDepth::Surface);
         assert_eq!(reflection.source_ids, vec![1, 2]);
-        assert!(!reflection.insights.is_empty(), "surface reflection should produce insights");
+        assert!(
+            !reflection.insights.is_empty(),
+            "surface reflection should produce insights"
+        );
         // Content should mention key theme words from the memories
         let content_lower = reflection.content.to_lowercase();
         assert!(
             content_lower.contains("theme") || content_lower.contains("memories"),
-            "unexpected surface content: {}", reflection.content
+            "unexpected surface content: {}",
+            reflection.content
         );
     }
 
@@ -987,7 +1008,10 @@ mod tests {
             .insights
             .iter()
             .any(|i| i.contains("Contradict") || i.contains("positive") || i.contains("negative"));
-        assert!(has_contradiction, "analytical reflection should detect sentiment signals");
+        assert!(
+            has_contradiction,
+            "analytical reflection should detect sentiment signals"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1051,8 +1075,8 @@ mod tests {
             list_reflections(&conn, Some(ReflectionDepth::Surface), 10).expect("list surface");
         assert_eq!(surface_only.len(), 1);
 
-        let analytical_only =
-            list_reflections(&conn, Some(ReflectionDepth::Analytical), 10).expect("list analytical");
+        let analytical_only = list_reflections(&conn, Some(ReflectionDepth::Analytical), 10)
+            .expect("list analytical");
         assert!(analytical_only.is_empty());
     }
 }

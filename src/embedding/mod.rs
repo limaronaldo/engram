@@ -17,14 +17,14 @@ mod provider;
 mod queue;
 mod tfidf;
 
-#[cfg(feature = "ollama")]
-pub mod ollama;
 #[cfg(feature = "cohere")]
 pub mod cohere;
-#[cfg(feature = "voyage")]
-pub mod voyage;
+#[cfg(feature = "ollama")]
+pub mod ollama;
 #[cfg(feature = "onnx-embed")]
 pub mod onnx;
+#[cfg(feature = "voyage")]
+pub mod voyage;
 
 pub use cache::{EmbeddingCache, EmbeddingCacheStats};
 pub use provider::{EmbeddingProvider, EmbeddingProviderInfo, EmbeddingRegistry};

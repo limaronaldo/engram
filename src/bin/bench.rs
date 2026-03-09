@@ -113,7 +113,10 @@ fn main() {
                     }));
                 }
                 other => {
-                    eprintln!("Unknown suite: '{}'. Use: locomo, longmem, membench, all", other);
+                    eprintln!(
+                        "Unknown suite: '{}'. Use: locomo, longmem, membench, all",
+                        other
+                    );
                     std::process::exit(1);
                 }
             }
@@ -122,10 +125,7 @@ fn main() {
 
             // Print progress summary to stderr
             for result in &results {
-                eprintln!(
-                    "[{}] completed in {}ms",
-                    result.name, result.duration_ms
-                );
+                eprintln!("[{}] completed in {}ms", result.name, result.duration_ms);
             }
             eprintln!();
 

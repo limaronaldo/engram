@@ -104,10 +104,7 @@ pub fn mmr_select(
     }
 
     // Limit to candidate pool
-    let mut pool: Vec<MmrCandidate> = candidates
-        .into_iter()
-        .take(config.candidate_pool)
-        .collect();
+    let mut pool: Vec<MmrCandidate> = candidates.into_iter().take(config.candidate_pool).collect();
 
     let target_k = config.top_k.min(pool.len());
     let mut selected: Vec<MmrResult> = Vec::with_capacity(target_k);
@@ -135,8 +132,7 @@ pub fn mmr_select(
                     .fold(f32::NEG_INFINITY, f32::max)
             };
 
-            let mmr_score =
-                config.lambda * relevance - (1.0 - config.lambda) * max_redundancy;
+            let mmr_score = config.lambda * relevance - (1.0 - config.lambda) * max_redundancy;
 
             if best_idx.is_none() || mmr_score > best_mmr {
                 best_mmr = mmr_score;

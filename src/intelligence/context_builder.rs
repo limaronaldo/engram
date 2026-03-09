@@ -153,7 +153,12 @@ impl ContextBuilder {
     /// up empty (no fixed content and no memories fit) are omitted entirely.
     /// Sections whose content exceeds their `max_tokens` budget are truncated
     /// with `"...[truncated]"`.
-    pub fn build(&self, template: &PromptTemplate, memories: &[MemoryEntry], strategy: Strategy) -> String {
+    pub fn build(
+        &self,
+        template: &PromptTemplate,
+        memories: &[MemoryEntry],
+        strategy: Strategy,
+    ) -> String {
         // Sort sections by priority (ascending = highest priority first).
         let mut sections: Vec<&Section> = template.sections.iter().collect();
         sections.sort_by_key(|s| s.priority);
@@ -175,7 +180,8 @@ impl ContextBuilder {
         let mut total_used = 0usize;
 
         for (idx, section) in sections.iter().enumerate() {
-            let section_budget = allocations[idx].min(template.total_budget.saturating_sub(total_used));
+            let section_budget =
+                allocations[idx].min(template.total_budget.saturating_sub(total_used));
 
             // Build section text starting from fixed content.
             let mut section_text = section.content.clone();
@@ -218,7 +224,9 @@ impl ContextBuilder {
 
             if total_used + separator_tokens + final_tokens > template.total_budget {
                 // Try to fit a truncated version.
-                let remaining = template.total_budget.saturating_sub(total_used + separator_tokens);
+                let remaining = template
+                    .total_budget
+                    .saturating_sub(total_used + separator_tokens);
                 if remaining == 0 {
                     break;
                 }
@@ -242,7 +250,12 @@ impl ContextBuilder {
     // -----------------------------------------------------------------------
 
     /// Compute the effective token budget for each section, respecting `strategy`.
-    fn compute_allocations(&self, template: &PromptTemplate, sections: &[&Section], strategy: Strategy) -> Vec<usize> {
+    fn compute_allocations(
+        &self,
+        template: &PromptTemplate,
+        sections: &[&Section],
+        strategy: Strategy,
+    ) -> Vec<usize> {
         match strategy {
             Strategy::Balanced => {
                 // Proportional: each section gets (its max_tokens / sum_of_max_tokens) * total_budget.
@@ -259,9 +272,7 @@ impl ContextBuilder {
                     .collect()
             }
             // Greedy and Recency both use section.max_tokens directly.
-            Strategy::Greedy | Strategy::Recency => {
-                sections.iter().map(|s| s.max_tokens).collect()
-            }
+            Strategy::Greedy | Strategy::Recency => sections.iter().map(|s| s.max_tokens).collect(),
         }
     }
 
@@ -274,7 +285,11 @@ impl ContextBuilder {
 
         // If the budget can't even fit the suffix, return just the suffix (or empty).
         if budget <= suffix_tokens {
-            return if budget == 0 { String::new() } else { SUFFIX.to_string() };
+            return if budget == 0 {
+                String::new()
+            } else {
+                SUFFIX.to_string()
+            };
         }
 
         let char_budget = (budget - suffix_tokens) * 4; // approximate chars for the main text
@@ -316,8 +331,8 @@ mod tests {
     }
 
     fn make_memory(content: &str, days_ago: i64) -> MemoryEntry {
-        let created_at = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap()
-            + chrono::Duration::days(-days_ago);
+        let created_at =
+            Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap() + chrono::Duration::days(-days_ago);
         MemoryEntry::new(content, created_at)
     }
 
@@ -361,10 +376,16 @@ mod tests {
         // High-priority section should appear before low-priority.
         let high_pos = result.find("High Priority").unwrap_or(usize::MAX);
         let low_pos = result.find("Low Priority").unwrap_or(usize::MAX);
-        assert!(high_pos < low_pos, "High-priority section must come before low-priority");
+        assert!(
+            high_pos < low_pos,
+            "High-priority section must come before low-priority"
+        );
 
         // Both memories fit — result should contain both.
-        assert!(result.contains("AAAA"), "High-priority content must be present");
+        assert!(
+            result.contains("AAAA"),
+            "High-priority content must be present"
+        );
     }
 
     // Test 2: Balanced strategy distributes proportionally.
@@ -400,7 +421,10 @@ mod tests {
 
         // The memory should appear in Large section (high allocation).
         assert!(result.contains("Large"), "Large section must be rendered");
-        assert!(result.contains(&"X".repeat(140)), "Memory must fit in the Large section");
+        assert!(
+            result.contains(&"X".repeat(140)),
+            "Memory must fit in the Large section"
+        );
     }
 
     // Test 3: Recency strategy prefers newer memories.
@@ -431,7 +455,10 @@ mod tests {
         let result = builder.build(&template, &memories, Strategy::Recency);
 
         // The newer memory must appear (it is tried first due to recency sort).
-        assert!(result.contains("NEW_MEMORY"), "Recency strategy must prefer newest memory");
+        assert!(
+            result.contains("NEW_MEMORY"),
+            "Recency strategy must prefer newest memory"
+        );
     }
 
     // Test 4: Overflow truncation appends "...[truncated]".
@@ -486,8 +513,14 @@ mod tests {
         // Pass no memories — the "Empty" section will have nothing to render.
         let result = builder.build(&template, &[], Strategy::Greedy);
 
-        assert!(result.contains("Present"), "Non-empty section must be rendered");
-        assert!(!result.contains("Empty"), "Truly empty section must be skipped");
+        assert!(
+            result.contains("Present"),
+            "Non-empty section must be rendered"
+        );
+        assert!(
+            !result.contains("Empty"),
+            "Truly empty section must be skipped"
+        );
     }
 
     // Test 6: SimpleTokenCounter accuracy.
@@ -557,7 +590,10 @@ mod tests {
     #[test]
     fn test_estimate_tokens_delegation() {
         let builder = ContextBuilder::new(make_counter());
-        assert_eq!(builder.estimate_tokens("hello"), SimpleTokenCounter.count_tokens("hello"));
+        assert_eq!(
+            builder.estimate_tokens("hello"),
+            SimpleTokenCounter.count_tokens("hello")
+        );
         assert_eq!(builder.estimate_tokens(""), 0);
     }
 }

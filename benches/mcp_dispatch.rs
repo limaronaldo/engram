@@ -60,10 +60,7 @@ fn seed_memories(storage: &Storage, count: usize) {
                     } else {
                         MemoryType::Note
                     },
-                    tags: vec![
-                        format!("tag{}", i % 10),
-                        format!("category{}", i % 5),
-                    ],
+                    tags: vec![format!("tag{}", i % 10), format!("category{}", i % 5)],
                     metadata: Default::default(),
                     importance: Some((i % 10) as f32 / 10.0),
                     defer_embedding: true,

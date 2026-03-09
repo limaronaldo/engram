@@ -195,7 +195,11 @@ pub const CREATE_UPDATE_LOG_TABLE: &str = r#"
 // =============================================================================
 
 /// Insert one row into `update_log` and return the stored entry.
-pub fn create_update_log(conn: &Connection, result: &UpdateResult, reason: &str) -> Result<UpdateLogEntry> {
+pub fn create_update_log(
+    conn: &Connection,
+    result: &UpdateResult,
+    reason: &str,
+) -> Result<UpdateLogEntry> {
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     conn.execute(
@@ -293,20 +297,44 @@ const MAX_RECENT_MEMORIES: i64 = 200;
 
 /// Negation / contradiction signal words.
 static NEGATION_WORDS: &[&str] = &[
-    "not", "no longer", "never", "incorrect", "wrong", "false", "untrue",
-    "doesn't", "don't", "isn't", "aren't", "wasn't", "weren't",
+    "not",
+    "no longer",
+    "never",
+    "incorrect",
+    "wrong",
+    "false",
+    "untrue",
+    "doesn't",
+    "don't",
+    "isn't",
+    "aren't",
+    "wasn't",
+    "weren't",
 ];
 
 /// Explicit correction signal words.
 static CORRECTION_WORDS: &[&str] = &[
-    "actually", "correction", "update", "correcting", "in fact",
-    "to clarify", "clarification", "erratum", "revised",
+    "actually",
+    "correction",
+    "update",
+    "correcting",
+    "in fact",
+    "to clarify",
+    "clarification",
+    "erratum",
+    "revised",
 ];
 
 /// Temporal "now" markers that suggest the new content supersedes older info.
 static NOW_WORDS: &[&str] = &[
-    "now", "currently", "today", "as of", "at present", "present",
-    "latest", "recent",
+    "now",
+    "currently",
+    "today",
+    "as of",
+    "at present",
+    "present",
+    "latest",
+    "recent",
 ];
 
 /// Year pattern: 4-digit numbers in the range 1900–2099.
@@ -369,14 +397,9 @@ impl UpdateDetector {
                 detect_obsolescence(&new_lower, &existing_lower, *id, overlap)
             {
                 candidates.push(cand);
-            } else if let Some(cand) = detect_supplement(
-                &new_lower,
-                &existing_lower,
-                *id,
-                overlap,
-                memory_type,
-                tags,
-            ) {
+            } else if let Some(cand) =
+                detect_supplement(&new_lower, &existing_lower, *id, overlap, memory_type, tags)
+            {
                 candidates.push(cand);
             }
         }
@@ -413,9 +436,7 @@ fn detect_contradiction(
         return None;
     }
 
-    let has_negation = NEGATION_WORDS
-        .iter()
-        .any(|w| new_lower.contains(w));
+    let has_negation = NEGATION_WORDS.iter().any(|w| new_lower.contains(w));
 
     if !has_negation {
         return None;
@@ -456,9 +477,7 @@ fn detect_correction(
         return None;
     }
 
-    let has_correction = CORRECTION_WORDS
-        .iter()
-        .any(|w| new_lower.contains(w));
+    let has_correction = CORRECTION_WORDS.iter().any(|w| new_lower.contains(w));
 
     if !has_correction {
         return None;
@@ -677,12 +696,12 @@ fn fetch_workspace_memories(
     let rows = stmt
         .query_map(params![workspace, MAX_RECENT_MEMORIES], |row| {
             let tags_raw: String = row.get::<_, String>(3).unwrap_or_else(|_| "[]".to_string());
-            let tags: Vec<String> =
-                serde_json::from_str(&tags_raw).unwrap_or_default();
+            let tags: Vec<String> = serde_json::from_str(&tags_raw).unwrap_or_default();
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
-                row.get::<_, String>(2).unwrap_or_else(|_| "note".to_string()),
+                row.get::<_, String>(2)
+                    .unwrap_or_else(|_| "note".to_string()),
                 tags,
             ))
         })?
@@ -696,12 +715,11 @@ fn fetch_workspace_memories(
 /// Splits on whitespace/punctuation, drops stop-words and short tokens.
 fn extract_keywords(text: &str) -> HashSet<String> {
     const STOP_WORDS: &[&str] = &[
-        "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
-        "have", "has", "had", "do", "does", "did", "will", "would", "could",
-        "should", "may", "might", "shall", "to", "of", "in", "on", "at",
-        "by", "for", "with", "from", "as", "it", "its", "this", "that",
-        "and", "or", "but", "not", "so", "if", "then", "than", "when",
-        "i", "me", "my", "we", "our", "you", "your", "he", "she", "they",
+        "a", "an", "the", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+        "do", "does", "did", "will", "would", "could", "should", "may", "might", "shall", "to",
+        "of", "in", "on", "at", "by", "for", "with", "from", "as", "it", "its", "this", "that",
+        "and", "or", "but", "not", "so", "if", "then", "than", "when", "i", "me", "my", "we",
+        "our", "you", "your", "he", "she", "they",
     ];
 
     text.split(|c: char| !c.is_alphanumeric())
@@ -734,9 +752,7 @@ fn keyword_overlap(a: &HashSet<String>, b: &HashSet<String>) -> f32 {
 fn shared_entity_count(new_lower: &str, existing_lower: &str) -> usize {
     let a = extract_keywords(new_lower);
     let b = extract_keywords(existing_lower);
-    a.intersection(&b)
-        .filter(|t| t.len() >= 4)
-        .count()
+    a.intersection(&b).filter(|t| t.len() >= 4).count()
 }
 
 /// Return `true` if the text contains a 4-digit year in [1900, 2099].
@@ -885,7 +901,9 @@ mod tests {
             !candidates.is_empty(),
             "Expected at least one contradiction candidate"
         );
-        let cand = candidates.iter().find(|c| c.conflict_type == ConflictType::Contradiction);
+        let cand = candidates
+            .iter()
+            .find(|c| c.conflict_type == ConflictType::Contradiction);
         assert!(
             cand.is_some(),
             "Expected a Contradiction candidate, got: {:?}",
@@ -915,7 +933,9 @@ mod tests {
             )
             .expect("detect_updates should succeed");
 
-        let cand = candidates.iter().find(|c| c.conflict_type == ConflictType::Supplement);
+        let cand = candidates
+            .iter()
+            .find(|c| c.conflict_type == ConflictType::Supplement);
         assert!(
             cand.is_some(),
             "Expected a Supplement candidate, got: {:?}",
@@ -941,7 +961,9 @@ mod tests {
             )
             .expect("detect_updates should succeed");
 
-        let cand = candidates.iter().find(|c| c.conflict_type == ConflictType::Correction);
+        let cand = candidates
+            .iter()
+            .find(|c| c.conflict_type == ConflictType::Correction);
         assert!(
             cand.is_some(),
             "Expected a Correction candidate, got: {:?}",
@@ -1004,8 +1026,13 @@ mod tests {
             reason: "test".to_string(),
         };
 
-        let result = apply_update(&conn, &candidate, UpdateAction::Replace, "New content about the project.")
-            .expect("apply_update should succeed");
+        let result = apply_update(
+            &conn,
+            &candidate,
+            UpdateAction::Replace,
+            "New content about the project.",
+        )
+        .expect("apply_update should succeed");
 
         assert_eq!(result.memory_id, id);
         assert_eq!(result.action_taken, UpdateAction::Replace);
@@ -1026,8 +1053,13 @@ mod tests {
             reason: "test".to_string(),
         };
 
-        let result = apply_update(&conn, &candidate, UpdateAction::Merge, "She leads the safety team.")
-            .expect("apply_update should succeed");
+        let result = apply_update(
+            &conn,
+            &candidate,
+            UpdateAction::Merge,
+            "She leads the safety team.",
+        )
+        .expect("apply_update should succeed");
 
         assert_eq!(result.action_taken, UpdateAction::Merge);
         let merged = get_content(&conn, id);
@@ -1054,8 +1086,13 @@ mod tests {
             reason: "test".to_string(),
         };
 
-        let result = apply_update(&conn, &candidate, UpdateAction::Archive, "We now use Python 3.12.")
-            .expect("apply_update should succeed");
+        let result = apply_update(
+            &conn,
+            &candidate,
+            UpdateAction::Archive,
+            "We now use Python 3.12.",
+        )
+        .expect("apply_update should succeed");
 
         assert_eq!(result.action_taken, UpdateAction::Archive);
         assert_eq!(get_memory_type(&conn, id), "archived");
@@ -1074,8 +1111,13 @@ mod tests {
             reason: "test".to_string(),
         };
 
-        let result = apply_update(&conn, &candidate, UpdateAction::Flag, "The budget is not $50k.")
-            .expect("apply_update should succeed");
+        let result = apply_update(
+            &conn,
+            &candidate,
+            UpdateAction::Flag,
+            "The budget is not $50k.",
+        )
+        .expect("apply_update should succeed");
 
         assert_eq!(result.action_taken, UpdateAction::Flag);
         let tags = get_tags(&conn, id);
@@ -1148,8 +1190,13 @@ mod tests {
             reason: "explicit correction".to_string(),
         };
 
-        let result = apply_update(&conn, &candidate, UpdateAction::Replace, "Corrected content.")
-            .expect("apply_update should succeed");
+        let result = apply_update(
+            &conn,
+            &candidate,
+            UpdateAction::Replace,
+            "Corrected content.",
+        )
+        .expect("apply_update should succeed");
 
         let log_entry = create_update_log(&conn, &result, "explicit correction")
             .expect("create_update_log should succeed");

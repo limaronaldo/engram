@@ -92,10 +92,7 @@ pub fn memory_list_auto_links(ctx: &HandlerContext, params: Value) -> Value {
         .get("link_type")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    let limit = params
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(50) as usize;
+    let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
 
     let lt_owned = link_type;
 
@@ -150,15 +147,16 @@ pub fn memory_cluster(ctx: &HandlerContext, params: Value) -> Value {
         .get("resolution")
         .and_then(|v| v.as_f64())
         .unwrap_or(1.0);
-    let link_types: Option<Vec<String>> = params
-        .get("link_types")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str())
-                .map(|s| s.to_string())
-                .collect()
-        });
+    let link_types: Option<Vec<String>> =
+        params
+            .get("link_types")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .collect()
+            });
 
     let options = LouvainOptions {
         min_cluster_size,
@@ -283,7 +281,10 @@ mod tests {
     fn test_memory_auto_link_stats_empty() {
         let ctx = make_ctx();
         let result = super::memory_auto_link_stats(&ctx, json!({}));
-        assert!(result.get("error").is_none(), "should not error on empty db: {result}");
+        assert!(
+            result.get("error").is_none(),
+            "should not error on empty db: {result}"
+        );
     }
 
     #[test]

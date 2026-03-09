@@ -280,15 +280,19 @@ pub fn memory_upload_image(ctx: &HandlerContext, params: Value) -> Value {
     let config = ImageStorageConfig::default();
     let image_storage = match LocalImageStorage::new(config.local_dir) {
         Ok(s) => s,
-        Err(e) => {
-            return json!({"error": format!("Failed to initialize image storage: {}", e)})
-        }
+        Err(e) => return json!({"error": format!("Failed to initialize image storage: {}", e)}),
     };
 
     ctx.storage
         .with_connection(|conn| {
-            let image_ref =
-                upload_image(conn, &image_storage, memory_id, file_path, image_index, caption)?;
+            let image_ref = upload_image(
+                conn,
+                &image_storage,
+                memory_id,
+                file_path,
+                image_index,
+                caption,
+            )?;
             Ok(json!({
                 "success": true,
                 "image": image_ref
@@ -308,9 +312,7 @@ pub fn memory_migrate_images(ctx: &HandlerContext, params: Value) -> Value {
     let config = ImageStorageConfig::default();
     let image_storage = match LocalImageStorage::new(config.local_dir) {
         Ok(s) => s,
-        Err(e) => {
-            return json!({"error": format!("Failed to initialize image storage: {}", e)})
-        }
+        Err(e) => return json!({"error": format!("Failed to initialize image storage: {}", e)}),
     };
 
     ctx.storage
@@ -508,10 +510,10 @@ pub fn memory_auto_tag(ctx: &HandlerContext, params: Value) -> Value {
 // ── Project Context / Scanning ────────────────────────────────────────────────
 
 pub fn scan_project(ctx: &HandlerContext, params: Value) -> Value {
-    use chrono::Utc;
     use crate::intelligence::{ProjectContextConfig, ProjectContextEngine, ScanResult};
     use crate::storage::queries::{create_memory, delete_memory, list_memories, update_memory};
     use crate::types::{CreateMemoryInput, ListOptions, UpdateMemoryInput};
+    use chrono::Utc;
     use std::collections::HashSet;
     use std::path::PathBuf;
 
@@ -729,16 +731,18 @@ pub fn scan_project(ctx: &HandlerContext, params: Value) -> Value {
                 })
                 .unwrap_or_default();
 
-            let existing_sections_by_path: std::collections::HashMap<String, &crate::types::Memory> =
-                existing_sections
-                    .iter()
-                    .filter_map(|mem| {
-                        mem.metadata
-                            .get("section_path")
-                            .and_then(|v| v.as_str())
-                            .map(|path| (path.to_string(), mem))
-                    })
-                    .collect();
+            let existing_sections_by_path: std::collections::HashMap<
+                String,
+                &crate::types::Memory,
+            > = existing_sections
+                .iter()
+                .filter_map(|mem| {
+                    mem.metadata
+                        .get("section_path")
+                        .and_then(|v| v.as_str())
+                        .map(|path| (path.to_string(), mem))
+                })
+                .collect();
 
             let mut processed_section_paths: HashSet<String> = HashSet::new();
 
@@ -781,9 +785,10 @@ pub fn scan_project(ctx: &HandlerContext, params: Value) -> Value {
                         trigger_pattern: None,
                     };
 
-                    match ctx.storage.with_transaction(|conn| {
-                        update_memory(conn, existing.id, &update_input)
-                    }) {
+                    match ctx
+                        .storage
+                        .with_transaction(|conn| update_memory(conn, existing.id, &update_input))
+                    {
                         Ok(_) => result.memories_updated += 1,
                         Err(e) => {
                             result.errors.push(format!(
@@ -848,10 +853,9 @@ pub fn scan_project(ctx: &HandlerContext, params: Value) -> Value {
                             tracing::info!("Deleted stale section: {}", path);
                         }
                         Err(e) => {
-                            result.errors.push(format!(
-                                "Failed to delete stale section '{}': {}",
-                                path, e
-                            ));
+                            result
+                                .errors
+                                .push(format!("Failed to delete stale section '{}': {}", path, e));
                         }
                     }
                 }
@@ -889,14 +893,15 @@ pub fn get_project_context(ctx: &HandlerContext, params: Value) -> Value {
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
 
-    let file_types: Option<Vec<String>> = params
-        .get("file_types")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(String::from))
-                .collect()
-        });
+    let file_types: Option<Vec<String>> =
+        params
+            .get("file_types")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            });
 
     let mut filter = std::collections::HashMap::new();
     filter.insert(
@@ -1013,8 +1018,8 @@ pub fn list_instruction_files(_ctx: &HandlerContext, params: Value) -> Value {
 }
 
 pub fn ingest_document(ctx: &HandlerContext, params: Value) -> Value {
-    use serde::Deserialize;
     use crate::intelligence::{DocumentFormat, DocumentIngestor, IngestConfig};
+    use serde::Deserialize;
 
     #[derive(Debug, Deserialize)]
     struct IngestParams {
@@ -1233,9 +1238,7 @@ pub fn context_budget_check(ctx: &HandlerContext, params: Value) -> Value {
             for id in &memory_ids {
                 match get_memory(conn, *id) {
                     Ok(mem) => contents.push((*id, mem.content)),
-                    Err(_) => {
-                        return Ok(json!({"error": format!("Memory {} not found", id)}))
-                    }
+                    Err(_) => return Ok(json!({"error": format!("Memory {} not found", id)})),
                 }
             }
 
@@ -1248,10 +1251,10 @@ pub fn context_budget_check(ctx: &HandlerContext, params: Value) -> Value {
 }
 
 pub fn memory_archive_old(ctx: &HandlerContext, params: Value) -> Value {
-    use chrono::{Duration, Utc};
-    use rusqlite::params;
     use crate::storage::queries::{create_memory, list_memories};
     use crate::types::{CreateMemoryInput, ListOptions, MemoryTier, MemoryType};
+    use chrono::{Duration, Utc};
+    use rusqlite::params;
 
     let max_age_days = params
         .get("max_age_days")
@@ -1437,9 +1440,9 @@ pub fn langfuse_connect(ctx: &HandlerContext, params: Value) -> Value {
 
 #[cfg(feature = "langfuse")]
 pub fn langfuse_sync(ctx: &HandlerContext, params: Value) -> Value {
-    use chrono::{Duration, Utc};
     use crate::integrations::langfuse::{LangfuseClient, LangfuseConfig};
     use crate::storage::queries::{upsert_sync_task, SyncTask};
+    use chrono::{Duration, Utc};
 
     let config = match LangfuseConfig::from_env() {
         Some(c) => c,
@@ -1644,8 +1647,8 @@ pub fn langfuse_sync_status(ctx: &HandlerContext, params: Value) -> Value {
 
 #[cfg(feature = "langfuse")]
 pub fn langfuse_extract_patterns(ctx: &HandlerContext, params: Value) -> Value {
-    use chrono::{Duration, Utc};
     use crate::integrations::langfuse::{extract_patterns, LangfuseClient, LangfuseConfig};
+    use chrono::{Duration, Utc};
 
     let config = match LangfuseConfig::from_env() {
         Some(c) => c,
@@ -1696,9 +1699,7 @@ pub fn langfuse_extract_patterns(ctx: &HandlerContext, params: Value) -> Value {
 
 #[cfg(feature = "langfuse")]
 pub fn memory_from_trace(ctx: &HandlerContext, params: Value) -> Value {
-    use crate::integrations::langfuse::{
-        trace_to_memory_content, LangfuseClient, LangfuseConfig,
-    };
+    use crate::integrations::langfuse::{trace_to_memory_content, LangfuseClient, LangfuseConfig};
     use crate::storage::queries::create_memory;
     use crate::types::{CreateMemoryInput, MemoryType};
 

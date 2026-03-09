@@ -98,7 +98,9 @@ mod inner {
         /// or if the ONNX Runtime encounters an error.
         pub fn new(config: OnnxConfig) -> Result<Self> {
             let session = Session::builder()
-                .map_err(|e| EngramError::Embedding(format!("Failed to create ONNX session builder: {e}")))?
+                .map_err(|e| {
+                    EngramError::Embedding(format!("Failed to create ONNX session builder: {e}"))
+                })?
                 .commit_from_file(&config.model_path)
                 .map_err(|e| {
                     EngramError::Embedding(format!(
@@ -214,10 +216,7 @@ mod inner {
         /// `attention_mask`:   length `seq_len`, values 0 or 1
         ///
         /// Returns a vector of length `hidden_size`.
-        pub fn mean_pool(
-            token_embeddings: &Array2<f32>,
-            attention_mask: &[i64],
-        ) -> Vec<f32> {
+        pub fn mean_pool(token_embeddings: &Array2<f32>, attention_mask: &[i64]) -> Vec<f32> {
             let hidden_size = token_embeddings.ncols();
             let mut sum = vec![0.0_f32; hidden_size];
             let mut count = 0_f32;
@@ -263,21 +262,18 @@ mod inner {
             let seq_len = input_ids.len();
 
             // Build 2-D tensors with batch size 1: shape [1, seq_len]
-            let ids_array = ndarray::Array::from_shape_vec(
-                (1, seq_len),
-                input_ids.to_vec(),
-            )
-            .map_err(|e| EngramError::Embedding(format!("Failed to build input_ids array: {e}")))?;
+            let ids_array = ndarray::Array::from_shape_vec((1, seq_len), input_ids.to_vec())
+                .map_err(|e| {
+                    EngramError::Embedding(format!("Failed to build input_ids array: {e}"))
+                })?;
 
-            let mask_array = ndarray::Array::from_shape_vec(
-                (1, seq_len),
-                attention_mask.to_vec(),
-            )
-            .map_err(|e| EngramError::Embedding(format!("Failed to build attention_mask array: {e}")))?;
+            let mask_array = ndarray::Array::from_shape_vec((1, seq_len), attention_mask.to_vec())
+                .map_err(|e| {
+                    EngramError::Embedding(format!("Failed to build attention_mask array: {e}"))
+                })?;
 
             // token_type_ids: all zeros (single-sentence input)
-            let type_ids_array =
-                ndarray::Array::<i64, _>::zeros((1, seq_len));
+            let type_ids_array = ndarray::Array::<i64, _>::zeros((1, seq_len));
 
             let outputs = self
                 .session
@@ -290,19 +286,15 @@ mod inner {
 
             // The first output is typically the last hidden state:
             // shape [batch_size, seq_len, hidden_size]
-            let output_tensor = outputs[0]
-                .try_extract_tensor::<f32>()
-                .map_err(|e| {
-                    EngramError::Embedding(format!("Failed to extract ONNX output tensor: {e}"))
-                })?;
+            let output_tensor = outputs[0].try_extract_tensor::<f32>().map_err(|e| {
+                EngramError::Embedding(format!("Failed to extract ONNX output tensor: {e}"))
+            })?;
 
             // Squeeze batch dimension → [seq_len, hidden_size]
             let token_embeddings: Array2<f32> = output_tensor
                 .view()
                 .into_dimensionality::<ndarray::Ix3>()
-                .map_err(|e| {
-                    EngramError::Embedding(format!("Unexpected output tensor rank: {e}"))
-                })?
+                .map_err(|e| EngramError::Embedding(format!("Unexpected output tensor rank: {e}")))?
                 .index_axis(Axis(0), 0)
                 .to_owned();
 
@@ -387,9 +379,7 @@ mod inner {
             fn mock_embedding(&self, text: &str) -> Vec<f32> {
                 let mut v: Vec<f32> = (0..self.dimensions)
                     .map(|i| {
-                        let h = fnv1a_hash(
-                            format!("{text}:{i}").as_bytes(),
-                        );
+                        let h = fnv1a_hash(format!("{text}:{i}").as_bytes());
                         (h as f32).sin()
                     })
                     .collect();
@@ -565,7 +555,7 @@ mod inner {
             let embeddings = ndarray::array![
                 [1.0_f32, 2.0],
                 [3.0, 4.0],
-                [0.0, 0.0],  // padding — should be ignored
+                [0.0, 0.0], // padding — should be ignored
             ];
             let mask = vec![1i64, 1, 0];
             let pooled = OnnxEmbedder::mean_pool(&embeddings, &mask);
@@ -601,7 +591,10 @@ mod inner {
             let mut v = vec![3.0_f32, 4.0];
             OnnxEmbedder::l2_normalize(&mut v);
             let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
-            assert!((norm - 1.0).abs() < 1e-6, "normalized vector should have unit norm");
+            assert!(
+                (norm - 1.0).abs() < 1e-6,
+                "normalized vector should have unit norm"
+            );
         }
 
         #[test]
@@ -638,7 +631,11 @@ mod inner {
             let embedder = MockOnnxEmbedder::new(384, "all-MiniLM-L6-v2");
             let texts = &["foo", "bar", "baz", "qux"];
             let results = embedder.embed_batch(texts).unwrap();
-            assert_eq!(results.len(), 4, "embed_batch must return one vector per input");
+            assert_eq!(
+                results.len(),
+                4,
+                "embed_batch must return one vector per input"
+            );
             for v in &results {
                 assert_eq!(v.len(), 384);
             }

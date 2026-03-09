@@ -11,11 +11,10 @@ pub mod tools;
 
 pub use prompts::{get_prompt, list_prompts};
 pub use protocol::{
-    methods, InitializeResult, McpHandler, McpRequest, McpResponse, McpServer,
-    MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_LEGACY,
-    PromptArgument, PromptCapabilities, PromptContent, PromptDefinition, PromptMessage,
-    ResourceCapabilities, ResourceDefinition, ResourceTemplate,
-    ServerCapabilities, ToolAnnotations, ToolCallResult, ToolsCapability,
+    methods, InitializeResult, McpHandler, McpRequest, McpResponse, McpServer, PromptArgument,
+    PromptCapabilities, PromptContent, PromptDefinition, PromptMessage, ResourceCapabilities,
+    ResourceDefinition, ResourceTemplate, ServerCapabilities, ToolAnnotations, ToolCallResult,
+    ToolsCapability, MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_LEGACY,
 };
 pub use resources::{list_resources, read_resource};
 pub use tools::{get_tool_definitions, TOOL_DEFINITIONS};

@@ -188,12 +188,8 @@ impl OfflineConsolidator {
         }
 
         let groups = match strategy {
-            GroupingStrategy::ContentOverlap => {
-                self.group_by_content_overlap(&candidates)
-            }
-            GroupingStrategy::TagSimilarity => {
-                self.group_by_tag_similarity(conn, &candidates)
-            }
+            GroupingStrategy::ContentOverlap => self.group_by_content_overlap(&candidates),
+            GroupingStrategy::TagSimilarity => self.group_by_tag_similarity(conn, &candidates),
             GroupingStrategy::TemporalProximity => {
                 self.group_by_temporal_proximity(conn, &candidates)
             }
@@ -371,10 +367,7 @@ impl OfflineConsolidator {
         let max_group = self.config.max_group_size;
 
         // Build word-sets once
-        let word_sets: Vec<HashSet<String>> = candidates
-            .iter()
-            .map(|(_, c)| tokenize(c))
-            .collect();
+        let word_sets: Vec<HashSet<String>> = candidates.iter().map(|(_, c)| tokenize(c)).collect();
 
         let mut assigned: HashSet<usize> = HashSet::new();
         let mut groups: Vec<ConsolidationGroup> = Vec::new();
@@ -799,15 +792,8 @@ mod tests {
     }
 
     /// Insert a memory with a specific `created_at` offset in hours from now.
-    fn insert_memory(
-        conn: &Connection,
-        content: &str,
-        workspace: &str,
-        hours_ago: f64,
-    ) -> i64 {
-        let created_at = format!(
-            "datetime('now', '-{hours_ago} hours')"
-        );
+    fn insert_memory(conn: &Connection, content: &str, workspace: &str, hours_ago: f64) -> i64 {
+        let created_at = format!("datetime('now', '-{hours_ago} hours')");
         let sql = format!(
             "INSERT INTO memories (content, workspace, created_at, updated_at)
              VALUES (?1, ?2, {created_at}, {created_at})"
@@ -910,9 +896,18 @@ mod tests {
 
         let merged = OfflineConsolidator::merge_group(&pairs);
 
-        assert!(merged.contains("Rust is fast"), "must include first sentence");
-        assert!(merged.contains("Rust is safe"), "must include shared sentence once");
-        assert!(merged.contains("Rust is expressive"), "must include unique sentence");
+        assert!(
+            merged.contains("Rust is fast"),
+            "must include first sentence"
+        );
+        assert!(
+            merged.contains("Rust is safe"),
+            "must include shared sentence once"
+        );
+        assert!(
+            merged.contains("Rust is expressive"),
+            "must include unique sentence"
+        );
 
         // Count occurrences of "Rust is safe"
         let count = merged.matches("Rust is safe").count();
@@ -939,12 +934,13 @@ mod tests {
         );
 
         let consolidator = OfflineConsolidator::new(default_config());
-        consolidator
-            .consolidate(&conn, "ws1")
-            .expect("consolidate");
+        consolidator.consolidate(&conn, "ws1").expect("consolidate");
 
         let records = list_consolidations(&conn, "ws1", 10).expect("list");
-        assert!(!records.is_empty(), "expected at least one consolidation record");
+        assert!(
+            !records.is_empty(),
+            "expected at least one consolidation record"
+        );
         assert_eq!(records[0].workspace, "ws1");
     }
 
@@ -1133,10 +1129,26 @@ mod tests {
     #[test]
     fn test_list_consolidations_order() {
         let conn = open_conn();
-        save_consolidation(&conn, &[1, 2], "first summary", "content_overlap", 10, 5, "ord")
-            .expect("save 1");
-        save_consolidation(&conn, &[3, 4], "second summary", "content_overlap", 20, 8, "ord")
-            .expect("save 2");
+        save_consolidation(
+            &conn,
+            &[1, 2],
+            "first summary",
+            "content_overlap",
+            10,
+            5,
+            "ord",
+        )
+        .expect("save 1");
+        save_consolidation(
+            &conn,
+            &[3, 4],
+            "second summary",
+            "content_overlap",
+            20,
+            8,
+            "ord",
+        )
+        .expect("save 2");
 
         let records = list_consolidations(&conn, "ord", 10).expect("list");
         assert_eq!(records.len(), 2);

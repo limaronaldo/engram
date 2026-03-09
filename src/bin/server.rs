@@ -14,8 +14,8 @@ use engram::error::Result;
 use engram::mcp::{
     get_prompt, get_tool_definitions, handlers, http_transport, list_prompts, list_resources,
     methods, read_resource, InitializeResult, McpHandler, McpRequest, McpResponse, McpServer,
-    ToolCallResult, MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_LEGACY, PromptCapabilities,
-    ResourceCapabilities, ServerCapabilities, ToolsCapability,
+    PromptCapabilities, ResourceCapabilities, ServerCapabilities, ToolCallResult, ToolsCapability,
+    MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_LEGACY,
 };
 use engram::realtime::{RealtimeManager, RealtimeServer};
 use engram::search::{FuzzyEngine, SearchConfig};
@@ -278,7 +278,9 @@ impl McpHandler for EngramHandler {
                                 subscribe: false,
                                 list_changed: false,
                             }),
-                            prompts: Some(PromptCapabilities { list_changed: false }),
+                            prompts: Some(PromptCapabilities {
+                                list_changed: false,
+                            }),
                         },
                         ..InitializeResult::default()
                     }
@@ -332,11 +334,7 @@ impl McpHandler for EngramHandler {
                 McpResponse::success(request.id, json!({"resources": resources}))
             }
             methods::READ_RESOURCE => {
-                let uri = match request
-                    .params
-                    .get("uri")
-                    .and_then(|v| v.as_str())
-                {
+                let uri = match request.params.get("uri").and_then(|v| v.as_str()) {
                     Some(u) => u.to_string(),
                     None => {
                         return McpResponse::error(
@@ -381,9 +379,7 @@ impl McpHandler for EngramHandler {
                     .cloned()
                     .unwrap_or(json!({}));
                 match get_prompt(name, &arguments) {
-                    Ok(messages) => {
-                        McpResponse::success(request.id, json!({"messages": messages}))
-                    }
+                    Ok(messages) => McpResponse::success(request.id, json!({"messages": messages})),
                     Err(e) => McpResponse::error(request.id, -32002, e),
                 }
             }
@@ -636,8 +632,13 @@ fn main() -> Result<()> {
                 let rt = tokio::runtime::Runtime::new()
                     .expect("Failed to create HTTP transport runtime");
                 rt.block_on(async {
-                    if let Err(e) =
-                        http_transport::serve_http(http_handler, http_port, http_api_key, http_realtime).await
+                    if let Err(e) = http_transport::serve_http(
+                        http_handler,
+                        http_port,
+                        http_api_key,
+                        http_realtime,
+                    )
+                    .await
                     {
                         tracing::error!("HTTP transport error: {}", e);
                     }

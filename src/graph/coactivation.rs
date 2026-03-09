@@ -480,8 +480,8 @@ mod tests {
         let conn = setup_db();
         let t = CoactivationTracker::with_config(CoactivationConfig {
             learning_rate: 0.1,
-            decay_rate: 0.5,     // aggressive decay so we can see the effect
-            min_strength: 0.08,  // threshold just above the decayed value
+            decay_rate: 0.5,    // aggressive decay so we can see the effect
+            min_strength: 0.08, // threshold just above the decayed value
         });
 
         // Insert an edge directly with a very old timestamp so it qualifies
@@ -506,9 +506,7 @@ mod tests {
         .expect("insert fresh edge");
 
         // Decay edges older than 1 day using 50% decay rate.
-        let affected = t
-            .weaken_unused(&conn, 0.5, 1)
-            .expect("weaken");
+        let affected = t.weaken_unused(&conn, 0.5, 1).expect("weaken");
 
         // The old edge (0.10) decays to 0.05 which is below min_strength (0.08),
         // so it gets deleted. The fresh edge is untouched.
@@ -591,10 +589,7 @@ mod tests {
 
         // Results must be sorted by strength descending.
         for w in top3.windows(2) {
-            assert!(
-                w[0].1 >= w[1].1,
-                "results must be sorted by strength desc"
-            );
+            assert!(w[0].1 >= w[1].1, "results must be sorted by strength desc");
         }
 
         // The strongest neighbor is memory 30 (5 activations).

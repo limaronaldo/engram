@@ -154,9 +154,7 @@ where
             }
             watcher
                 .watch(path, RecursiveMode::Recursive)
-                .map_err(|e| {
-                    EngramError::Config(format!("Cannot watch path {:?}: {e}", path))
-                })?;
+                .map_err(|e| EngramError::Config(format!("Cannot watch path {:?}: {e}", path)))?;
 
             debug!(path = ?path, "Watching path");
         }
@@ -311,10 +309,7 @@ where
     pub(crate) fn should_watch(&self, path: &Path) -> bool {
         // Extension filter
         if !self.config.extensions.is_empty() {
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("");
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             if !self.config.extensions.iter().any(|e| e == ext) {
                 return false;
             }
@@ -379,9 +374,8 @@ mod tests {
         let (_event_tx, event_rx) = mpsc::channel::<notify::Result<Event>>();
         let (_stop_tx, stop_rx) = mpsc::sync_channel::<()>(1);
 
-        let null_watcher =
-            NullWatcher::new(|_: notify::Result<Event>| {}, NotifyConfig::default())
-                .expect("NullWatcher should always succeed");
+        let null_watcher = NullWatcher::new(|_: notify::Result<Event>| {}, NotifyConfig::default())
+            .expect("NullWatcher should always succeed");
 
         FsWatcher {
             config,
@@ -494,7 +488,10 @@ mod tests {
         let content = event.to_memory_content();
         assert!(content.contains("modified"), "content: {content}");
         assert!(content.contains("README.md"), "content: {content}");
-        assert!(content.contains("2026-03-09T00:00:00Z"), "content: {content}");
+        assert!(
+            content.contains("2026-03-09T00:00:00Z"),
+            "content: {content}"
+        );
     }
 
     #[test]
@@ -526,9 +523,12 @@ mod tests {
                 earliest_fire_at: Instant::now() + Duration::from_millis(200),
             },
         );
-        let delay =
-            FsWatcher::<fn(FileEvent)>::next_fire_delay(&pending, debounce).expect("should be Some");
-        assert!(delay <= debounce, "delay {delay:?} should be <= debounce {debounce:?}");
+        let delay = FsWatcher::<fn(FileEvent)>::next_fire_delay(&pending, debounce)
+            .expect("should be Some");
+        assert!(
+            delay <= debounce,
+            "delay {delay:?} should be <= debounce {debounce:?}"
+        );
     }
 
     // ---- Disabled watcher -------------------------------------------------
@@ -538,9 +538,8 @@ mod tests {
         let (_event_tx, event_rx) = mpsc::channel::<notify::Result<Event>>();
         let (_stop_tx, stop_rx) = mpsc::sync_channel::<()>(1);
 
-        let null_watcher =
-            NullWatcher::new(|_: notify::Result<Event>| {}, NotifyConfig::default())
-                .expect("NullWatcher should always succeed");
+        let null_watcher = NullWatcher::new(|_: notify::Result<Event>| {}, NotifyConfig::default())
+            .expect("NullWatcher should always succeed");
 
         let watcher = FsWatcher {
             config: FileWatcherConfig {

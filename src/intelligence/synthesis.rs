@@ -21,8 +21,8 @@ use std::collections::VecDeque;
 /// Basic English stopwords filtered out before Jaccard computation.
 static STOPWORDS: &[&str] = &[
     "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
-    "do", "does", "did", "will", "would", "could", "should", "may", "might", "shall", "can",
-    "to", "of", "in", "for", "on", "with", "at", "by", "from",
+    "do", "does", "did", "will", "would", "could", "should", "may", "might", "shall", "can", "to",
+    "of", "in", "for", "on", "with", "at", "by", "from",
 ];
 
 // ---------------------------------------------------------------------------
@@ -417,10 +417,7 @@ impl SynthesisEngine {
         let best = overlaps.first()?;
 
         // Find the buffer entry for the best overlap
-        let entry = self
-            .buffer
-            .iter()
-            .find(|e| e.id == best.memory_id)?;
+        let entry = self.buffer.iter().find(|e| e.id == best.memory_id)?;
 
         Some(self.synthesize(&entry.content, entry.id, new_content, strategy))
     }
@@ -473,8 +470,8 @@ mod tests {
             "Rust ownership model uses borrow checker rules compile time safety",
         );
 
-        let results = engine
-            .detect_overlap("Rust borrow checker enforces ownership rules compile time");
+        let results =
+            engine.detect_overlap("Rust borrow checker enforces ownership rules compile time");
         assert!(
             !results.is_empty(),
             "should find overlap for highly similar content"
@@ -512,14 +509,13 @@ mod tests {
         assert_eq!(result.strategy_used, SynthesisStrategy::Merge);
         // Should contain unique sentence from the new input
         assert!(
-            result.content.contains("Memory leaks are prevented automatically"),
+            result
+                .content
+                .contains("Memory leaks are prevented automatically"),
             "merged content should include the unique new sentence"
         );
         // Should not duplicate the shared sentence
-        let count = result
-            .content
-            .matches("Rust uses a borrow checker")
-            .count();
+        let count = result.content.matches("Rust uses a borrow checker").count();
         assert_eq!(count, 1, "shared sentence should appear only once");
         assert_eq!(result.sources, vec![1]);
     }
@@ -557,7 +553,10 @@ mod tests {
             "unique new line should be present"
         );
         // Separator should be present
-        assert!(result.content.contains("---"), "separator should be present");
+        assert!(
+            result.content.contains("---"),
+            "separator should be present"
+        );
     }
 
     // 7. Buffer eviction when full
@@ -615,8 +614,7 @@ mod tests {
     #[test]
     fn test_check_and_synthesize_empty_buffer() {
         let engine = SynthesisEngine::new(SynthesisConfig::default());
-        let result =
-            engine.check_and_synthesize("some new content here", SynthesisStrategy::Merge);
+        let result = engine.check_and_synthesize("some new content here", SynthesisStrategy::Merge);
         assert!(result.is_none(), "empty buffer should return None");
     }
 
@@ -628,16 +626,16 @@ mod tests {
             buffer_size: 10,
             min_overlap_tokens: 2,
         });
-        engine.add_to_buffer(
-            42,
-            "async rust tokio runtime executor futures polling",
-        );
+        engine.add_to_buffer(42, "async rust tokio runtime executor futures polling");
 
         let result = engine.check_and_synthesize(
             "tokio runtime executor drives async futures rust",
             SynthesisStrategy::Replace,
         );
-        assert!(result.is_some(), "should find overlap and return synthesized memory");
+        assert!(
+            result.is_some(),
+            "should find overlap and return synthesized memory"
+        );
         let synth = result.unwrap();
         assert_eq!(synth.sources, vec![42]);
     }

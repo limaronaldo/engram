@@ -199,7 +199,11 @@ pub fn context_seed(ctx: &HandlerContext, params: Value) -> Value {
         let ttl_seconds = if disable_ttl {
             None
         } else if let Some(ttl) = ttl_override {
-            if ttl <= 0 { None } else { Some(ttl) }
+            if ttl <= 0 {
+                None
+            } else {
+                Some(ttl)
+            }
         } else {
             ttl_for_confidence(confidence)
         };
@@ -518,8 +522,8 @@ pub fn memory_boost(ctx: &HandlerContext, params: Value) -> Value {
 }
 
 pub fn memory_create_episodic(ctx: &HandlerContext, params: Value) -> Value {
-    use chrono::DateTime;
     use crate::storage::create_memory;
+    use chrono::DateTime;
 
     let content = match params.get("content").and_then(|v| v.as_str()) {
         Some(c) => c.to_string(),
@@ -836,8 +840,7 @@ pub fn memory_create_section(ctx: &HandlerContext, params: Value) -> Value {
 
     ctx.storage
         .with_connection(|conn| {
-            let memory =
-                create_section_memory(conn, title, content, parent_id, level, workspace)?;
+            let memory = create_section_memory(conn, title, content, parent_id, level, workspace)?;
             Ok(json!(memory))
         })
         .unwrap_or_else(|e| json!({"error": e.to_string()}))

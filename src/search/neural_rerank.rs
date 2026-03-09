@@ -60,7 +60,8 @@ pub trait Reranker: Send + Sync {
     /// Returns candidates sorted by descending `rerank_score`.  The
     /// `rerank_score` field on each returned candidate is guaranteed to be
     /// `Some(…)`.
-    fn rerank(&self, query: &str, candidates: Vec<RerankCandidate>) -> Result<Vec<RerankCandidate>>;
+    fn rerank(&self, query: &str, candidates: Vec<RerankCandidate>)
+        -> Result<Vec<RerankCandidate>>;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,7 +189,9 @@ impl CrossEncoderReranker {
             // All scores identical — set to 1.0 (all equally relevant)
             scores.iter_mut().for_each(|s| *s = 1.0);
         } else {
-            scores.iter_mut().for_each(|s| *s = (*s - min) / (max - min));
+            scores
+                .iter_mut()
+                .for_each(|s| *s = (*s - min) / (max - min));
         }
     }
 }
@@ -201,7 +204,11 @@ impl Reranker for CrossEncoderReranker {
     /// 3. **Filter** — discard candidates below `config.threshold`
     ///
     /// Returns candidates sorted by descending `rerank_score`.
-    fn rerank(&self, query: &str, candidates: Vec<RerankCandidate>) -> Result<Vec<RerankCandidate>> {
+    fn rerank(
+        &self,
+        query: &str,
+        candidates: Vec<RerankCandidate>,
+    ) -> Result<Vec<RerankCandidate>> {
         if candidates.is_empty() {
             return Ok(Vec::new());
         }
@@ -271,7 +278,11 @@ impl RerankerPipeline {
     }
 
     /// Run the full pipeline: score → normalize → filter → sort.
-    pub fn run(&self, query: &str, candidates: Vec<RerankCandidate>) -> Result<Vec<RerankCandidate>> {
+    pub fn run(
+        &self,
+        query: &str,
+        candidates: Vec<RerankCandidate>,
+    ) -> Result<Vec<RerankCandidate>> {
         self.inner.rerank(query, candidates)
     }
 }
@@ -311,7 +322,11 @@ mod tests {
     }
 
     impl Reranker for MockReranker {
-        fn rerank(&self, query: &str, candidates: Vec<RerankCandidate>) -> Result<Vec<RerankCandidate>> {
+        fn rerank(
+            &self,
+            query: &str,
+            candidates: Vec<RerankCandidate>,
+        ) -> Result<Vec<RerankCandidate>> {
             if candidates.is_empty() {
                 return Ok(Vec::new());
             }
@@ -447,9 +462,9 @@ mod tests {
     fn test_threshold_filtering_removes_low_scores() {
         // With threshold > 0, zero-overlap candidates should be removed.
         let candidates = vec![
-            make_candidate(1, "rust memory management", 0.9),  // overlaps
+            make_candidate(1, "rust memory management", 0.9), // overlaps
             make_candidate(2, "completely unrelated topic xyz", 0.8), // no overlap
-            make_candidate(3, "memory allocator in rust", 0.7),  // overlaps
+            make_candidate(3, "memory allocator in rust", 0.7), // overlaps
         ];
 
         // Use a threshold that eliminates the zero-overlap candidate.
@@ -485,7 +500,10 @@ mod tests {
 
         // The best candidate should score 1.0 after normalisation.
         let best = result.first().unwrap().rerank_score.unwrap();
-        assert!((best - 1.0).abs() < f32::EPSILON, "Best score should be 1.0 after normalisation");
+        assert!(
+            (best - 1.0).abs() < f32::EPSILON,
+            "Best score should be 1.0 after normalisation"
+        );
     }
 
     #[test]

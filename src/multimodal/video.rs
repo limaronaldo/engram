@@ -209,9 +209,7 @@ impl VideoProcessor {
             .ok_or_else(|| EngramError::Internal("ffprobe: 'height' missing".to_string()))?
             as u32;
 
-        let codec = video_stream["codec_name"]
-            .as_str()
-            .map(|s| s.to_string());
+        let codec = video_stream["codec_name"].as_str().map(|s| s.to_string());
 
         // Duration: prefer stream-level, fall back to format-level
         let duration_secs = video_stream["duration"]
@@ -314,9 +312,7 @@ impl VideoProcessor {
 
         // Collect generated frame files, sorted by name
         let mut frames: Vec<PathBuf> = std::fs::read_dir(&tmp_dir)
-            .map_err(|e| {
-                EngramError::Storage(format!("Cannot read temp directory: {e}"))
-            })?
+            .map_err(|e| EngramError::Storage(format!("Cannot read temp directory: {e}")))?
             .filter_map(|entry| {
                 let entry = entry.ok()?;
                 let path = entry.path();
@@ -352,17 +348,13 @@ impl VideoProcessor {
 
         let metadata = self.extract_metadata(path)?;
 
-        let frames_path =
-            self.extract_keyframes(path, DEFAULT_KEYFRAME_COUNT)?;
+        let frames_path = self.extract_keyframes(path, DEFAULT_KEYFRAME_COUNT)?;
 
         // Describe each keyframe using the vision provider
         let mut keyframe_descriptions = Vec::with_capacity(frames_path.len());
         for frame_path in &frames_path {
             let image_bytes = std::fs::read(frame_path).map_err(|e| {
-                EngramError::Storage(format!(
-                    "Cannot read frame '{}': {e}",
-                    frame_path.display()
-                ))
+                EngramError::Storage(format!("Cannot read frame '{}': {e}", frame_path.display()))
             })?;
 
             let input = VisionInput {
@@ -558,8 +550,14 @@ mod tests {
         let descriptions = vec!["A blank frame.".to_string()];
         let summary = build_summary(&descriptions, &meta);
         // codec portion should be absent — no codec name should appear
-        assert!(!summary.contains("h264"), "no codec should appear in summary");
-        assert!(!summary.contains("vp9"), "no codec should appear in summary");
+        assert!(
+            !summary.contains("h264"),
+            "no codec should appear in summary"
+        );
+        assert!(
+            !summary.contains("vp9"),
+            "no codec should appear in summary"
+        );
         assert!(summary.contains("5.0s"));
         assert!(summary.contains("640×480"));
     }

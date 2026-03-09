@@ -91,12 +91,9 @@ pub fn memory_embedding_migrate(ctx: &HandlerContext, params: Value) -> Value {
     let ids: Vec<i64> = ctx
         .storage
         .with_connection(|conn| {
-            let mut stmt = conn.prepare(
-                "SELECT id FROM memories WHERE has_embedding = 1 ORDER BY id",
-            )?;
-            let ids: rusqlite::Result<Vec<i64>> = stmt
-                .query_map([], |row| row.get(0))?
-                .collect();
+            let mut stmt =
+                conn.prepare("SELECT id FROM memories WHERE has_embedding = 1 ORDER BY id")?;
+            let ids: rusqlite::Result<Vec<i64>> = stmt.query_map([], |row| row.get(0))?.collect();
             Ok(ids?)
         })
         .unwrap_or_default();

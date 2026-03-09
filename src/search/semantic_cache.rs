@@ -382,7 +382,10 @@ mod tests {
 
         // Invalidate by memory id 99.
         cache.invalidate_memory(99);
-        assert!(cache.get(&emb).is_none(), "entry containing id 99 must be removed");
+        assert!(
+            cache.get(&emb).is_none(),
+            "entry containing id 99 must be removed"
+        );
 
         let stats = cache.stats();
         assert_eq!(stats.invalidations, 1);
@@ -455,7 +458,10 @@ mod tests {
         assert_eq!(cache.stats().evictions, 1);
 
         // "first" should be gone, "second" and "third" should survive.
-        assert!(cache.get(&emb0).is_none(), "oldest entry must have been evicted");
+        assert!(
+            cache.get(&emb0).is_none(),
+            "oldest entry must have been evicted"
+        );
         assert!(cache.get(&emb1).is_some());
         assert!(cache.get(&emb2).is_some());
     }

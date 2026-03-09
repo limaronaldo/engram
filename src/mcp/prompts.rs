@@ -69,9 +69,7 @@ pub fn list_prompts() -> Vec<PromptDefinition> {
                 },
                 PromptArgument {
                     name: "entity_type".to_string(),
-                    description: Some(
-                        "Type of entity (default: concept)".to_string(),
-                    ),
+                    description: Some("Type of entity (default: concept)".to_string()),
                     required: Some(false),
                 },
             ]),
@@ -84,14 +82,11 @@ pub fn list_prompts() -> Vec<PromptDefinition> {
 /// Returns `Err(String)` if the prompt name is unknown or a required argument
 /// is missing.
 pub fn get_prompt(name: &str, arguments: &Value) -> Result<Vec<PromptMessage>, String> {
-    let arg = |key: &str| -> Option<&str> {
-        arguments.get(key).and_then(|v| v.as_str())
-    };
+    let arg = |key: &str| -> Option<&str> { arguments.get(key).and_then(|v| v.as_str()) };
 
     match name {
         "create-knowledge-base" => {
-            let path = arg("path")
-                .ok_or_else(|| "Missing required argument: path".to_string())?;
+            let path = arg("path").ok_or_else(|| "Missing required argument: path".to_string())?;
             let workspace = arg("workspace").unwrap_or("default");
 
             Ok(vec![
@@ -152,8 +147,8 @@ pub fn get_prompt(name: &str, arguments: &Value) -> Result<Vec<PromptMessage>, S
         }
 
         "search-and-organize" => {
-            let query = arg("query")
-                .ok_or_else(|| "Missing required argument: query".to_string())?;
+            let query =
+                arg("query").ok_or_else(|| "Missing required argument: query".to_string())?;
             let workspace_note = match arg("workspace") {
                 Some(ws) => format!(" in workspace '{ws}'"),
                 None => String::new(),
@@ -279,7 +274,10 @@ mod tests {
         let args = json!({});
         let messages = get_prompt("daily-review", &args).unwrap();
         assert_eq!(messages.len(), 2);
-        assert_eq!(messages[0].content.text, "Give me a daily review of my memory system");
+        assert_eq!(
+            messages[0].content.text,
+            "Give me a daily review of my memory system"
+        );
     }
 
     #[test]

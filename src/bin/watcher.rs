@@ -359,16 +359,8 @@ async fn main() {
 
     // Start individual watchers.
     let fs_stop_tx = start_fs_watcher(&config, event_tx.clone());
-    start_browser_watcher(
-        &config,
-        event_tx.clone(),
-        Arc::clone(&shutdown_rx),
-    );
-    start_app_focus_watcher(
-        &config,
-        event_tx.clone(),
-        Arc::clone(&shutdown_rx),
-    );
+    start_browser_watcher(&config, event_tx.clone(), Arc::clone(&shutdown_rx));
+    start_app_focus_watcher(&config, event_tx.clone(), Arc::clone(&shutdown_rx));
 
     // Drop the last producer reference held by main so the channel closes
     // naturally when all watcher tasks finish.

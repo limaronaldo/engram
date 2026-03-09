@@ -301,15 +301,13 @@ pub fn retention_policy_get(ctx: &HandlerContext, params: Value) -> Value {
     };
 
     ctx.storage
-        .with_connection(|conn| {
-            match get_retention_policy(conn, workspace)? {
-                Some(policy) => Ok(json!(policy)),
-                None => Ok(json!({
-                    "workspace": workspace,
-                    "policy": null,
-                    "note": "No retention policy set for this workspace"
-                })),
-            }
+        .with_connection(|conn| match get_retention_policy(conn, workspace)? {
+            Some(policy) => Ok(json!(policy)),
+            None => Ok(json!({
+                "workspace": workspace,
+                "policy": null,
+                "note": "No retention policy set for this workspace"
+            })),
         })
         .unwrap_or_else(|e| json!({"error": e.to_string()}))
 }

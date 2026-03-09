@@ -31,7 +31,9 @@ pub fn list_resources() -> Vec<ResourceTemplate> {
         ResourceTemplate {
             uri_template: "engram://entities".to_string(),
             name: "Entities".to_string(),
-            description: Some("Known entities extracted from memories (top 100 by mention count)".to_string()),
+            description: Some(
+                "Known entities extracted from memories (top 100 by mention count)".to_string(),
+            ),
             mime_type: Some("application/json".to_string()),
         },
         ResourceTemplate {
@@ -49,7 +51,10 @@ pub fn list_resources() -> Vec<ResourceTemplate> {
         ResourceTemplate {
             uri_template: "engram://workspace/{name}/memories".to_string(),
             name: "Workspace Memories".to_string(),
-            description: Some("Paginated memories in a workspace. Supports ?limit=N&offset=N query params.".to_string()),
+            description: Some(
+                "Paginated memories in a workspace. Supports ?limit=N&offset=N query params."
+                    .to_string(),
+            ),
             mime_type: Some("application/json".to_string()),
         },
     ]

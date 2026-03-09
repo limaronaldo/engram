@@ -77,10 +77,7 @@ mod inner {
             let response = self
                 .client
                 .post(&url)
-                .header(
-                    "Authorization",
-                    format!("Bearer {}", self.config.api_key),
-                )
+                .header("Authorization", format!("Bearer {}", self.config.api_key))
                 .json(&serde_json::json!({
                     "input": [text],
                     "model": self.config.model,
@@ -135,10 +132,7 @@ mod inner {
             let response = self
                 .client
                 .post(&url)
-                .header(
-                    "Authorization",
-                    format!("Bearer {}", self.config.api_key),
-                )
+                .header("Authorization", format!("Bearer {}", self.config.api_key))
                 .json(&serde_json::json!({
                     "input": texts,
                     "model": self.config.model,
@@ -157,13 +151,9 @@ mod inner {
             let data: serde_json::Value = response.json().await?;
 
             // Sort by index to maintain input order.
-            let raw = data["data"]
-                .as_array()
-                .ok_or_else(|| {
-                    EngramError::Embedding(
-                        "Voyage response missing 'data' field".to_string(),
-                    )
-                })?;
+            let raw = data["data"].as_array().ok_or_else(|| {
+                EngramError::Embedding("Voyage response missing 'data' field".to_string())
+            })?;
 
             // Collect (index, embedding) pairs then sort by index.
             let mut indexed: Vec<(usize, Vec<f32>)> = raw

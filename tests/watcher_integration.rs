@@ -31,10 +31,7 @@ struct MockAppRunner {
 
 impl MockAppRunner {
     fn from_names(names: &[Option<&str>]) -> Self {
-        let deque = names
-            .iter()
-            .map(|n| n.map(|s| s.to_string()))
-            .collect();
+        let deque = names.iter().map(|n| n.map(|s| s.to_string())).collect();
         Self {
             queue: Arc::new(Mutex::new(deque)),
         }
@@ -76,11 +73,10 @@ fn test_fs_watcher_detects_file_creation() {
     let received: Arc<Mutex<Vec<FileEvent>>> = Arc::new(Mutex::new(Vec::new()));
     let received_clone = Arc::clone(&received);
 
-    let (watcher, stop_tx) =
-        FsWatcher::new(config, move |event| {
-            received_clone.lock().unwrap().push(event);
-        })
-        .expect("failed to create FsWatcher");
+    let (watcher, stop_tx) = FsWatcher::new(config, move |event| {
+        received_clone.lock().unwrap().push(event);
+    })
+    .expect("failed to create FsWatcher");
 
     let handle = std::thread::spawn(move || watcher.run());
 
@@ -137,11 +133,10 @@ fn test_fs_watcher_extension_filtering() {
     let received: Arc<Mutex<Vec<FileEvent>>> = Arc::new(Mutex::new(Vec::new()));
     let received_clone = Arc::clone(&received);
 
-    let (watcher, stop_tx) =
-        FsWatcher::new(config, move |event| {
-            received_clone.lock().unwrap().push(event);
-        })
-        .expect("failed to create FsWatcher");
+    let (watcher, stop_tx) = FsWatcher::new(config, move |event| {
+        received_clone.lock().unwrap().push(event);
+    })
+    .expect("failed to create FsWatcher");
 
     let handle = std::thread::spawn(move || watcher.run());
 
@@ -176,9 +171,12 @@ fn test_fs_watcher_extension_filtering() {
     }
 
     // We must have received at least one event for a matching extension file.
-    let has_md_or_txt = events
-        .iter()
-        .any(|e| matches!(e.path.extension().and_then(|x| x.to_str()), Some("md") | Some("txt")));
+    let has_md_or_txt = events.iter().any(|e| {
+        matches!(
+            e.path.extension().and_then(|x| x.to_str()),
+            Some("md") | Some("txt")
+        )
+    });
     assert!(
         has_md_or_txt,
         "expected at least one event for .md or .txt files"
@@ -209,11 +207,10 @@ fn test_fs_watcher_ignore_patterns() {
     let received: Arc<Mutex<Vec<FileEvent>>> = Arc::new(Mutex::new(Vec::new()));
     let received_clone = Arc::clone(&received);
 
-    let (watcher, stop_tx) =
-        FsWatcher::new(config, move |event| {
-            received_clone.lock().unwrap().push(event);
-        })
-        .expect("failed to create FsWatcher");
+    let (watcher, stop_tx) = FsWatcher::new(config, move |event| {
+        received_clone.lock().unwrap().push(event);
+    })
+    .expect("failed to create FsWatcher");
 
     let handle = std::thread::spawn(move || watcher.run());
 
@@ -332,8 +329,14 @@ fn test_watcher_config_toml_round_trip() {
     let deserialized: WatcherConfig =
         toml::from_str(&serialized).expect("deserialization from TOML should succeed");
 
-    assert_eq!(deserialized.watched_directories, original.watched_directories);
-    assert_eq!(deserialized.browser_history_enabled, original.browser_history_enabled);
+    assert_eq!(
+        deserialized.watched_directories,
+        original.watched_directories
+    );
+    assert_eq!(
+        deserialized.browser_history_enabled,
+        original.browser_history_enabled
+    );
     assert_eq!(deserialized.app_focus_enabled, original.app_focus_enabled);
     assert_eq!(deserialized.poll_interval_secs, original.poll_interval_secs);
     assert_eq!(deserialized.engram_url, original.engram_url);
@@ -342,21 +345,42 @@ fn test_watcher_config_toml_round_trip() {
     assert_eq!(deserialized.ignore_patterns, original.ignore_patterns);
 
     // file_watcher sub-section
-    assert_eq!(deserialized.file_watcher.enabled, original.file_watcher.enabled);
+    assert_eq!(
+        deserialized.file_watcher.enabled,
+        original.file_watcher.enabled
+    );
     assert_eq!(deserialized.file_watcher.paths, original.file_watcher.paths);
-    assert_eq!(deserialized.file_watcher.extensions, original.file_watcher.extensions);
-    assert_eq!(deserialized.file_watcher.debounce_ms, original.file_watcher.debounce_ms);
+    assert_eq!(
+        deserialized.file_watcher.extensions,
+        original.file_watcher.extensions
+    );
+    assert_eq!(
+        deserialized.file_watcher.debounce_ms,
+        original.file_watcher.debounce_ms
+    );
 
     // browser sub-section
     assert_eq!(deserialized.browser.enabled, original.browser.enabled);
     assert_eq!(deserialized.browser.browsers, original.browser.browsers);
-    assert_eq!(deserialized.browser.poll_interval_secs, original.browser.poll_interval_secs);
+    assert_eq!(
+        deserialized.browser.poll_interval_secs,
+        original.browser.poll_interval_secs
+    );
 
     // app_focus sub-section
     assert_eq!(deserialized.app_focus.enabled, original.app_focus.enabled);
-    assert_eq!(deserialized.app_focus.poll_interval_secs, original.app_focus.poll_interval_secs);
-    assert_eq!(deserialized.app_focus.min_focus_secs, original.app_focus.min_focus_secs);
-    assert_eq!(deserialized.app_focus.exclude_apps, original.app_focus.exclude_apps);
+    assert_eq!(
+        deserialized.app_focus.poll_interval_secs,
+        original.app_focus.poll_interval_secs
+    );
+    assert_eq!(
+        deserialized.app_focus.min_focus_secs,
+        original.app_focus.min_focus_secs
+    );
+    assert_eq!(
+        deserialized.app_focus.exclude_apps,
+        original.app_focus.exclude_apps
+    );
 }
 
 // ============================================================================
@@ -414,21 +438,18 @@ exclude_apps = ["Finder", "loginwindow", "SystemUIServer"]
     // [file_watcher] section.
     assert!(config.file_watcher.enabled);
     assert_eq!(config.file_watcher.paths.len(), 2);
-    assert_eq!(
-        config.file_watcher.extensions,
-        vec!["md", "rs", "toml"]
-    );
+    assert_eq!(config.file_watcher.extensions, vec!["md", "rs", "toml"]);
     assert_eq!(config.file_watcher.debounce_ms, 200);
     assert_eq!(config.file_watcher.ignore_patterns.len(), 3);
 
     // [browser] section.
     assert!(config.browser.enabled);
-    assert_eq!(
-        config.browser.browsers,
-        vec!["chrome", "firefox", "safari"]
-    );
+    assert_eq!(config.browser.browsers, vec!["chrome", "firefox", "safari"]);
     assert_eq!(config.browser.poll_interval_secs, 30);
-    assert!(config.browser.exclude_patterns.contains(&"localhost".to_string()));
+    assert!(config
+        .browser
+        .exclude_patterns
+        .contains(&"localhost".to_string()));
 
     // [app_focus] section.
     assert!(config.app_focus.enabled);

@@ -279,9 +279,15 @@ impl Benchmark for MemBenchmark {
             + search_elapsed.as_millis() as u64;
 
         let mut metrics = HashMap::new();
-        metrics.insert("create_per_sec".to_string(), create_per_sec.min(1_000_000.0));
+        metrics.insert(
+            "create_per_sec".to_string(),
+            create_per_sec.min(1_000_000.0),
+        );
         metrics.insert("get_per_sec".to_string(), get_per_sec.min(1_000_000.0));
-        metrics.insert("search_per_sec".to_string(), search_per_sec.min(1_000_000.0));
+        metrics.insert(
+            "search_per_sec".to_string(),
+            search_per_sec.min(1_000_000.0),
+        );
         metrics.insert("ndcg_at_10".to_string(), ndcg_at_10);
         metrics.insert("mrr".to_string(), mrr);
         metrics.insert("num_memories".to_string(), self.num_memories as f64);
@@ -364,7 +370,11 @@ mod tests {
         };
         let result = bench.run(":memory:").expect("benchmark should succeed");
         let ndcg = result.metrics["ndcg_at_10"];
-        assert!((0.0..=1.0).contains(&ndcg), "NDCG@10 = {} out of range", ndcg);
+        assert!(
+            (0.0..=1.0).contains(&ndcg),
+            "NDCG@10 = {} out of range",
+            ndcg
+        );
     }
 
     #[test]
@@ -382,7 +392,11 @@ mod tests {
         // Perfect ranking: relevant docs at the top → NDCG = 1.0
         let perfect = vec![1i64, 2, 3, 4, 5];
         let ndcg_perfect = MemBenchmark::ndcg_at_k(&perfect, &[1, 2, 3], 3);
-        assert!((ndcg_perfect - 1.0).abs() < 1e-9, "perfect ndcg={}", ndcg_perfect);
+        assert!(
+            (ndcg_perfect - 1.0).abs() < 1e-9,
+            "perfect ndcg={}",
+            ndcg_perfect
+        );
     }
 
     #[test]

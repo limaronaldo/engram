@@ -127,19 +127,24 @@ impl SearchExplainer {
         results
             .into_iter()
             .enumerate()
-            .map(|(i, (memory_id, bm25, vector, fuzzy, recency, importance, rerank, final_score))| {
-                self.explain_result(
-                    memory_id,
-                    i + 1,
-                    bm25,
-                    vector,
-                    fuzzy,
-                    recency,
-                    importance,
-                    rerank,
-                    final_score,
-                )
-            })
+            .map(
+                |(
+                    i,
+                    (memory_id, bm25, vector, fuzzy, recency, importance, rerank, final_score),
+                )| {
+                    self.explain_result(
+                        memory_id,
+                        i + 1,
+                        bm25,
+                        vector,
+                        fuzzy,
+                        recency,
+                        importance,
+                        rerank,
+                        final_score,
+                    )
+                },
+            )
             .collect()
     }
 
@@ -177,10 +182,7 @@ impl SearchExplainer {
                     "fuzzy match" => "Fuzzy match contributed",
                     _ => "contributed",
                 };
-                parts.push(format!(
-                    "{} {:.0}%.",
-                    verb, signal.contribution_pct
-                ));
+                parts.push(format!("{} {:.0}%.", verb, signal.contribution_pct));
             }
         }
 
@@ -264,15 +266,15 @@ mod tests {
     // Helper: produce a deterministic explanation for most tests.
     fn default_explanation(explainer: &SearchExplainer) -> SearchExplanation {
         explainer.explain_result(
-            42,  // memory_id
-            1,   // rank
-            0.5, // bm25
-            0.8, // vector
-            0.3, // fuzzy
-            0.1, // recency
-            0.6, // importance
+            42,        // memory_id
+            1,         // rank
+            0.5,       // bm25
+            0.8,       // vector
+            0.3,       // fuzzy
+            0.1,       // recency
+            0.6,       // importance
             Some(0.7), // rerank
-            0.85, // final_score
+            0.85,      // final_score
         )
     }
 
@@ -340,7 +342,9 @@ mod tests {
         );
         // Cross-encoder signal must appear in top_signals
         assert!(
-            exp.top_signals.iter().any(|s| s.signal == "cross-encoder reranking"),
+            exp.top_signals
+                .iter()
+                .any(|s| s.signal == "cross-encoder reranking"),
             "cross-encoder signal missing from top_signals"
         );
     }
@@ -361,7 +365,9 @@ mod tests {
             "rerank_score should be None when inactive"
         );
         assert!(
-            !exp.top_signals.iter().any(|s| s.signal == "cross-encoder reranking"),
+            !exp.top_signals
+                .iter()
+                .any(|s| s.signal == "cross-encoder reranking"),
             "cross-encoder signal must not appear when reranker is inactive"
         );
     }
@@ -373,9 +379,15 @@ mod tests {
     fn test_batch_assigns_correct_ranks() {
         let explainer = SearchExplainer::new(60.0, false);
         let results = vec![
-            (1_i64, 0.9_f32, 0.8_f32, 0.1_f32, 0.05_f32, 0.7_f32, None, 0.92_f32),
-            (2_i64, 0.7_f32, 0.6_f32, 0.0_f32, 0.02_f32, 0.5_f32, None, 0.72_f32),
-            (3_i64, 0.5_f32, 0.4_f32, 0.2_f32, 0.01_f32, 0.3_f32, None, 0.55_f32),
+            (
+                1_i64, 0.9_f32, 0.8_f32, 0.1_f32, 0.05_f32, 0.7_f32, None, 0.92_f32,
+            ),
+            (
+                2_i64, 0.7_f32, 0.6_f32, 0.0_f32, 0.02_f32, 0.5_f32, None, 0.72_f32,
+            ),
+            (
+                3_i64, 0.5_f32, 0.4_f32, 0.2_f32, 0.01_f32, 0.3_f32, None, 0.55_f32,
+            ),
         ];
 
         let explanations = explainer.explain_batch(results);

@@ -330,10 +330,7 @@ impl ConflictDetector {
             edge_map.insert((edge.from_id, edge.to_id), edge.id);
         }
 
-        let all_nodes: HashSet<i64> = edges
-            .iter()
-            .flat_map(|e| [e.from_id, e.to_id])
-            .collect();
+        let all_nodes: HashSet<i64> = edges.iter().flat_map(|e| [e.from_id, e.to_id]).collect();
 
         let mut visited: HashSet<i64> = HashSet::new();
         let mut rec_stack: HashSet<i64> = HashSet::new();
@@ -420,9 +417,8 @@ impl ConflictResolver {
         conflict_id: i64,
         strategy: ResolutionStrategy,
     ) -> Result<ResolutionResult> {
-        let conflict = Self::get_conflict(conn, conflict_id)?.ok_or_else(|| {
-            EngramError::NotFound(conflict_id)
-        })?;
+        let conflict = Self::get_conflict(conn, conflict_id)?
+            .ok_or_else(|| EngramError::NotFound(conflict_id))?;
 
         if conflict.resolved_at.is_some() {
             return Err(EngramError::InvalidInput(format!(
@@ -434,15 +430,11 @@ impl ConflictResolver {
         let edge_ids = &conflict.edge_ids;
 
         let (edges_removed, edges_kept) = match strategy {
-            ResolutionStrategy::KeepNewer => {
-                resolve_keep_newer(conn, edge_ids)?
-            }
+            ResolutionStrategy::KeepNewer => resolve_keep_newer(conn, edge_ids)?,
             ResolutionStrategy::KeepHigherConfidence => {
                 resolve_keep_higher_confidence(conn, edge_ids)?
             }
-            ResolutionStrategy::Merge => {
-                resolve_merge(conn, edge_ids)?
-            }
+            ResolutionStrategy::Merge => resolve_merge(conn, edge_ids)?,
             ResolutionStrategy::Manual => {
                 // No edge modifications — just mark resolved.
                 (Vec::new(), edge_ids.clone())
@@ -472,10 +464,7 @@ impl ConflictResolver {
     /// Returns the generated row ID.
     pub fn save_conflict(conn: &Connection, conflict: &Conflict) -> Result<i64> {
         let edge_ids_json = serde_json::to_string(&conflict.edge_ids)?;
-        let resolution_strategy = conflict
-            .resolution_strategy
-            .as_ref()
-            .map(|s| s.as_str());
+        let resolution_strategy = conflict.resolution_strategy.as_ref().map(|s| s.as_str());
 
         conn.execute(
             "INSERT INTO graph_conflicts
@@ -684,8 +673,8 @@ fn resolve_merge(conn: &Connection, edge_ids: &[i64]) -> Result<(Vec<i64>, Vec<i
     let (keep_id, keep_strength, keep_meta_str) = rows.remove(0);
 
     // Merge metadata JSON objects.
-    let mut merged: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&keep_meta_str)
-        .unwrap_or_default();
+    let mut merged: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(&keep_meta_str).unwrap_or_default();
 
     for (_, _, meta_str) in &rows {
         if let Ok(serde_json::Value::Object(extra)) = serde_json::from_str(meta_str) {
@@ -809,7 +798,9 @@ fn dfs_detect_cycle(
                     }
                 }
                 // Close the cycle: last node -> neighbor
-                if let Some(&eid) = edge_map.get(&(*cycle_nodes.last().unwrap_or(&neighbor), neighbor)) {
+                if let Some(&eid) =
+                    edge_map.get(&(*cycle_nodes.last().unwrap_or(&neighbor), neighbor))
+                {
                     cycle_edge_ids.push(eid);
                 }
 
@@ -818,10 +809,7 @@ fn dfs_detect_cycle(
                         id: 0,
                         conflict_type: ConflictType::CyclicDependency,
                         edge_ids: cycle_edge_ids.clone(),
-                        description: format!(
-                            "Cycle detected involving nodes: {:?}",
-                            cycle_nodes
-                        ),
+                        description: format!("Cycle detected involving nodes: {:?}", cycle_nodes),
                         severity: Severity::Medium,
                         resolved_at: None,
                         resolution_strategy: None,
@@ -860,8 +848,8 @@ fn row_to_conflict(row: &rusqlite::Row<'_>) -> rusqlite::Result<Conflict> {
     let resolved_at: Option<String> = row.get(5)?;
     let resolution_strategy_str: Option<String> = row.get(6)?;
 
-    let conflict_type = ConflictType::from_str(&conflict_type_str)
-        .unwrap_or(ConflictType::DirectContradiction);
+    let conflict_type =
+        ConflictType::from_str(&conflict_type_str).unwrap_or(ConflictType::DirectContradiction);
     let edge_ids: Vec<i64> = serde_json::from_str(&edge_ids_str).unwrap_or_default();
     let severity = Severity::from_str(&severity_str).unwrap_or(Severity::Low);
     let resolution_strategy = resolution_strategy_str
@@ -927,9 +915,12 @@ mod tests {
 
     fn setup_db() -> Connection {
         let conn = Connection::open_in_memory().expect("open in-memory DB");
-        conn.execute_batch(CREATE_CROSS_REFS).expect("create cross_references");
-        conn.execute_batch(CREATE_MEMORIES).expect("create memories");
-        conn.execute_batch(CREATE_CONFLICTS_TABLE).expect("create graph_conflicts");
+        conn.execute_batch(CREATE_CROSS_REFS)
+            .expect("create cross_references");
+        conn.execute_batch(CREATE_MEMORIES)
+            .expect("create memories");
+        conn.execute_batch(CREATE_CONFLICTS_TABLE)
+            .expect("create graph_conflicts");
         conn
     }
 
@@ -963,11 +954,14 @@ mod tests {
         // A --contradicts--> B  (same pair, contradicting semantics)
         insert_edge(&conn, 1, 2, "contradicts", 0.8);
 
-        let conflicts = ConflictDetector::detect_contradictions(&conn)
-            .expect("detect_contradictions");
+        let conflicts =
+            ConflictDetector::detect_contradictions(&conn).expect("detect_contradictions");
 
         assert_eq!(conflicts.len(), 1);
-        assert_eq!(conflicts[0].conflict_type, ConflictType::DirectContradiction);
+        assert_eq!(
+            conflicts[0].conflict_type,
+            ConflictType::DirectContradiction
+        );
         assert_eq!(conflicts[0].severity, Severity::High);
         assert!(conflicts[0].edge_ids.len() >= 2);
         assert!(conflicts[0].description.contains("Contradicting"));
@@ -1072,8 +1066,8 @@ mod tests {
         };
         let cid = ConflictResolver::save_conflict(&conn, &conflict).expect("save");
 
-        let result = ConflictResolver::resolve(&conn, cid, ResolutionStrategy::KeepNewer)
-            .expect("resolve");
+        let result =
+            ConflictResolver::resolve(&conn, cid, ResolutionStrategy::KeepNewer).expect("resolve");
 
         assert_eq!(result.conflict_id, cid);
         assert_eq!(result.strategy, ResolutionStrategy::KeepNewer);
@@ -1141,12 +1135,11 @@ mod tests {
         let all = ConflictResolver::list_conflicts(&conn, None).expect("list all");
         assert_eq!(all.len(), 2);
 
-        let unresolved = ConflictResolver::list_conflicts(&conn, Some(false))
-            .expect("list unresolved");
+        let unresolved =
+            ConflictResolver::list_conflicts(&conn, Some(false)).expect("list unresolved");
         assert_eq!(unresolved.len(), 2);
 
-        let resolved = ConflictResolver::list_conflicts(&conn, Some(true))
-            .expect("list resolved");
+        let resolved = ConflictResolver::list_conflicts(&conn, Some(true)).expect("list resolved");
         assert_eq!(resolved.len(), 0);
 
         // Verify we can retrieve by ID.

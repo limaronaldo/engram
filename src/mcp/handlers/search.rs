@@ -41,10 +41,7 @@ pub fn memory_search(ctx: &HandlerContext, params: Value) -> Value {
         .unwrap_or(false);
 
     if !skip_cache && !rerank_enabled {
-        if let Some(cached_results) = ctx
-            .search_cache
-            .get(query, embedding_ref, &cache_filters)
-        {
+        if let Some(cached_results) = ctx.search_cache.get(query, embedding_ref, &cache_filters) {
             return json!({"results": cached_results, "cached": true});
         }
     }
@@ -262,17 +259,16 @@ pub fn memory_explain_search(_ctx: &HandlerContext, params: Value) -> Value {
 
     let results = match params.get("results").and_then(|v| v.as_array()) {
         Some(arr) => arr,
-        None => return json!({"error": "results array is required (each with memory_id, bm25, vector, fuzzy, recency, importance, final_score, and optional rerank_score)"}),
+        None => {
+            return json!({"error": "results array is required (each with memory_id, bm25, vector, fuzzy, recency, importance, final_score, and optional rerank_score)"})
+        }
     };
 
     let reranking_active = params
         .get("reranking_active")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let rrf_k = params
-        .get("rrf_k")
-        .and_then(|v| v.as_f64())
-        .unwrap_or(60.0) as f32;
+    let rrf_k = params.get("rrf_k").and_then(|v| v.as_f64()).unwrap_or(60.0) as f32;
 
     let explainer = SearchExplainer::new(rrf_k, reranking_active);
 
@@ -285,9 +281,21 @@ pub fn memory_explain_search(_ctx: &HandlerContext, params: Value) -> Value {
             let fuzzy = r.get("fuzzy").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
             let recency = r.get("recency").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
             let importance = r.get("importance").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-            let rerank = r.get("rerank_score").and_then(|v| v.as_f64()).map(|v| v as f32);
+            let rerank = r
+                .get("rerank_score")
+                .and_then(|v| v.as_f64())
+                .map(|v| v as f32);
             let final_score = r.get("final_score").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-            Some((memory_id, bm25, vector, fuzzy, recency, importance, rerank, final_score))
+            Some((
+                memory_id,
+                bm25,
+                vector,
+                fuzzy,
+                recency,
+                importance,
+                rerank,
+                final_score,
+            ))
         })
         .collect();
 
@@ -319,8 +327,14 @@ pub fn memory_feedback(ctx: &HandlerContext, params: Value) -> Value {
         _ => return json!({"error": "signal must be 'useful' or 'irrelevant'"}),
     };
 
-    let rank_position = params.get("rank_position").and_then(|v| v.as_i64()).map(|v| v as i32);
-    let original_score = params.get("original_score").and_then(|v| v.as_f64()).map(|v| v as f32);
+    let rank_position = params
+        .get("rank_position")
+        .and_then(|v| v.as_i64())
+        .map(|v| v as i32);
+    let original_score = params
+        .get("original_score")
+        .and_then(|v| v.as_f64())
+        .map(|v| v as f32);
     let workspace = params
         .get("workspace")
         .and_then(|v| v.as_str())

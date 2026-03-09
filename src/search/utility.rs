@@ -248,8 +248,7 @@ impl UtilityTracker {
     /// hook for callers that want to verify how many scores have drifted.
     pub fn batch_decay(&self, conn: &Connection, _config: &UtilityConfig) -> Result<usize> {
         // Collect distinct memory IDs that have feedback.
-        let mut stmt =
-            conn.prepare("SELECT DISTINCT memory_id FROM utility_feedback")?;
+        let mut stmt = conn.prepare("SELECT DISTINCT memory_id FROM utility_feedback")?;
         let memory_ids: Vec<i64> = stmt
             .query_map([], |r| r.get::<_, i64>(0))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -295,8 +294,7 @@ impl UtilityTracker {
                 .collect::<std::result::Result<Vec<_>, _>>()?;
             ids
         } else {
-            let mut stmt =
-                conn.prepare("SELECT DISTINCT memory_id FROM utility_feedback")?;
+            let mut stmt = conn.prepare("SELECT DISTINCT memory_id FROM utility_feedback")?;
             let ids = stmt
                 .query_map([], |r| r.get::<_, i64>(0))?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -640,10 +638,7 @@ mod tests {
         // top_useful should list the useful memory first.
         assert!(!stats.top_useful.is_empty());
         let top_mid = stats.top_useful[0].0;
-        assert_eq!(
-            top_mid, 1,
-            "expected memory 1 on top, got memory {top_mid}"
-        );
+        assert_eq!(top_mid, 1, "expected memory 1 on top, got memory {top_mid}");
         // bottom_useful: memory with 0 useful count comes first.
         assert!(!stats.bottom_useful.is_empty());
         let bottom_mid = stats.bottom_useful[0].0;

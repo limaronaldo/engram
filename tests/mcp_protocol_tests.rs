@@ -12,10 +12,10 @@ use serde_json::{json, Value};
 
 use engram::embedding::{create_embedder, EmbeddingCache};
 use engram::mcp::{
-    get_prompt, get_tool_definitions, handlers, list_prompts, list_resources, methods, read_resource,
-    InitializeResult, McpHandler, McpRequest, McpResponse, PromptCapabilities, ResourceCapabilities,
-    ServerCapabilities, ToolCallResult, ToolsCapability, MCP_PROTOCOL_VERSION,
-    MCP_PROTOCOL_VERSION_LEGACY,
+    get_prompt, get_tool_definitions, handlers, list_prompts, list_resources, methods,
+    read_resource, InitializeResult, McpHandler, McpRequest, McpResponse, PromptCapabilities,
+    ResourceCapabilities, ServerCapabilities, ToolCallResult, ToolsCapability,
+    MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_LEGACY,
 };
 use engram::search::{AdaptiveCacheConfig, FuzzyEngine, SearchConfig, SearchResultCache};
 use engram::storage::Storage;
@@ -33,8 +33,7 @@ struct TestHandler {
 impl TestHandler {
     fn new() -> Self {
         let storage = Storage::open_in_memory().expect("in-memory storage");
-        let embedder =
-            create_embedder(&EmbeddingConfig::default()).expect("tfidf embedder");
+        let embedder = create_embedder(&EmbeddingConfig::default()).expect("tfidf embedder");
         let ctx = handlers::HandlerContext {
             storage: storage.clone(),
             embedder,
@@ -50,9 +49,7 @@ impl TestHandler {
             #[cfg(feature = "meilisearch")]
             meili_sync_interval: 60,
             #[cfg(feature = "langfuse")]
-            langfuse_runtime: Arc::new(
-                tokio::runtime::Runtime::new().expect("langfuse runtime"),
-            ),
+            langfuse_runtime: Arc::new(tokio::runtime::Runtime::new().expect("langfuse runtime")),
         };
         Self { storage, ctx }
     }
@@ -72,7 +69,9 @@ impl McpHandler for TestHandler {
                     InitializeResult {
                         protocol_version: MCP_PROTOCOL_VERSION_LEGACY.to_string(),
                         capabilities: ServerCapabilities {
-                            tools: Some(ToolsCapability { list_changed: false }),
+                            tools: Some(ToolsCapability {
+                                list_changed: false,
+                            }),
                             resources: None,
                             prompts: None,
                         },
@@ -82,12 +81,16 @@ impl McpHandler for TestHandler {
                     InitializeResult {
                         protocol_version: MCP_PROTOCOL_VERSION.to_string(),
                         capabilities: ServerCapabilities {
-                            tools: Some(ToolsCapability { list_changed: false }),
+                            tools: Some(ToolsCapability {
+                                list_changed: false,
+                            }),
                             resources: Some(ResourceCapabilities {
                                 subscribe: false,
                                 list_changed: false,
                             }),
-                            prompts: Some(PromptCapabilities { list_changed: false }),
+                            prompts: Some(PromptCapabilities {
+                                list_changed: false,
+                            }),
                         },
                         ..InitializeResult::default()
                     }
@@ -181,9 +184,7 @@ impl McpHandler for TestHandler {
                     .cloned()
                     .unwrap_or(json!({}));
                 match get_prompt(name, &arguments) {
-                    Ok(messages) => {
-                        McpResponse::success(request.id, json!({"messages": messages}))
-                    }
+                    Ok(messages) => McpResponse::success(request.id, json!({"messages": messages})),
                     Err(e) => McpResponse::error(request.id, -32002, e),
                 }
             }
@@ -227,7 +228,11 @@ fn test_protocol_negotiation_2025() {
     );
 
     let resp = handler.handle_request(req);
-    assert!(resp.error.is_none(), "Expected no error, got: {:?}", resp.error);
+    assert!(
+        resp.error.is_none(),
+        "Expected no error, got: {:?}",
+        resp.error
+    );
 
     let result = resp.result.expect("Expected result");
 
@@ -240,8 +245,14 @@ fn test_protocol_negotiation_2025() {
     // Capabilities must include resources and prompts
     let caps = &result["capabilities"];
     assert!(caps["tools"].is_object(), "Should have tools capability");
-    assert!(caps["resources"].is_object(), "Should have resources capability");
-    assert!(caps["prompts"].is_object(), "Should have prompts capability");
+    assert!(
+        caps["resources"].is_object(),
+        "Should have resources capability"
+    );
+    assert!(
+        caps["prompts"].is_object(),
+        "Should have prompts capability"
+    );
 }
 
 #[test]
@@ -257,7 +268,11 @@ fn test_protocol_negotiation_2024_backward_compat() {
     );
 
     let resp = handler.handle_request(req);
-    assert!(resp.error.is_none(), "Expected no error, got: {:?}", resp.error);
+    assert!(
+        resp.error.is_none(),
+        "Expected no error, got: {:?}",
+        resp.error
+    );
 
     let result = resp.result.expect("Expected result");
 
@@ -269,7 +284,10 @@ fn test_protocol_negotiation_2024_backward_compat() {
 
     // Legacy mode: resources and prompts capabilities should be absent
     let caps = &result["capabilities"];
-    assert!(caps["tools"].is_object(), "Should still have tools capability");
+    assert!(
+        caps["tools"].is_object(),
+        "Should still have tools capability"
+    );
     assert!(
         caps["resources"].is_null(),
         "Should NOT have resources capability in legacy mode"
@@ -356,10 +374,17 @@ fn test_resources_list() {
     assert!(resp.error.is_none(), "Expected no error: {:?}", resp.error);
 
     let result = resp.result.expect("Expected result");
-    let resources = result["resources"].as_array().expect("Expected resources array");
+    let resources = result["resources"]
+        .as_array()
+        .expect("Expected resources array");
 
     // Should have exactly 5 resource templates
-    assert_eq!(resources.len(), 5, "Expected 5 resource templates, got {}", resources.len());
+    assert_eq!(
+        resources.len(),
+        5,
+        "Expected 5 resource templates, got {}",
+        resources.len()
+    );
 
     // Each resource should have uri, name, description
     for resource in resources {
@@ -381,13 +406,16 @@ fn test_resources_list() {
     }
 
     // Verify expected URI templates exist
-    let uris: Vec<&str> = resources
-        .iter()
-        .filter_map(|r| r["uri"].as_str())
-        .collect();
+    let uris: Vec<&str> = resources.iter().filter_map(|r| r["uri"].as_str()).collect();
 
-    assert!(uris.contains(&"engram://stats"), "Should have stats resource");
-    assert!(uris.contains(&"engram://entities"), "Should have entities resource");
+    assert!(
+        uris.contains(&"engram://stats"),
+        "Should have stats resource"
+    );
+    assert!(
+        uris.contains(&"engram://entities"),
+        "Should have entities resource"
+    );
     assert!(
         uris.iter().any(|u| u.contains("memory")),
         "Should have memory resource template"
@@ -422,24 +450,23 @@ fn test_resources_read_stats() {
     );
 
     // Now read the stats resource
-    let req = make_request(
-        11,
-        "resources/read",
-        json!({"uri": "engram://stats"}),
-    );
+    let req = make_request(11, "resources/read", json!({"uri": "engram://stats"}));
 
     let resp = handler.handle_request(req);
     assert!(resp.error.is_none(), "Expected no error: {:?}", resp.error);
 
     let result = resp.result.expect("Expected result");
-    let contents = result["contents"].as_array().expect("Expected contents array");
+    let contents = result["contents"]
+        .as_array()
+        .expect("Expected contents array");
     assert!(!contents.is_empty(), "Expected at least one content item");
 
     let text = contents[0]["text"].as_str().expect("Expected text content");
     let stats: Value = serde_json::from_str(text).expect("Stats should be valid JSON");
 
     // Stats should include a memory count >= 1
-    let total = stats.get("total_memories")
+    let total = stats
+        .get("total_memories")
         .or_else(|| stats.get("memory_count"))
         .or_else(|| stats.get("count"))
         .or_else(|| stats.get("total"));
@@ -447,7 +474,11 @@ fn test_resources_read_stats() {
     // Accept either a direct count field or embedded in object
     if let Some(count_val) = total {
         let count = count_val.as_u64().unwrap_or(0);
-        assert!(count >= 1, "Stats should show at least 1 memory, got: {}", count);
+        assert!(
+            count >= 1,
+            "Stats should show at least 1 memory, got: {}",
+            count
+        );
     } else {
         // Stats may have nested structure — just verify it's a non-empty object
         assert!(
@@ -484,7 +515,9 @@ fn test_resources_read_memory() {
 
     // Extract the ID from the tool call result
     let result = create_resp.result.expect("Expected result");
-    let content_arr = result["content"].as_array().expect("Expected content array");
+    let content_arr = result["content"]
+        .as_array()
+        .expect("Expected content array");
     let text = content_arr[0]["text"].as_str().expect("Expected text");
     let created: Value = serde_json::from_str(text).expect("Created memory should be JSON");
     let memory_id = created["id"].as_i64().expect("Expected id field");
@@ -500,7 +533,9 @@ fn test_resources_read_memory() {
     assert!(resp.error.is_none(), "Expected no error: {:?}", resp.error);
 
     let result = resp.result.expect("Expected result");
-    let contents = result["contents"].as_array().expect("Expected contents array");
+    let contents = result["contents"]
+        .as_array()
+        .expect("Expected contents array");
     assert!(!contents.is_empty(), "Expected at least one content item");
 
     let text = contents[0]["text"].as_str().expect("Expected text content");
@@ -512,10 +547,7 @@ fn test_resources_read_memory() {
         "Resource should return the correct memory ID"
     );
     assert!(
-        memory["content"]
-            .as_str()
-            .unwrap_or("")
-            .contains("XYZ123"),
+        memory["content"].as_str().unwrap_or("").contains("XYZ123"),
         "Resource content should contain the original text"
     );
 }
@@ -553,10 +585,17 @@ fn test_prompts_list() {
     assert!(resp.error.is_none(), "Expected no error: {:?}", resp.error);
 
     let result = resp.result.expect("Expected result");
-    let prompts = result["prompts"].as_array().expect("Expected prompts array");
+    let prompts = result["prompts"]
+        .as_array()
+        .expect("Expected prompts array");
 
     // Should have exactly 4 prompts
-    assert_eq!(prompts.len(), 4, "Expected 4 prompts, got {}", prompts.len());
+    assert_eq!(
+        prompts.len(),
+        4,
+        "Expected 4 prompts, got {}",
+        prompts.len()
+    );
 
     // Each prompt should have name and arguments
     for prompt in prompts {
@@ -568,10 +607,7 @@ fn test_prompts_list() {
     }
 
     // Verify all 4 expected prompt names are present
-    let names: Vec<&str> = prompts
-        .iter()
-        .filter_map(|p| p["name"].as_str())
-        .collect();
+    let names: Vec<&str> = prompts.iter().filter_map(|p| p["name"].as_str()).collect();
 
     assert!(
         names.contains(&"create-knowledge-base"),
@@ -607,7 +643,9 @@ fn test_prompts_get_daily_review() {
     assert!(resp.error.is_none(), "Expected no error: {:?}", resp.error);
 
     let result = resp.result.expect("Expected result");
-    let messages = result["messages"].as_array().expect("Expected messages array");
+    let messages = result["messages"]
+        .as_array()
+        .expect("Expected messages array");
 
     // Should return at least 2 messages (user + assistant)
     assert!(

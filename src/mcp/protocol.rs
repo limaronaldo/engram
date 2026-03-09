@@ -300,7 +300,9 @@ impl Default for InitializeResult {
                     subscribe: false,
                     list_changed: false,
                 }),
-                prompts: Some(PromptCapabilities { list_changed: false }),
+                prompts: Some(PromptCapabilities {
+                    list_changed: false,
+                }),
             },
             server_info: ServerInfo {
                 name: "engram".to_string(),

@@ -50,7 +50,10 @@ async fn handle_mcp(
     if let Some(ref expected) = state.api_key {
         if !check_bearer(&headers, expected) {
             let err = McpResponse::error(request.id, -32000, "Unauthorized".to_string());
-            return (StatusCode::UNAUTHORIZED, Json(serde_json::to_value(err).unwrap_or_default()));
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::to_value(err).unwrap_or_default()),
+            );
         }
     }
 
@@ -60,7 +63,10 @@ async fn handle_mcp(
     if is_notification {
         return (StatusCode::ACCEPTED, Json(serde_json::Value::Null));
     }
-    (StatusCode::OK, Json(serde_json::to_value(response).unwrap_or_default()))
+    (
+        StatusCode::OK,
+        Json(serde_json::to_value(response).unwrap_or_default()),
+    )
 }
 
 /// `GET /health` -- lightweight liveness / readiness probe.
@@ -100,7 +106,11 @@ impl EventsQuery {
             .split(',')
             .filter_map(|s| parse_event_type(s.trim()))
             .collect();
-        if types.is_empty() { None } else { Some(types) }
+        if types.is_empty() {
+            None
+        } else {
+            Some(types)
+        }
     }
 }
 
@@ -211,7 +221,8 @@ async fn handle_events(
         }
     });
 
-    Ok(Sse::new(sse_stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(30))))
+    Ok(Sse::new(sse_stream)
+        .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(30))))
 }
 
 // ---------------------------------------------------------------------------
@@ -248,7 +259,11 @@ pub async fn serve_http(
     api_key: Option<String>,
     realtime: Option<RealtimeManager>,
 ) -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let state = AppState { handler, api_key, realtime };
+    let state = AppState {
+        handler,
+        api_key,
+        realtime,
+    };
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -323,13 +338,31 @@ mod tests {
 
     #[test]
     fn test_sse_event_type_to_str_all_variants() {
-        assert_eq!(event_type_to_str(EventType::MemoryCreated), "memory_created");
-        assert_eq!(event_type_to_str(EventType::MemoryUpdated), "memory_updated");
-        assert_eq!(event_type_to_str(EventType::MemoryDeleted), "memory_deleted");
-        assert_eq!(event_type_to_str(EventType::CrossrefCreated), "crossref_created");
-        assert_eq!(event_type_to_str(EventType::CrossrefDeleted), "crossref_deleted");
+        assert_eq!(
+            event_type_to_str(EventType::MemoryCreated),
+            "memory_created"
+        );
+        assert_eq!(
+            event_type_to_str(EventType::MemoryUpdated),
+            "memory_updated"
+        );
+        assert_eq!(
+            event_type_to_str(EventType::MemoryDeleted),
+            "memory_deleted"
+        );
+        assert_eq!(
+            event_type_to_str(EventType::CrossrefCreated),
+            "crossref_created"
+        );
+        assert_eq!(
+            event_type_to_str(EventType::CrossrefDeleted),
+            "crossref_deleted"
+        );
         assert_eq!(event_type_to_str(EventType::SyncStarted), "sync_started");
-        assert_eq!(event_type_to_str(EventType::SyncCompleted), "sync_completed");
+        assert_eq!(
+            event_type_to_str(EventType::SyncCompleted),
+            "sync_completed"
+        );
         assert_eq!(event_type_to_str(EventType::SyncFailed), "sync_failed");
     }
 
@@ -337,7 +370,10 @@ mod tests {
 
     #[test]
     fn test_parse_event_type_known() {
-        assert_eq!(parse_event_type("memory_created"), Some(EventType::MemoryCreated));
+        assert_eq!(
+            parse_event_type("memory_created"),
+            Some(EventType::MemoryCreated)
+        );
         assert_eq!(parse_event_type("sync_failed"), Some(EventType::SyncFailed));
     }
 
@@ -351,7 +387,10 @@ mod tests {
 
     #[test]
     fn test_events_query_parsed_event_types_none() {
-        let q = EventsQuery { event_types: None, workspace: None };
+        let q = EventsQuery {
+            event_types: None,
+            workspace: None,
+        };
         assert!(q.parsed_event_types().is_none());
     }
 
@@ -374,7 +413,11 @@ mod tests {
         let types = q.parsed_event_types().unwrap();
         assert_eq!(
             types,
-            vec![EventType::MemoryCreated, EventType::MemoryDeleted, EventType::SyncFailed]
+            vec![
+                EventType::MemoryCreated,
+                EventType::MemoryDeleted,
+                EventType::SyncFailed
+            ]
         );
     }
 
@@ -385,7 +428,10 @@ mod tests {
             workspace: None,
         };
         let types = q.parsed_event_types().unwrap();
-        assert_eq!(types, vec![EventType::MemoryCreated, EventType::MemoryUpdated]);
+        assert_eq!(
+            types,
+            vec![EventType::MemoryCreated, EventType::MemoryUpdated]
+        );
     }
 
     #[test]

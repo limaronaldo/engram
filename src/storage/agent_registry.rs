@@ -56,12 +56,11 @@ fn agent_from_row(row: &rusqlite::Row) -> rusqlite::Result<Agent> {
     let namespaces_str: String = row.get(3)?;
     let metadata_str: String = row.get(6)?;
 
-    let capabilities: Vec<String> =
-        serde_json::from_str(&capabilities_str).unwrap_or_default();
+    let capabilities: Vec<String> = serde_json::from_str(&capabilities_str).unwrap_or_default();
     let namespaces: Vec<String> =
         serde_json::from_str(&namespaces_str).unwrap_or_else(|_| vec!["default".to_string()]);
-    let metadata: serde_json::Value =
-        serde_json::from_str(&metadata_str).unwrap_or(serde_json::Value::Object(Default::default()));
+    let metadata: serde_json::Value = serde_json::from_str(&metadata_str)
+        .unwrap_or(serde_json::Value::Object(Default::default()));
 
     Ok(Agent {
         agent_id: row.get(0)?,
@@ -360,7 +359,11 @@ mod tests {
         let updated = update_agent_capabilities(
             &conn,
             "agent-caps",
-            &["search".to_string(), "create".to_string(), "delete".to_string()],
+            &[
+                "search".to_string(),
+                "create".to_string(),
+                "delete".to_string(),
+            ],
         )
         .expect("update")
         .expect("found");
@@ -386,9 +389,18 @@ mod tests {
 
         let in_project_x = get_agents_in_namespace(&conn, "project-x").expect("query");
         let ids: Vec<&str> = in_project_x.iter().map(|a| a.agent_id.as_str()).collect();
-        assert!(ids.contains(&"agent-ns1"), "agent-ns1 should be in project-x");
-        assert!(ids.contains(&"agent-ns2"), "agent-ns2 should be in project-x");
-        assert!(!ids.contains(&"agent-ns3"), "agent-ns3 should not be in project-x");
+        assert!(
+            ids.contains(&"agent-ns1"),
+            "agent-ns1 should be in project-x"
+        );
+        assert!(
+            ids.contains(&"agent-ns2"),
+            "agent-ns2 should be in project-x"
+        );
+        assert!(
+            !ids.contains(&"agent-ns3"),
+            "agent-ns3 should not be in project-x"
+        );
 
         let in_default = get_agents_in_namespace(&conn, "default").expect("query default");
         assert_eq!(in_default.len(), 1);
@@ -427,7 +439,10 @@ mod tests {
         let conn = in_memory_conn();
 
         let result = heartbeat_agent(&conn, "ghost-agent").expect("no db error");
-        assert!(result.is_none(), "heartbeat on missing agent should return None");
+        assert!(
+            result.is_none(),
+            "heartbeat on missing agent should return None"
+        );
     }
 
     #[test]

@@ -242,10 +242,7 @@ pub fn memory_list_media(ctx: &HandlerContext, params: Value) -> Value {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let limit = params
-        .get("limit")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(50) as usize;
+    let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
 
     ctx.storage
         .with_connection(|conn| {
@@ -356,8 +353,7 @@ mod tests {
         use parking_lot::Mutex;
 
         let storage = Storage::open_in_memory().expect("in-memory storage should open");
-        let embedder =
-            create_embedder(&EmbeddingConfig::default()).expect("tfidf embedder");
+        let embedder = create_embedder(&EmbeddingConfig::default()).expect("tfidf embedder");
         HandlerContext {
             storage,
             embedder,
@@ -373,9 +369,7 @@ mod tests {
             #[cfg(feature = "meilisearch")]
             meili_sync_interval: 60,
             #[cfg(feature = "langfuse")]
-            langfuse_runtime: Arc::new(
-                tokio::runtime::Runtime::new().expect("langfuse runtime"),
-            ),
+            langfuse_runtime: Arc::new(tokio::runtime::Runtime::new().expect("langfuse runtime")),
         }
     }
 
@@ -448,7 +442,10 @@ mod tests {
     fn test_list_media_empty_db() {
         let ctx = make_ctx();
         let result = memory_list_media(&ctx, json!({}));
-        assert!(result.get("error").is_none(), "should not error on empty db");
+        assert!(
+            result.get("error").is_none(),
+            "should not error on empty db"
+        );
         assert_eq!(result["count"], 0, "empty db should return 0 assets");
         assert!(result["assets"].is_array(), "assets should be an array");
     }

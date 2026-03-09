@@ -132,9 +132,7 @@ impl WhisperTranscriber {
         let text = data["text"]
             .as_str()
             .ok_or_else(|| {
-                EngramError::Internal(
-                    "Invalid Whisper response: missing 'text' field".to_string(),
-                )
+                EngramError::Internal("Invalid Whisper response: missing 'text' field".to_string())
             })?
             .to_string();
 
@@ -353,8 +351,8 @@ mod tests {
             ]
         });
 
-        let result = WhisperTranscriber::parse_response(&json)
-            .expect("should parse valid verbose_json");
+        let result =
+            WhisperTranscriber::parse_response(&json).expect("should parse valid verbose_json");
 
         assert_eq!(result.text, "Hello world");
         assert_eq!(result.language, Some("en".to_string()));
@@ -450,8 +448,8 @@ mod tests {
     async fn test_transcribe_unsupported_format_returns_error() {
         let transcriber = WhisperTranscriber::new("test-key".to_string());
         // Use a tempfile with unsupported extension — no HTTP call will be made
-        let tmp = tempfile::NamedTempFile::with_suffix(".flac")
-            .expect("failed to create temp file");
+        let tmp =
+            tempfile::NamedTempFile::with_suffix(".flac").expect("failed to create temp file");
         let result = transcriber.transcribe(tmp.path()).await;
 
         assert!(result.is_err(), "should reject unsupported format");

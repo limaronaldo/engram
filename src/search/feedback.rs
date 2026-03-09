@@ -237,9 +237,7 @@ pub fn feedback_stats(conn: &Connection, workspace: Option<&str>) -> Result<Feed
                 .optional()?
                 .flatten()
         } else {
-            conn.query_row(sql, [], |r| r.get(0))
-                .optional()?
-                .flatten()
+            conn.query_row(sql, [], |r| r.get(0)).optional()?.flatten()
         };
         Ok(v)
     };
@@ -437,10 +435,8 @@ fn row_to_feedback(r: &rusqlite::Row<'_>) -> rusqlite::Result<SearchFeedback> {
 /// - no overlap → 1.0
 /// - partial overlap → interpolated
 fn query_similarity_weight(current: &str, historical: &str) -> f64 {
-    let current_words: std::collections::HashSet<&str> =
-        current.split_whitespace().collect();
-    let historical_words: std::collections::HashSet<&str> =
-        historical.split_whitespace().collect();
+    let current_words: std::collections::HashSet<&str> = current.split_whitespace().collect();
+    let historical_words: std::collections::HashSet<&str> = historical.split_whitespace().collect();
 
     if current_words.is_empty() || historical_words.is_empty() {
         return 1.0;
@@ -474,8 +470,16 @@ mod tests {
     fn test_record_and_retrieve_feedback() {
         let conn = setup();
 
-        let fb = record_feedback(&conn, "rust async", 42, FeedbackSignal::Useful, Some(1), Some(0.9), "default")
-            .expect("record");
+        let fb = record_feedback(
+            &conn,
+            "rust async",
+            42,
+            FeedbackSignal::Useful,
+            Some(1),
+            Some(0.9),
+            "default",
+        )
+        .expect("record");
 
         assert_eq!(fb.query, "rust async");
         assert_eq!(fb.memory_id, 42);
@@ -491,8 +495,16 @@ mod tests {
     fn test_record_useful_signal() {
         let conn = setup();
 
-        let fb = record_feedback(&conn, "search query", 10, FeedbackSignal::Useful, None, None, "ws1")
-            .expect("record useful");
+        let fb = record_feedback(
+            &conn,
+            "search query",
+            10,
+            FeedbackSignal::Useful,
+            None,
+            None,
+            "ws1",
+        )
+        .expect("record useful");
 
         assert_eq!(fb.signal, FeedbackSignal::Useful);
     }
@@ -502,8 +514,16 @@ mod tests {
     fn test_record_irrelevant_signal() {
         let conn = setup();
 
-        let fb = record_feedback(&conn, "another query", 20, FeedbackSignal::Irrelevant, Some(5), Some(0.3), "ws1")
-            .expect("record irrelevant");
+        let fb = record_feedback(
+            &conn,
+            "another query",
+            20,
+            FeedbackSignal::Irrelevant,
+            Some(5),
+            Some(0.3),
+            "ws1",
+        )
+        .expect("record irrelevant");
 
         assert_eq!(fb.signal, FeedbackSignal::Irrelevant);
         assert_eq!(fb.rank_position, Some(5));
@@ -533,7 +553,16 @@ mod tests {
 
         record_feedback(&conn, "q", 1, FeedbackSignal::Useful, None, None, "ws_a").unwrap();
         record_feedback(&conn, "q", 2, FeedbackSignal::Useful, None, None, "ws_a").unwrap();
-        record_feedback(&conn, "q", 3, FeedbackSignal::Irrelevant, None, None, "ws_b").unwrap();
+        record_feedback(
+            &conn,
+            "q",
+            3,
+            FeedbackSignal::Irrelevant,
+            None,
+            None,
+            "ws_b",
+        )
+        .unwrap();
 
         let stats_a = feedback_stats(&conn, Some("ws_a")).expect("stats_a");
         assert_eq!(stats_a.total_feedback, 2);
@@ -558,7 +587,11 @@ mod tests {
 
         let boosts = compute_feedback_boosts(&conn, &[99], None).expect("boosts");
         assert_eq!(boosts.len(), 1);
-        assert!(boosts[0].boost_factor > 1.0, "expected boost > 1.0, got {}", boosts[0].boost_factor);
+        assert!(
+            boosts[0].boost_factor > 1.0,
+            "expected boost > 1.0, got {}",
+            boosts[0].boost_factor
+        );
     }
 
     // 7. Boost — mostly irrelevant → boost < 1.0
@@ -573,7 +606,11 @@ mod tests {
 
         let boosts = compute_feedback_boosts(&conn, &[77], None).expect("boosts");
         assert_eq!(boosts.len(), 1);
-        assert!(boosts[0].boost_factor < 1.0, "expected boost < 1.0, got {}", boosts[0].boost_factor);
+        assert!(
+            boosts[0].boost_factor < 1.0,
+            "expected boost < 1.0, got {}",
+            boosts[0].boost_factor
+        );
     }
 
     // 8. Boost — no feedback → boost = 1.0
@@ -608,20 +645,42 @@ mod tests {
     #[test]
     fn test_apply_boosts_modifies_scores() {
         let boosts = vec![
-            FeedbackBoost { memory_id: 1, boost_factor: 1.5, signal_count: 5, confidence: 0.5 },
+            FeedbackBoost {
+                memory_id: 1,
+                boost_factor: 1.5,
+                signal_count: 5,
+                confidence: 0.5,
+            },
             // 0.7 * 0.8 = 0.56 — stays above the 0.5 clamp floor
-            FeedbackBoost { memory_id: 2, boost_factor: 0.8, signal_count: 3, confidence: 0.3 },
+            FeedbackBoost {
+                memory_id: 2,
+                boost_factor: 0.8,
+                signal_count: 3,
+                confidence: 0.3,
+            },
         ];
 
         let mut scores = vec![(1_i64, 0.6_f32), (2_i64, 0.7_f32), (3_i64, 0.4_f32)];
         apply_feedback_boosts(&mut scores, &boosts);
 
         // memory 1: 0.6 * 1.5 = 0.9
-        assert!((scores[0].1 - 0.9_f32).abs() < 1e-5, "score[0] = {}", scores[0].1);
+        assert!(
+            (scores[0].1 - 0.9_f32).abs() < 1e-5,
+            "score[0] = {}",
+            scores[0].1
+        );
         // memory 2: 0.7 * 0.8 = 0.56
-        assert!((scores[1].1 - 0.56_f32).abs() < 1e-4, "score[1] = {}", scores[1].1);
+        assert!(
+            (scores[1].1 - 0.56_f32).abs() < 1e-4,
+            "score[1] = {}",
+            scores[1].1
+        );
         // memory 3: no boost entry, unchanged
-        assert!((scores[2].1 - 0.4_f32).abs() < 1e-5, "score[2] = {}", scores[2].1);
+        assert!(
+            (scores[2].1 - 0.4_f32).abs() < 1e-5,
+            "score[2] = {}",
+            scores[2].1
+        );
     }
 
     // 11. Boost clamping to [0.5, 2.0]
@@ -636,7 +695,11 @@ mod tests {
         }];
         let mut scores_high = vec![(10_i64, 0.9_f32)];
         apply_feedback_boosts(&mut scores_high, &boosts_high);
-        assert!((scores_high[0].1 - 2.0_f32).abs() < 1e-5, "expected clamp to 2.0, got {}", scores_high[0].1);
+        assert!(
+            (scores_high[0].1 - 2.0_f32).abs() < 1e-5,
+            "expected clamp to 2.0, got {}",
+            scores_high[0].1
+        );
 
         // Very low boost factor → clamped to 0.5
         let boosts_low = vec![FeedbackBoost {
@@ -647,7 +710,11 @@ mod tests {
         }];
         let mut scores_low = vec![(20_i64, 0.9_f32)];
         apply_feedback_boosts(&mut scores_low, &boosts_low);
-        assert!((scores_low[0].1 - 0.5_f32).abs() < 1e-5, "expected clamp to 0.5, got {}", scores_low[0].1);
+        assert!(
+            (scores_low[0].1 - 0.5_f32).abs() < 1e-5,
+            "expected clamp to 0.5, got {}",
+            scores_low[0].1
+        );
     }
 
     // 12. Delete feedback
@@ -655,8 +722,16 @@ mod tests {
     fn test_delete_feedback() {
         let conn = setup();
 
-        let fb = record_feedback(&conn, "to delete", 1, FeedbackSignal::Useful, None, None, "ws")
-            .expect("record");
+        let fb = record_feedback(
+            &conn,
+            "to delete",
+            1,
+            FeedbackSignal::Useful,
+            None,
+            None,
+            "ws",
+        )
+        .expect("record");
 
         delete_feedback(&conn, fb.id).expect("delete");
 
@@ -679,18 +754,44 @@ mod tests {
 
         // Record feedback for two different queries on the same memory.
         // "rust async runtime" overlaps with "rust async" but not "python web".
-        record_feedback(&conn, "rust async runtime", 42, FeedbackSignal::Useful, None, None, "ws").unwrap();
-        record_feedback(&conn, "python web framework", 42, FeedbackSignal::Irrelevant, None, None, "ws").unwrap();
+        record_feedback(
+            &conn,
+            "rust async runtime",
+            42,
+            FeedbackSignal::Useful,
+            None,
+            None,
+            "ws",
+        )
+        .unwrap();
+        record_feedback(
+            &conn,
+            "python web framework",
+            42,
+            FeedbackSignal::Irrelevant,
+            None,
+            None,
+            "ws",
+        )
+        .unwrap();
 
         // Query "rust async" — should weight the useful signal higher → boost > 1.0
-        let boosts_rust = compute_feedback_boosts(&conn, &[42], Some("rust async")).expect("boosts");
-        assert!(boosts_rust[0].boost_factor > 1.0,
-            "expected boost > 1.0 with matching query, got {}", boosts_rust[0].boost_factor);
+        let boosts_rust =
+            compute_feedback_boosts(&conn, &[42], Some("rust async")).expect("boosts");
+        assert!(
+            boosts_rust[0].boost_factor > 1.0,
+            "expected boost > 1.0 with matching query, got {}",
+            boosts_rust[0].boost_factor
+        );
 
         // Query "python web" — should weight the irrelevant signal higher → boost < 1.0
-        let boosts_python = compute_feedback_boosts(&conn, &[42], Some("python web")).expect("boosts");
-        assert!(boosts_python[0].boost_factor < 1.0,
-            "expected boost < 1.0 with mismatched query, got {}", boosts_python[0].boost_factor);
+        let boosts_python =
+            compute_feedback_boosts(&conn, &[42], Some("python web")).expect("boosts");
+        assert!(
+            boosts_python[0].boost_factor < 1.0,
+            "expected boost < 1.0 with mismatched query, got {}",
+            boosts_python[0].boost_factor
+        );
     }
 
     // Extra: get_feedback_for_query
@@ -698,9 +799,36 @@ mod tests {
     fn test_get_feedback_for_query() {
         let conn = setup();
 
-        record_feedback(&conn, "specific query", 1, FeedbackSignal::Useful, None, None, "ws").unwrap();
-        record_feedback(&conn, "specific query", 2, FeedbackSignal::Irrelevant, None, None, "ws").unwrap();
-        record_feedback(&conn, "other query", 3, FeedbackSignal::Useful, None, None, "ws").unwrap();
+        record_feedback(
+            &conn,
+            "specific query",
+            1,
+            FeedbackSignal::Useful,
+            None,
+            None,
+            "ws",
+        )
+        .unwrap();
+        record_feedback(
+            &conn,
+            "specific query",
+            2,
+            FeedbackSignal::Irrelevant,
+            None,
+            None,
+            "ws",
+        )
+        .unwrap();
+        record_feedback(
+            &conn,
+            "other query",
+            3,
+            FeedbackSignal::Useful,
+            None,
+            None,
+            "ws",
+        )
+        .unwrap();
 
         let rows = get_feedback_for_query(&conn, "specific query").expect("get");
         assert_eq!(rows.len(), 2);
@@ -739,7 +867,16 @@ mod tests {
 
         record_feedback(&conn, "q", 1, FeedbackSignal::Useful, Some(1), None, "ws").unwrap();
         record_feedback(&conn, "q", 2, FeedbackSignal::Useful, Some(3), None, "ws").unwrap();
-        record_feedback(&conn, "q", 3, FeedbackSignal::Irrelevant, Some(10), None, "ws").unwrap();
+        record_feedback(
+            &conn,
+            "q",
+            3,
+            FeedbackSignal::Irrelevant,
+            Some(10),
+            None,
+            "ws",
+        )
+        .unwrap();
 
         let stats = feedback_stats(&conn, None).unwrap();
         // avg useful rank = (1 + 3) / 2 = 2.0

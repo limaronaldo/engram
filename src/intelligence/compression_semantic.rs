@@ -63,9 +63,21 @@ const FILLER_PHRASES: &[&str] = &[
 
 /// Hedging phrases — uncertainty markers that inflate token count.
 const HEDGING_PHRASES: &[&str] = &[
-    "maybe", "perhaps", "sort of", "kind of", "somewhat", "rather", "fairly",
-    "quite", "a bit", "a little", "in a way", "in some ways", "to some extent",
-    "to a degree", "more or less",
+    "maybe",
+    "perhaps",
+    "sort of",
+    "kind of",
+    "somewhat",
+    "rather",
+    "fairly",
+    "quite",
+    "a bit",
+    "a little",
+    "in a way",
+    "in some ways",
+    "to some extent",
+    "to a degree",
+    "more or less",
 ];
 
 // =============================================================================
@@ -74,22 +86,18 @@ const HEDGING_PHRASES: &[&str] = &[
 
 /// Matches capitalized words that could be proper nouns.
 /// We use a simple pattern and filter sentence-start words in post-processing.
-static PROPER_NOUN_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})*)\b").expect("valid regex")
-});
+static PROPER_NOUN_RE: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})*)\b").expect("valid regex"));
 
 /// Matches numbers (integers, decimals) and common date-like patterns.
 static NUMBER_DATE_RE: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
-        r"\b(\d{1,4}[/-]\d{1,2}[/-]\d{1,4}|\d{4}|\d+\.\d+|\d{1,3}(?:,\d{3})*(?:\.\d+)?)\b",
-    )
-    .expect("valid regex")
+    Regex::new(r"\b(\d{1,4}[/-]\d{1,2}[/-]\d{1,4}|\d{4}|\d+\.\d+|\d{1,3}(?:,\d{3})*(?:\.\d+)?)\b")
+        .expect("valid regex")
 });
 
 /// Matches sentence-terminating punctuation followed by whitespace.
 /// Used to split sentences without requiring look-behind.
-static SENTENCE_SPLIT_RE: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"[.!?]\s+").expect("valid regex"));
+static SENTENCE_SPLIT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"[.!?]\s+").expect("valid regex"));
 
 /// Verb word list used to identify the predicate in an SVO triple.
 static COMMON_VERBS: Lazy<Regex> = Lazy::new(|| {
@@ -287,7 +295,11 @@ fn split_sentences(text: &str) -> Vec<String> {
 
     if terminators.is_empty() {
         let trimmed = text.trim().to_string();
-        return if trimmed.is_empty() { vec![] } else { vec![trimmed] };
+        return if trimmed.is_empty() {
+            vec![]
+        } else {
+            vec![trimmed]
+        };
     }
 
     let mut sentences: Vec<String> = Vec::new();
@@ -366,8 +378,7 @@ fn extract_entities(sentences: &[String]) -> Vec<String> {
             .find_iter(&full_text)
             .filter(|m| full_text[m.start()..m.end()].to_lowercase() == entity_lower)
             .count();
-        if (!sentence_starters.contains(&entity_lower) || count > 1)
-            && seen.insert(entity.clone())
+        if (!sentence_starters.contains(&entity_lower) || count > 1) && seen.insert(entity.clone())
         {
             entities.push(entity);
         }
@@ -460,9 +471,7 @@ fn extract_key_facts(sentences: &[String], entities: &[String]) -> Vec<String> {
         .filter(|s| {
             let has_verb = COMMON_VERBS.is_match(s);
             let s_lower = s.to_lowercase();
-            let has_entity = entities
-                .iter()
-                .any(|e| s_lower.contains(&e.to_lowercase()))
+            let has_entity = entities.iter().any(|e| s_lower.contains(&e.to_lowercase()))
                 || NUMBER_DATE_RE.is_match(s);
             has_verb && has_entity
         })
@@ -511,7 +520,10 @@ mod tests {
             original.len()
         );
         // Key content words should still be present
-        assert!(stripped.to_lowercase().contains("proposal") || stripped.to_lowercase().contains("consider"));
+        assert!(
+            stripped.to_lowercase().contains("proposal")
+                || stripped.to_lowercase().contains("consider")
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -542,7 +554,9 @@ mod tests {
         ];
         let entities = extract_entities(&sentences);
         // Should find numeric tokens like "2024-01-15", "1500.00", "42", "2023"
-        let has_number = entities.iter().any(|e| e.chars().any(|c| c.is_ascii_digit()));
+        let has_number = entities
+            .iter()
+            .any(|e| e.chars().any(|c| c.is_ascii_digit()));
         assert!(has_number, "expected numeric entities; got {entities:?}");
     }
 

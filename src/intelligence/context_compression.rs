@@ -16,9 +16,9 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 const STOPWORDS: &[&str] = &[
-    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-    "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
-    "being", "have", "has", "had", "do", "does", "did", "will", "would",
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with", "by",
+    "from", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does",
+    "did", "will", "would",
 ];
 
 // Common filler phrases removed during light compression
@@ -404,7 +404,12 @@ fn has_entity_word(sentence: &str) -> bool {
     sentence
         .split_whitespace()
         .skip(1) // skip the first word (may be sentence-initial capital)
-        .any(|w| w.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false))
+        .any(|w| {
+            w.chars()
+                .next()
+                .map(|c| c.is_ascii_uppercase())
+                .unwrap_or(false)
+        })
 }
 
 /// Return `true` if the line matches "Word(s): rest" — a key-value fact.

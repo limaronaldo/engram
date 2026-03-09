@@ -34,9 +34,7 @@ fn test_ctx() -> handlers::HandlerContext {
         #[cfg(feature = "meilisearch")]
         meili_sync_interval: 60,
         #[cfg(feature = "langfuse")]
-        langfuse_runtime: Arc::new(
-            tokio::runtime::Runtime::new().expect("langfuse runtime"),
-        ),
+        langfuse_runtime: Arc::new(tokio::runtime::Runtime::new().expect("langfuse runtime")),
     }
 }
 
@@ -61,11 +59,7 @@ fn test_agent_register_and_get_via_dispatch() {
     assert_eq!(result["display_name"], "Test Agent");
     assert_eq!(result["status"], "active");
 
-    let get_result = handlers::dispatch(
-        &ctx,
-        "agent_get",
-        json!({"agent_id": "test-agent-1"}),
-    );
+    let get_result = handlers::dispatch(&ctx, "agent_get", json!({"agent_id": "test-agent-1"}));
     assert_eq!(get_result["display_name"], "Test Agent");
     assert!(get_result.get("error").is_none());
 }
@@ -111,19 +105,17 @@ fn test_namespace_isolation() {
         json!({"agent_id": "multi-agent", "namespaces": ["production", "staging"]}),
     );
 
-    let prod = handlers::dispatch(
-        &ctx,
-        "agent_list",
-        json!({"namespace": "production"}),
+    let prod = handlers::dispatch(&ctx, "agent_list", json!({"namespace": "production"}));
+    assert_eq!(
+        prod["count"], 2,
+        "production should have prod-agent and multi-agent"
     );
-    assert_eq!(prod["count"], 2, "production should have prod-agent and multi-agent");
 
-    let staging = handlers::dispatch(
-        &ctx,
-        "agent_list",
-        json!({"namespace": "staging"}),
+    let staging = handlers::dispatch(&ctx, "agent_list", json!({"namespace": "staging"}));
+    assert_eq!(
+        staging["count"], 2,
+        "staging should have staging-agent and multi-agent"
     );
-    assert_eq!(staging["count"], 2, "staging should have staging-agent and multi-agent");
 }
 
 #[test]
@@ -135,11 +127,7 @@ fn test_namespace_isolation_empty() {
         json!({"agent_id": "isolated", "namespaces": ["private"]}),
     );
 
-    let result = handlers::dispatch(
-        &ctx,
-        "agent_list",
-        json!({"namespace": "nonexistent"}),
-    );
+    let result = handlers::dispatch(&ctx, "agent_list", json!({"namespace": "nonexistent"}));
     assert_eq!(result["count"], 0);
 }
 
@@ -210,11 +198,7 @@ fn test_agent_heartbeat_and_deregister() {
     assert_eq!(dereg["success"], true);
 
     // After deregister, status should be inactive
-    let get = handlers::dispatch(
-        &ctx,
-        "agent_get",
-        json!({"agent_id": "lifecycle-agent"}),
-    );
+    let get = handlers::dispatch(&ctx, "agent_get", json!({"agent_id": "lifecycle-agent"}));
     assert_eq!(get["status"], "inactive");
 }
 

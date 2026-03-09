@@ -140,7 +140,10 @@ impl AppFocusWatcher {
 
     /// Create a watcher with a custom [`AppNameProvider`] — primarily useful
     /// for testing without spawning real subprocesses.
-    pub fn with_runner(config: AppFocusConfig, runner: Box<dyn AppNameProvider + Send + Sync>) -> Self {
+    pub fn with_runner(
+        config: AppFocusConfig,
+        runner: Box<dyn AppNameProvider + Send + Sync>,
+    ) -> Self {
         Self {
             config,
             active: None,
@@ -284,9 +287,7 @@ pub fn poll_foreground_app() -> Option<String> {
             .ok()?;
 
         if output.status.success() {
-            let name = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .to_string();
+            let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if name.is_empty() {
                 None
             } else {
@@ -362,8 +363,7 @@ mod tests {
     #[test]
     fn test_first_tick_starts_tracking_no_event() {
         let runner = MockRunner::from_names(vec![Some("Safari")]);
-        let mut watcher =
-            AppFocusWatcher::with_runner(default_config(), Box::new(runner));
+        let mut watcher = AppFocusWatcher::with_runner(default_config(), Box::new(runner));
 
         let emitted = watcher.tick();
 
@@ -403,13 +403,8 @@ mod tests {
 
     #[test]
     fn test_same_app_no_event() {
-        let runner = MockRunner::from_names(vec![
-            Some("VSCode"),
-            Some("VSCode"),
-            Some("VSCode"),
-        ]);
-        let mut watcher =
-            AppFocusWatcher::with_runner(default_config(), Box::new(runner));
+        let runner = MockRunner::from_names(vec![Some("VSCode"), Some("VSCode"), Some("VSCode")]);
+        let mut watcher = AppFocusWatcher::with_runner(default_config(), Box::new(runner));
 
         watcher.tick();
         watcher.tick();
@@ -505,7 +500,10 @@ mod tests {
 
         assert!(!e1);
         assert!(!e2);
-        assert!(watcher.current_app().is_none(), "disabled watcher should not track");
+        assert!(
+            watcher.current_app().is_none(),
+            "disabled watcher should not track"
+        );
         assert!(watcher.drain_completed_events().is_empty());
     }
 
@@ -529,8 +527,14 @@ mod tests {
 
         let content = event.to_memory_content();
         assert!(content.contains("Xcode"), "content should include app name");
-        assert!(content.contains("MyProject"), "content should include window title");
-        assert!(content.contains("330"), "content should include duration in seconds");
+        assert!(
+            content.contains("MyProject"),
+            "content should include window title"
+        );
+        assert!(
+            content.contains("330"),
+            "content should include duration in seconds"
+        );
     }
 
     // ------------------------------------------------------------------
@@ -540,8 +544,7 @@ mod tests {
     #[test]
     fn test_none_app_name_is_no_op() {
         let runner = MockRunner::from_names(vec![None, None]);
-        let mut watcher =
-            AppFocusWatcher::with_runner(default_config(), Box::new(runner));
+        let mut watcher = AppFocusWatcher::with_runner(default_config(), Box::new(runner));
 
         let e1 = watcher.tick();
         let e2 = watcher.tick();
@@ -575,11 +578,7 @@ mod tests {
         let mut config = default_config();
         config.min_focus_secs = 0;
 
-        let runner = MockRunner::from_names(vec![
-            Some("App A"),
-            Some("App B"),
-            Some("App C"),
-        ]);
+        let runner = MockRunner::from_names(vec![Some("App A"), Some("App B"), Some("App C")]);
         let mut watcher = AppFocusWatcher::with_runner(config, Box::new(runner));
 
         watcher.tick(); // start App A

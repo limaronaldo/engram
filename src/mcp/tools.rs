@@ -2312,7 +2312,10 @@ mod tests {
         assert!(!tools.is_empty(), "TOOL_DEFINITIONS must not be empty");
         for tool in &tools {
             assert!(!tool.name.is_empty(), "tool name must not be empty");
-            assert!(!tool.description.is_empty(), "tool description must not be empty");
+            assert!(
+                !tool.description.is_empty(),
+                "tool description must not be empty"
+            );
             assert!(
                 tool.input_schema.is_object(),
                 "tool '{}' schema must be a JSON object",
@@ -2326,10 +2329,14 @@ mod tests {
         let tools = get_tool_definitions();
         let read_only_names = ["memory_get", "memory_list", "memory_search", "memory_stats"];
         for name in read_only_names {
-            let tool = tools.iter().find(|t| t.name == name).unwrap_or_else(|| {
-                panic!("tool '{}' not found", name)
-            });
-            let ann = tool.annotations.as_ref().expect("annotations must be present");
+            let tool = tools
+                .iter()
+                .find(|t| t.name == name)
+                .unwrap_or_else(|| panic!("tool '{}' not found", name));
+            let ann = tool
+                .annotations
+                .as_ref()
+                .expect("annotations must be present");
             assert_eq!(
                 ann.read_only_hint,
                 Some(true),
@@ -2342,12 +2349,20 @@ mod tests {
     #[test]
     fn test_destructive_tools_have_annotation() {
         let tools = get_tool_definitions();
-        let destructive_names = ["memory_delete", "memory_cleanup_expired", "embedding_cache_clear"];
+        let destructive_names = [
+            "memory_delete",
+            "memory_cleanup_expired",
+            "embedding_cache_clear",
+        ];
         for name in destructive_names {
-            let tool = tools.iter().find(|t| t.name == name).unwrap_or_else(|| {
-                panic!("tool '{}' not found", name)
-            });
-            let ann = tool.annotations.as_ref().expect("annotations must be present");
+            let tool = tools
+                .iter()
+                .find(|t| t.name == name)
+                .unwrap_or_else(|| panic!("tool '{}' not found", name));
+            let ann = tool
+                .annotations
+                .as_ref()
+                .expect("annotations must be present");
             assert_eq!(
                 ann.destructive_hint,
                 Some(true),
@@ -2368,10 +2383,14 @@ mod tests {
             "retention_policy_apply",
         ];
         for name in idempotent_names {
-            let tool = tools.iter().find(|t| t.name == name).unwrap_or_else(|| {
-                panic!("tool '{}' not found", name)
-            });
-            let ann = tool.annotations.as_ref().expect("annotations must be present");
+            let tool = tools
+                .iter()
+                .find(|t| t.name == name)
+                .unwrap_or_else(|| panic!("tool '{}' not found", name));
+            let ann = tool
+                .annotations
+                .as_ref()
+                .expect("annotations must be present");
             assert_eq!(
                 ann.idempotent_hint,
                 Some(true),
@@ -2386,15 +2405,24 @@ mod tests {
         let tools = get_tool_definitions();
         let memory_get = tools.iter().find(|t| t.name == "memory_get").unwrap();
         let json = serde_json::to_string(memory_get).expect("serialization must succeed");
-        assert!(json.contains("readOnlyHint"), "should serialize as readOnlyHint");
-        assert!(!json.contains("read_only_hint"), "must not use snake_case key");
+        assert!(
+            json.contains("readOnlyHint"),
+            "should serialize as readOnlyHint"
+        );
+        assert!(
+            !json.contains("read_only_hint"),
+            "must not use snake_case key"
+        );
     }
 
     #[test]
     fn test_mutating_tool_has_no_hints() {
         let tools = get_tool_definitions();
         let memory_create = tools.iter().find(|t| t.name == "memory_create").unwrap();
-        let ann = memory_create.annotations.as_ref().expect("annotations must be present");
+        let ann = memory_create
+            .annotations
+            .as_ref()
+            .expect("annotations must be present");
         assert!(ann.read_only_hint.is_none());
         assert!(ann.destructive_hint.is_none());
         assert!(ann.idempotent_hint.is_none());
