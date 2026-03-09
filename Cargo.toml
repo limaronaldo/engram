@@ -1,6 +1,6 @@
 [package]
 name = "engram-core"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2021"
 authors = ["Ronaldo Lima"]
 description = "AI Memory Infrastructure - Persistent memory for AI agents with semantic search"
@@ -103,8 +103,11 @@ advanced-graph = []
 # Autonomous agent: full agentic loop combining all advanced capabilities
 autonomous-agent = ["compression", "agentic-evolution", "advanced-graph"]
 
+# Agent portability: snapshot + attestation for multi-agent memory sharing (Phase L)
+agent-portability = ["dep:zip", "dep:ed25519-dalek", "dep:aes-gcm"]
+
 # All features
-full = ["cloud", "openai", "pdf", "langfuse", "turso", "meilisearch", "watcher", "multimodal", "emergent-graph", "ollama", "cohere", "voyage", "onnx-embed", "neural-rerank", "retrieval-excellence", "context-engineering", "temporal-graph", "compression", "agentic-evolution", "advanced-graph", "autonomous-agent"]
+full = ["cloud", "openai", "pdf", "langfuse", "turso", "meilisearch", "watcher", "multimodal", "emergent-graph", "ollama", "cohere", "voyage", "onnx-embed", "neural-rerank", "retrieval-excellence", "context-engineering", "temporal-graph", "compression", "agentic-evolution", "advanced-graph", "autonomous-agent", "agent-portability"]
 
 [dependencies]
 # Async runtime
@@ -146,6 +149,10 @@ aws-config = { version = "1.1", optional = true }
 aes-gcm = { version = "0.10", optional = true }
 rand = "0.8"
 base64 = "0.21"
+
+# Agent portability (Phase L)
+zip = { version = "2.0", optional = true, default-features = false, features = ["deflate"] }
+ed25519-dalek = { version = "2.1", optional = true, features = ["rand_core"] }
 
 # Turso/libSQL (Phase 6 - ENG-54)
 # Enable core + replication + remote for full functionality
