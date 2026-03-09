@@ -529,4 +529,121 @@ mod tests {
         let result = SnapshotLoader::load(&dst, &path, LoadStrategy::Merge, None, Some(&wrong_key));
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_load_replace_strategy() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("replace.egm");
+
+        // Build snapshot with one memory
+        let src = make_storage();
+        insert_test_memory(&src, "Replace source memory", "replace-ws");
+        SnapshotBuilder::new(src)
+            .workspace("replace-ws")
+            .build(&path)
+            .expect("build");
+
+        // Destination already has a memory in the same workspace
+        let dst = make_storage();
+        insert_test_memory(&dst, "Pre-existing memory", "replace-ws");
+
+        let result = SnapshotLoader::load(&dst, &path, LoadStrategy::Replace, Some("replace-ws"), None)
+            .expect("load replace");
+
+        assert_eq!(result.strategy, LoadStrategy::Replace);
+        // The new memory from the snapshot should be loaded
+        assert_eq!(result.memories_loaded, 1);
+        assert_eq!(result.target_workspace, "replace-ws");
+
+        // Verify old memory was cleared (soft-deleted) and new one exists
+        dst.with_connection(|conn| {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM memories WHERE workspace = ? AND valid_to IS NULL",
+                rusqlite::params!["replace-ws"],
+                |row| row.get(0),
+            )?;
+            // Only the snapshot memory should be active
+            assert_eq!(count, 1);
+            Ok(())
+        }).expect("count query");
+    }
+
+    #[test]
+    fn test_load_isolate_strategy() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("isolate.egm");
+
+        // Build snapshot
+        let src = make_storage();
+        insert_test_memory(&src, "Isolated memory A", "source-ws");
+        insert_test_memory(&src, "Isolated memory B", "source-ws");
+        SnapshotBuilder::new(src)
+            .workspace("source-ws")
+            .build(&path)
+            .expect("build");
+
+        let dst = make_storage();
+        let result = SnapshotLoader::load(&dst, &path, LoadStrategy::Isolate, None, None)
+            .expect("load isolate");
+
+        assert_eq!(result.strategy, LoadStrategy::Isolate);
+        assert_eq!(result.memories_loaded, 2);
+        // Isolate creates a new workspace name — it should not be "source-ws"
+        assert_ne!(result.target_workspace, "source-ws");
+        // It should contain "snapshot" in the generated name
+        assert!(result.target_workspace.contains("snapshot"));
+    }
+
+    #[test]
+    fn test_signing_and_verification() {
+        use crate::snapshot::crypto::{public_key_from_secret, verify_ed25519};
+
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("signed.egm");
+        let secret_key = [0x55u8; 32];
+        let public_key = public_key_from_secret(&secret_key);
+
+        let src = make_storage();
+        insert_test_memory(&src, "Signed memory content", "signed-ws");
+
+        let manifest = SnapshotBuilder::new(src)
+            .workspace("signed-ws")
+            .description("Signed snapshot test")
+            .build_signed(&path, &secret_key)
+            .expect("build_signed");
+
+        assert!(manifest.signed);
+        assert!(!manifest.encrypted);
+
+        // Extract signature from archive and verify it
+        let file = std::fs::File::open(&path).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+
+        // Read manifest JSON
+        let manifest_json = {
+            let mut entry = archive.by_name("manifest.json").unwrap();
+            let mut s = String::new();
+            std::io::Read::read_to_string(&mut entry, &mut s).unwrap();
+            s
+        };
+
+        // Read signature
+        let sig_hex = {
+            let mut entry = archive.by_name("manifest.sig").unwrap();
+            let mut s = String::new();
+            std::io::Read::read_to_string(&mut entry, &mut s).unwrap();
+            s
+        };
+
+        let sig_bytes = hex::decode(&sig_hex).expect("decode hex sig");
+        let valid = verify_ed25519(manifest_json.as_bytes(), &sig_bytes, &public_key)
+            .expect("verify_ed25519");
+        assert!(valid, "signature should be valid");
+
+        // Tamper: verification of different data should fail
+        let tampered = format!("{}tampered", manifest_json);
+        let invalid = verify_ed25519(tampered.as_bytes(), &sig_bytes, &public_key)
+            .expect("verify_ed25519 tampered");
+        assert!(!invalid, "tampered data should not verify");
+    }
 }

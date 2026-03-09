@@ -491,4 +491,72 @@ mod tests {
         let recomputed = AttestationChain::compute_record_hash(&r);
         assert_eq!(r.record_hash, recomputed);
     }
+
+    #[test]
+    fn test_chain_integrity_5_docs() {
+        let chain = test_chain();
+
+        // Log 5 documents
+        let docs = [
+            (b"alpha" as &[u8], "alpha.txt"),
+            (b"beta", "beta.txt"),
+            (b"gamma", "gamma.txt"),
+            (b"delta", "delta.txt"),
+            (b"epsilon", "epsilon.txt"),
+        ];
+
+        let mut records = Vec::new();
+        for (content, name) in &docs {
+            let r = chain.log_document(content, name, Some("agent-x"), &[], None).unwrap();
+            records.push(r);
+        }
+
+        // Verify each record's previous_hash forms a proper chain
+        assert_eq!(records[0].previous_hash, GENESIS_HASH);
+        for i in 1..5 {
+            assert_eq!(
+                records[i].previous_hash,
+                records[i - 1].record_hash,
+                "record {i} previous_hash should point to record {} record_hash",
+                i - 1
+            );
+        }
+
+        // Full chain verification
+        match chain.verify_chain().unwrap() {
+            ChainStatus::Valid { record_count } => assert_eq!(record_count, 5),
+            other => panic!("expected Valid with 5 records, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_chain_tamper_detection() {
+        let storage = Storage::open_in_memory().unwrap();
+        let chain = AttestationChain::new(storage.clone());
+
+        chain.log_document(b"first", "first.txt", None, &[], None).unwrap();
+        let r2 = chain.log_document(b"second", "second.txt", None, &[], None).unwrap();
+
+        // Chain is valid before tamper
+        assert!(matches!(chain.verify_chain().unwrap(), ChainStatus::Valid { .. }));
+
+        // Directly modify the record_hash of the second record in the DB
+        let r2_id = r2.id.unwrap();
+        storage.with_transaction(|conn| {
+            conn.execute(
+                "UPDATE attestation_log SET record_hash = 'sha256:0000tampered' WHERE id = ?1",
+                rusqlite::params![r2_id],
+            )?;
+            Ok(())
+        }).expect("tamper record");
+
+        // Chain should now be broken
+        match chain.verify_chain().unwrap() {
+            ChainStatus::Broken { at_record_id, .. } => {
+                // The breakage can be detected at r2 (hash mismatch) or at a subsequent record
+                assert!(at_record_id > 0);
+            }
+            other => panic!("expected Broken chain after tamper, got {other:?}"),
+        }
+    }
 }
