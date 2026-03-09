@@ -1,6 +1,6 @@
 {
   "name": "engram-client",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "TypeScript client for Engram Cloud - AI memory infrastructure",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
