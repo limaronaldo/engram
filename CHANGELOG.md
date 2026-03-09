@@ -7,8 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.6.0] - 2026-03-09
+
 ### Added
 
+- **MCP 2025-11-25 protocol upgrade** — Updated from 2024-11-05 to 2025-11-25 with backward compatibility
+- **Tool annotations** — All 155+ MCP tools classified with readOnlyHint, destructiveHint, idempotentHint per MCP spec
+- **MCP Resources** — 5 resource URI templates: `engram://memory/{id}`, `engram://workspace/{name}`, `engram://workspace/{name}/memories`, `engram://stats`, `engram://entities`
+- **MCP Prompts** — 4 guided workflow prompts: create-knowledge-base, daily-review, search-and-organize, seed-entity
+- **Streamable HTTP transport** — Axum-based HTTP transport with `--transport http|stdio|both`, bearer token auth, CORS
+- **Server modularization** — Extracted 6200-line server.rs into 11 domain handler modules
 - **Semantic duplicate detection** — `memory_find_semantic_duplicates` MCP tool
   - Cosine similarity over embeddings for LLM-powered dedup
   - Configurable threshold, workspace scoping, bounded by limit
@@ -27,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- MCP protocol: v2024-11-05 → v2025-11-25
 - CI: Criterion benchmark tracking with regression alerts (15% PR threshold, 20% nightly)
 - Schema: v15 → v16 (additive: `retention_policies` table)
 

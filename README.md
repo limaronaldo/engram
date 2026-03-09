@@ -224,6 +224,40 @@ engram-server --meilisearch-url http://localhost:7700 --meilisearch-indexer
 
 SQLite remains the source of truth. MeilisearchIndexer syncs changes in the background.
 
+### MCP Resources & Prompts (v0.6.0)
+
+Engram exposes MCP Resources and Prompts for richer agent integration:
+
+**Resources** — Query-only URI templates:
+- `engram://memory/{id}` — Get specific memory
+- `engram://workspace/{name}` — Get workspace statistics
+- `engram://workspace/{name}/memories` — List workspace memories
+- `engram://stats` — Global statistics
+- `engram://entities` — Extracted entities
+
+**Prompts** — Guided workflows for agents:
+- `create-knowledge-base` — Steps to build a new knowledge base
+- `daily-review` — Daily memory review and archival workflow
+- `search-and-organize` — Search results with suggested tags
+- `seed-entity` — Initialize entity graph from project
+
+### Streamable HTTP Transport (v0.6.0)
+
+Run Engram as HTTP server with JSON-RPC 2.0 support:
+
+```bash
+# HTTP-only server (port 8080)
+engram-server --transport http --port 8080
+
+# Both HTTP and stdio (default)
+engram-server --transport both --port 8080
+
+# Bearer token authentication
+ENGRAM_BEARER_TOKEN=secret-token-here engram-server --transport http
+```
+
+Clients connect via HTTP with JSON-RPC 2.0 at `/v1/mcp` endpoint.
+
 ### Project Context Discovery
 
 Ingest and query instruction and policy files using MCP tools:
@@ -364,7 +398,7 @@ If you built from source instead of installing via Homebrew, use the full path t
 | `embedding_cache_stats` | Cache hit/miss statistics |
 | `embedding_cache_clear` | Clear embedding cache |
 
-**144+ MCP tools total.** See [CHANGELOG.md](CHANGELOG.md) for the full list.
+**155+ MCP tools total.** See [CHANGELOG.md](CHANGELOG.md) for the full list.
 
 ---
 

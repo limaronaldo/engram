@@ -14,8 +14,9 @@
 | 7 | Meilisearch | Done | v0.5.0 | Full `StorageBackend` + background indexer, 4 MCP tools (feature-gated) |
 | 8 | Salience Scoring | Done | v0.4.0 | Multi-signal salience (recency, frequency, importance, feedback), session context |
 | 9 | Context Quality | Done | v0.4.0 | 5-component quality scoring, near-duplicate detection, conflict resolution, source trust |
+| 10 | MCP Modernization | Done | v0.6.0 | MCP 2025-11-25 protocol, Resources, Prompts, tool annotations, HTTP transport, server modularization |
 
-All 10 phases complete. Published as v0.5.0.
+All 11 phases complete. Published as v0.6.0.
 
 ---
 
@@ -115,17 +116,28 @@ Ensure memory quality doesn't degrade over time.
 - 9 new MCP tools
 - Schema v15: `quality_history`, `memory_conflicts`, `source_trust_scores`, `duplicate_candidates`
 
+### Phase 10: MCP Modernization (v0.6.0)
+
+Modernize to MCP 2025-11-25 spec with improved tooling and server architecture.
+
+- **MCP Protocol Upgrade**: v2024-11-05 → v2025-11-25 with full backward compatibility
+- **Tool Annotations**: All 155+ MCP tools classified with `readOnlyHint`, `destructiveHint`, `idempotentHint` per MCP spec
+- **MCP Resources**: 5 resource URI templates exposing memory/workspace/stats as queryable resources
+- **MCP Prompts**: 4 guided workflow prompts for common agent patterns (create-knowledge-base, daily-review, search-and-organize, seed-entity)
+- **Streamable HTTP Transport**: Axum-based HTTP server with `--transport http|stdio|both` CLI flag, bearer token auth, CORS
+- **Server Modularization**: Refactored 6200-line server.rs into 11 focused domain handler modules for maintainability
+
 ---
 
 ## What's Next
 
-All 10 planned phases are complete. Future directions under consideration:
+All 11 planned phases are complete. Future directions under consideration:
 
 - **OpenClaw integration**: Memory plugin for the 192K-star AI assistant platform
 - **Multi-agent memory sharing**: Cross-agent memory federation
 - **Streaming ingestion**: Real-time memory creation from event streams
 - **WASM target**: Run Engram in the browser
-- **Benchmark suite**: Automated performance regression tracking
+- **Benchmark suite**: Automated performance regression tracking (CI integration)
 
 ---
 
@@ -139,3 +151,4 @@ All 10 planned phases are complete. Future directions under consideration:
 | v0.4.0 | 2026-02-12 | 0-6, 8-9 | 140+ |
 | v0.4.1 | 2026-02-13 | 0-6, 8-9 | 140+ |
 | v0.5.0 | 2026-02-13 | 0-9 (all) | 144+ |
+| v0.6.0 | 2026-03-09 | 0-10 (all) | 155+ |
