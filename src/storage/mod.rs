@@ -18,6 +18,7 @@
 //! - `CloudSyncBackend` - For backends with cloud synchronization
 
 pub mod agent_registry;
+pub mod auto_linker;
 mod audit;
 pub mod backend;
 mod confidence;
@@ -43,6 +44,10 @@ pub mod turso_backend;
 pub use agent_registry::{
     deregister_agent, get_agent, get_agents_in_namespace, heartbeat_agent, list_agents,
     register_agent, update_agent_capabilities, Agent, RegisterAgentInput,
+};
+pub use auto_linker::{
+    auto_link_stats, insert_auto_link, list_auto_links, run_semantic_linker, AutoLink,
+    AutoLinkResult, SemanticLinkOptions,
 };
 pub use audit::*;
 pub use backend::{

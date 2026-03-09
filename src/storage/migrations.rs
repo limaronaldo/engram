@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 18;
+pub const SCHEMA_VERSION: i32 = 19;
 
 /// Run all migrations
 pub fn run_migrations(conn: &Connection) -> Result<()> {
@@ -94,8 +94,12 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         migrate_v17(conn)?;
     }
 
-    if current_version < SCHEMA_VERSION {
+    if current_version < 18 {
         migrate_v18(conn)?;
+    }
+
+    if current_version < SCHEMA_VERSION {
+        migrate_v19(conn)?;
     }
 
     Ok(())
@@ -1204,6 +1208,42 @@ fn migrate_v18(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn migrate_v19(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v19: Adding media_assets table...");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS media_assets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            memory_id INTEGER NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+            media_type TEXT NOT NULL,
+            file_hash TEXT NOT NULL,
+            file_path TEXT,
+            file_size INTEGER,
+            mime_type TEXT,
+            duration_secs REAL,
+            width INTEGER,
+            height INTEGER,
+            transcription TEXT,
+            description TEXT,
+            provider TEXT,
+            model TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_media_assets_memory ON media_assets(memory_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_media_assets_hash ON media_assets(file_hash);
+        CREATE INDEX IF NOT EXISTS idx_media_assets_type ON media_assets(media_type);
+        "#,
+    )?;
+
+    conn.execute("INSERT INTO schema_version (version) VALUES (19)", [])?;
+
+    tracing::info!("Migration v19 complete: media_assets table added");
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1216,7 +1256,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fresh_db_reaches_v18() {
+    fn test_fresh_db_reaches_v19() {
         let conn = in_memory_conn();
         let version: i32 = conn
             .query_row(
@@ -1225,12 +1265,58 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query schema version");
-        assert_eq!(version, 18);
+        assert_eq!(version, 19);
     }
 
     #[test]
-    fn test_schema_version_constant_is_18() {
-        assert_eq!(SCHEMA_VERSION, 18);
+    fn test_schema_version_constant_is_19() {
+        assert_eq!(SCHEMA_VERSION, 19);
+    }
+
+    #[test]
+    fn test_media_assets_table_exists() {
+        let conn = in_memory_conn();
+        conn.execute_batch(
+            "INSERT INTO memories (content, memory_type, importance, visibility, metadata, valid_from)
+             VALUES ('test memory', 'note', 0.5, 'private', '{}', CURRENT_TIMESTAMP)",
+        )
+        .expect("insert memory");
+        let memory_id: i64 = conn
+            .query_row("SELECT id FROM memories LIMIT 1", [], |row| row.get(0))
+            .expect("get memory id");
+        conn.execute(
+            "INSERT INTO media_assets (memory_id, media_type, file_hash, mime_type)
+             VALUES (?1, 'image', 'abc123hash', 'image/png')",
+            rusqlite::params![memory_id],
+        )
+        .expect("insert media_asset");
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM media_assets", [], |row| row.get(0))
+            .expect("count");
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_media_assets_hash_uniqueness() {
+        let conn = in_memory_conn();
+        conn.execute_batch(
+            "INSERT INTO memories (content, memory_type, importance, visibility, metadata, valid_from)
+             VALUES ('test', 'note', 0.5, 'private', '{}', CURRENT_TIMESTAMP)",
+        )
+        .expect("insert memory");
+        let memory_id: i64 = conn
+            .query_row("SELECT id FROM memories LIMIT 1", [], |row| row.get(0))
+            .expect("get memory id");
+        conn.execute(
+            "INSERT INTO media_assets (memory_id, media_type, file_hash) VALUES (?1, 'image', 'dup_hash')",
+            rusqlite::params![memory_id],
+        )
+        .expect("first insert");
+        let dup = conn.execute(
+            "INSERT INTO media_assets (memory_id, media_type, file_hash) VALUES (?1, 'audio', 'dup_hash')",
+            rusqlite::params![memory_id],
+        );
+        assert!(dup.is_err(), "duplicate file_hash should fail");
     }
 
     #[test]
@@ -1310,7 +1396,7 @@ mod tests {
     }
 
     #[test]
-    fn test_upgrade_from_v17_to_v18() {
+    fn test_upgrade_from_v17_to_v19() {
         // Simulate a v17 database by running only migrations up to v17
         let conn = Connection::open_in_memory().expect("open in-memory db");
 
@@ -1336,7 +1422,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query schema version");
-        assert_eq!(version, 18, "should reach v18 after full migration");
+        assert_eq!(version, 19, "should reach v19 after full migration");
 
         // Verify both new tables exist
         let auto_links_exists: i32 = conn
