@@ -15,11 +15,15 @@ pub mod graph;
 pub mod integrations;
 pub mod intelligence;
 pub mod mcp;
+#[cfg(feature = "multimodal")]
+pub mod multimodal;
 pub mod realtime;
 pub mod search;
 pub mod storage;
 pub mod sync;
 pub mod types;
+#[cfg(feature = "watcher")]
+pub mod watcher;
 
 pub use error::{EngramError, Result};
 pub use storage::Storage;
