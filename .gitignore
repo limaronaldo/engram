@@ -164,3 +164,4 @@ vendor/
 
 # Temporary benchmark results
 benchmark_*.txt
+.claude/worktrees/
