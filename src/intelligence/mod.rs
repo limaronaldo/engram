@@ -15,11 +15,14 @@
 //! - Salience scoring and temporal decay (Phase 8 - ENG-66 to ENG-68)
 //! - Session context tracking (Phase 8 - ENG-70, ENG-71)
 //! - Context quality and deduplication (Phase 9 - ENG-48 to ENG-66)
+//! - Semantic structured compression (RML-1208)
 
 pub mod auto_capture;
+pub mod compression_semantic;
 pub mod auto_tagging;
 pub mod compression;
 pub mod consolidation;
+pub mod consolidation_offline;
 pub mod content_utils;
 pub mod context_builder;
 pub mod context_quality;
@@ -103,3 +106,6 @@ pub use context_quality::{
     QualityIssue, QualityReport, QualitySuggestion, ResolutionType, SourceTrustScore,
     ValidationStatus,
 };
+
+// RML-1208: Semantic Structured Compression
+pub use compression_semantic::{CompressedMemory, CompressionConfig, SemanticCompressor};
