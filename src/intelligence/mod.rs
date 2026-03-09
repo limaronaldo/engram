@@ -16,8 +16,10 @@
 //! - Session context tracking (Phase 8 - ENG-70, ENG-71)
 //! - Context quality and deduplication (Phase 9 - ENG-48 to ENG-66)
 //! - Semantic structured compression (RML-1208)
+//! - Emotional analysis and reflective memory (RML-1215)
 
 pub mod auto_capture;
+pub mod emotional;
 pub mod compression_semantic;
 pub mod auto_tagging;
 pub mod compression;
@@ -37,6 +39,7 @@ pub mod quality;
 pub mod salience;
 pub mod session_context;
 pub mod session_indexing;
+pub mod memory_update;
 pub mod suggestions;
 pub mod synthesis;
 
@@ -111,3 +114,17 @@ pub use context_quality::{
 
 // RML-1208: Semantic Structured Compression
 pub use compression_semantic::{CompressedMemory, CompressionConfig, SemanticCompressor};
+
+// RML-1213: Historical Memory Update Detection
+pub use memory_update::{
+    apply_update, create_update_log, list_update_logs, ConflictType as UpdateConflictType,
+    UpdateAction, UpdateCandidate, UpdateDetector, UpdateLogEntry, UpdateResult,
+    CREATE_UPDATE_LOG_TABLE,
+};
+
+// RML-1215: Emotional & Reflective Memory
+pub use emotional::{
+    list_reflections, save_reflection, sentiment_timeline, Reflection, ReflectionDepth,
+    ReflectionEngine, Sentiment, SentimentAnalyzer, SentimentLabel, SentimentPoint,
+    CREATE_REFLECTIONS_TABLE,
+};
