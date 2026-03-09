@@ -35,6 +35,10 @@ pub mod workspace;
 pub mod emergent_graph;
 #[cfg(feature = "multimodal")]
 pub mod multimodal;
+#[cfg(feature = "agent-portability")]
+pub mod attestation;
+#[cfg(feature = "agent-portability")]
+pub mod snapshot;
 
 /// Shared state passed to every tool handler.
 ///
@@ -356,6 +360,24 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         "memory_agent_stop" => autonomous::memory_agent_stop(ctx, params),
         "memory_agent_status" => autonomous::memory_agent_status(ctx, params),
         "memory_agent_metrics" => autonomous::memory_agent_metrics(ctx, params),
+
+        // ── Attestation (agent-portability) ──────────────────────────────────
+        #[cfg(feature = "agent-portability")]
+        "attestation_log" => attestation::attestation_log(ctx, params),
+        #[cfg(feature = "agent-portability")]
+        "attestation_verify" => attestation::attestation_verify(ctx, params),
+        #[cfg(feature = "agent-portability")]
+        "attestation_chain_verify" => attestation::attestation_chain_verify(ctx, params),
+        #[cfg(feature = "agent-portability")]
+        "attestation_list" => attestation::attestation_list(ctx, params),
+
+        // ── Snapshot (agent-portability) ─────────────────────────────────────
+        #[cfg(feature = "agent-portability")]
+        "snapshot_create" => snapshot::snapshot_create(ctx, params),
+        #[cfg(feature = "agent-portability")]
+        "snapshot_load" => snapshot::snapshot_load(ctx, params),
+        #[cfg(feature = "agent-portability")]
+        "snapshot_inspect" => snapshot::snapshot_inspect(ctx, params),
 
         _ => json!({"error": format!("Unknown tool: {}", tool_name)}),
     }
