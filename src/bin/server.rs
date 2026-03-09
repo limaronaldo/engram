@@ -15,8 +15,8 @@ use engram::error::Result;
 use engram::graph::KnowledgeGraph;
 use engram::intelligence::{DocumentFormat, DocumentIngestor, IngestConfig, ProjectContextEngine};
 use engram::mcp::{
-    get_tool_definitions, methods, InitializeResult, McpHandler, McpRequest, McpResponse,
-    McpServer, ToolCallResult,
+    get_tool_definitions, list_resources, methods, read_resource, InitializeResult, McpHandler,
+    McpRequest, McpResponse, McpServer, ToolCallResult,
 };
 use engram::realtime::{RealtimeEvent, RealtimeManager, RealtimeServer};
 use engram::search::{hybrid_search, FuzzyEngine, SearchConfig};
@@ -5978,6 +5978,55 @@ impl McpHandler for EngramHandler {
                 let result = self.handle_tool_call(name, arguments);
                 let tool_result = ToolCallResult::json(&result);
                 McpResponse::success(request.id, json!(tool_result))
+            }
+            methods::LIST_RESOURCES => {
+                let templates = list_resources();
+                let resources: Vec<Value> = templates
+                    .into_iter()
+                    .map(|t| {
+                        json!({
+                            "uri": t.uri_template,
+                            "name": t.name,
+                            "description": t.description,
+                            "mimeType": t.mime_type,
+                        })
+                    })
+                    .collect();
+                McpResponse::success(request.id, json!({"resources": resources}))
+            }
+            methods::READ_RESOURCE => {
+                let uri = match request
+                    .params
+                    .get("uri")
+                    .and_then(|v| v.as_str())
+                {
+                    Some(u) => u.to_string(),
+                    None => {
+                        return McpResponse::error(
+                            request.id,
+                            -32602,
+                            "Missing required parameter: uri".to_string(),
+                        )
+                    }
+                };
+
+                match read_resource(&self.storage, &uri) {
+                    Ok(content) => {
+                        let text = serde_json::to_string_pretty(&content)
+                            .unwrap_or_else(|_| content.to_string());
+                        McpResponse::success(
+                            request.id,
+                            json!({
+                                "contents": [{
+                                    "uri": uri,
+                                    "mimeType": "application/json",
+                                    "text": text,
+                                }]
+                            }),
+                        )
+                    }
+                    Err(msg) => McpResponse::error(request.id, -32602, msg),
+                }
             }
             _ => McpResponse::error(
                 request.id,

@@ -3,9 +3,11 @@
 //! JSON-RPC over stdio for AI tool integration.
 
 pub mod protocol;
+pub mod resources;
 pub mod tools;
 
 pub use protocol::{
     methods, InitializeResult, McpHandler, McpRequest, McpResponse, McpServer, ToolCallResult,
 };
+pub use resources::{list_resources, read_resource, ResourceTemplate};
 pub use tools::{get_tool_definitions, TOOL_DEFINITIONS};
