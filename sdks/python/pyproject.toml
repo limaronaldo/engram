@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "engram-client"
-version = "0.2.0"
+version = "0.3.0"
 description = "Python client for Engram Cloud - AI memory infrastructure"
 readme = "README.md"
 license = {text = "MIT"}

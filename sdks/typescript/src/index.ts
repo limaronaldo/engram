@@ -191,6 +191,27 @@ export interface ScopeListOptions {
   recursive?: boolean;
 }
 
+// -- Scope Grants --
+
+export interface GrantAccessOptions {
+  permissions?: string;
+  grantedBy?: string;
+}
+
+export interface CheckAccessOptions {
+  permission?: string;
+}
+
+// -- Federation --
+
+export interface FederationAddPeerOptions {
+  name?: string;
+}
+
+export interface FederationSearchOptions {
+  limit?: number;
+}
+
 export class EngramError extends Error {
   constructor(message: string) {
     super(message);
@@ -775,5 +796,85 @@ export class EngramClient {
 
   async scopeIsolate(scopePath: string): Promise<unknown> {
     return this.mcpCall("memory_scope_isolate", { scope_path: scopePath });
+  }
+
+  // -- Scope Grants --
+
+  async grantAccess(
+    agentId: string,
+    scopePath: string,
+    options?: GrantAccessOptions
+  ): Promise<unknown> {
+    const params: Record<string, unknown> = {
+      agent_id: agentId,
+      scope_path: scopePath,
+      permissions: options?.permissions ?? "read",
+    };
+    if (options?.grantedBy !== undefined) params.granted_by = options.grantedBy;
+    return this.mcpCall("memory_grant_access", params);
+  }
+
+  async revokeAccess(agentId: string, scopePath: string): Promise<unknown> {
+    return this.mcpCall("memory_revoke_access", {
+      agent_id: agentId,
+      scope_path: scopePath,
+    });
+  }
+
+  async listGrants(agentId: string): Promise<unknown> {
+    return this.mcpCall("memory_list_grants", { agent_id: agentId });
+  }
+
+  async checkAccess(
+    agentId: string,
+    scopePath: string,
+    options?: CheckAccessOptions
+  ): Promise<unknown> {
+    return this.mcpCall("memory_check_access", {
+      agent_id: agentId,
+      scope_path: scopePath,
+      permission: options?.permission ?? "read",
+    });
+  }
+
+  // -- Federation --
+
+  async federationAddPeer(
+    url: string,
+    apiKey: string,
+    options?: FederationAddPeerOptions
+  ): Promise<unknown> {
+    const params: Record<string, unknown> = { url, api_key: apiKey };
+    if (options?.name !== undefined) params.name = options.name;
+    return this.mcpCall("memory_federation_add_peer", params);
+  }
+
+  async federationRemovePeer(peerId: string): Promise<unknown> {
+    return this.mcpCall("memory_federation_remove_peer", { peer_id: peerId });
+  }
+
+  async federationListPeers(): Promise<unknown> {
+    return this.mcpCall("memory_federation_list_peers", {});
+  }
+
+  async federationSearch(
+    query: string,
+    options?: FederationSearchOptions
+  ): Promise<unknown> {
+    return this.mcpCall("memory_federation_search", {
+      query,
+      limit: options?.limit ?? 10,
+    });
+  }
+
+  async federationShare(memoryId: number, peerId: string): Promise<unknown> {
+    return this.mcpCall("memory_federation_share", {
+      memory_id: memoryId,
+      peer_id: peerId,
+    });
+  }
+
+  async federationSyncStatus(): Promise<unknown> {
+    return this.mcpCall("memory_federation_sync_status", {});
   }
 }

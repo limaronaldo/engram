@@ -749,6 +749,96 @@ class EngramClient:
         """Isolate a scope so it does not inherit from any parent."""
         return self._mcp_call("memory_scope_isolate", {"scope_path": scope_path})
 
+    # -- Scope Grants --
+
+    def grant_access(
+        self,
+        agent_id: str,
+        scope_path: str,
+        *,
+        permissions: str = "read",
+        granted_by: str | None = None,
+    ) -> dict[str, Any]:
+        """Grant an agent access to a scope path."""
+        params: dict[str, Any] = {
+            "agent_id": agent_id,
+            "scope_path": scope_path,
+            "permissions": permissions,
+        }
+        if granted_by is not None:
+            params["granted_by"] = granted_by
+        return self._mcp_call("memory_grant_access", params)
+
+    def revoke_access(self, agent_id: str, scope_path: str) -> dict[str, Any]:
+        """Revoke an agent's access to a scope path."""
+        return self._mcp_call(
+            "memory_revoke_access",
+            {"agent_id": agent_id, "scope_path": scope_path},
+        )
+
+    def list_grants(self, agent_id: str) -> dict[str, Any]:
+        """List all scope grants for an agent."""
+        return self._mcp_call("memory_list_grants", {"agent_id": agent_id})
+
+    def check_access(
+        self,
+        agent_id: str,
+        scope_path: str,
+        *,
+        permission: str = "read",
+    ) -> dict[str, Any]:
+        """Check whether an agent has a specific permission on a scope path."""
+        return self._mcp_call(
+            "memory_check_access",
+            {"agent_id": agent_id, "scope_path": scope_path, "permission": permission},
+        )
+
+    # -- Federation --
+
+    def federation_add_peer(
+        self,
+        url: str,
+        api_key: str,
+        *,
+        name: str | None = None,
+    ) -> dict[str, Any]:
+        """Register a remote Engram instance as a federation peer."""
+        params: dict[str, Any] = {"url": url, "api_key": api_key}
+        if name is not None:
+            params["name"] = name
+        return self._mcp_call("memory_federation_add_peer", params)
+
+    def federation_remove_peer(self, peer_id: str) -> dict[str, Any]:
+        """Remove a federation peer by ID."""
+        return self._mcp_call("memory_federation_remove_peer", {"peer_id": peer_id})
+
+    def federation_list_peers(self) -> dict[str, Any]:
+        """List all registered federation peers."""
+        return self._mcp_call("memory_federation_list_peers", {})
+
+    def federation_search(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+    ) -> dict[str, Any]:
+        """Search memories across all federation peers."""
+        return self._mcp_call(
+            "memory_federation_search",
+            {"query": query, "limit": limit},
+        )
+
+    def federation_share(self, memory_id: int, peer_id: str) -> dict[str, Any]:
+        """Share a local memory with a specific federation peer."""
+        return self._mcp_call(
+            "memory_federation_share",
+            {"memory_id": memory_id, "peer_id": peer_id},
+        )
+
+    def federation_sync_status(self) -> dict[str, Any]:
+        """Get the synchronization status for all federation peers."""
+        return self._mcp_call("memory_federation_sync_status", {})
+
 
 class EngramError(Exception):
     """Error from the Engram API."""
