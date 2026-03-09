@@ -25,6 +25,7 @@ pub mod context_quality;
 pub mod document_ingest;
 pub mod entities;
 pub mod entity_extraction;
+pub mod fact_extraction;
 pub mod natural_language;
 pub mod project_context;
 pub mod quality;
@@ -84,6 +85,12 @@ pub use suggestions::{Suggestion, SuggestionEngine, SuggestionType};
 pub use compression::{
     check_context_budget, count_tokens, detect_encoding, parse_encoding, CompressionStrategy,
     ContextBudgetInput, ContextBudgetResult, MemoryTokenCount, TokenEncoding,
+};
+
+// RML-1232: Automatic fact extraction (SPO triples)
+pub use fact_extraction::{
+    create_fact, delete_facts_for_memory, get_fact_graph, list_facts, ConversationProcessor,
+    ExtractedFact, Fact, FactExtractor, RuleBasedExtractor, CREATE_FACTS_TABLE,
 };
 
 // Phase 9: Context Quality (ENG-48 to ENG-66)
