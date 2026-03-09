@@ -1,39 +1,48 @@
-## Task: T8 — Integration tests for MCP 2025-11-25 features
+## Task: T8 — Graph Conflict Detection & Resolution (RML-1217)
 
 ### Approach
 
-The `EngramHandler` struct in `src/bin/server.rs` is private to the binary crate and cannot be
-used from an integration test. Instead, the test file creates a local `TestHandler` struct that
-implements the public `McpHandler` trait using the same public API functions:
-
-- `engram::mcp::handlers::{HandlerContext, dispatch}` — for tool calls
-- `engram::mcp::{list_resources, read_resource, list_prompts, get_prompt, get_tool_definitions}` — for MCP methods
-- `engram::storage::Storage::open_in_memory()` — for an isolated in-memory database per test
-
-The `TestHandler::handle_request` implementation is a direct copy of the routing logic in the
-`EngramHandler` in `server.rs`, but using only the public library API. This ensures the tests
-exercise the real production code paths (resources.rs, prompts.rs, tools.rs, handlers/).
+Created a single new file `src/graph/conflicts.rs` implementing the full conflict
+detection and resolution pipeline, then registered it as a submodule in
+`src/graph/mod.rs`. Followed the exact same patterns used in the adjacent
+`temporal.rs` module (rusqlite, params!, Result alias, pub const DDL, unit tests
+with in-memory SQLite).
 
 ### Files Changed
 
-- `tests/mcp_protocol_tests.rs` — New integration test file with 10 test cases covering
-  protocol negotiation, tool annotations, resources (list + read), and prompts (list + get).
+- `src/graph/conflicts.rs` — new file with all types, detectors, resolver, helpers,
+  and 9 unit tests.
+- `src/graph/mod.rs` — added `pub mod conflicts;` declaration.
 
 ### Decisions Made
 
-- Used `HandlerContext` directly rather than re-exporting `EngramHandler` from the binary, since
-  the binary crate is not a library and cannot be imported by integration tests.
-- Kept `TestHandler` implementation close to `EngramHandler::handle_request` in server.rs for
-  easy future maintenance.
-- Used `cargo test --test mcp_protocol_tests` as the targeted run command per the task spec.
-- The `test_resources_read_stats` test checks for memory count flexibly (multiple possible field
-  names) since the Stats struct may evolve; falling back to verifying a non-empty JSON object.
-- The `test_tools_list_includes_annotations` test checks annotations structurally (any annotated
-  tools) rather than hardcoding counts, to be robust against tool list changes.
+- `ConflictType::from_str` / `Severity::from_str` / `ResolutionStrategy::from_str`
+  implemented as associated fns rather than `TryFrom<&str>` to keep the pattern
+  consistent with the rest of the codebase (no trait import needed at call sites).
+
+- `detect_temporal_inconsistencies` queries the `cross_references` table directly
+  via a self-join on `(from_id, to_id, relation_type)` — this is lighter than
+  loading all edges into memory and grouping in Rust.
+
+- Cycle detection uses iterative DFS with an explicit stack to avoid stack
+  overflow on large graphs (no recursion).
+
+- `KeepNewer` resolution sorts by `created_at` TEXT — valid because all timestamps
+  are RFC3339 UTC (lexicographic sort == chronological sort, per project invariant).
+
+- `resolve_merge` keeps the highest-strength edge and merges all other edges'
+  metadata JSON into it via `entry().or_insert()` (first-write wins for
+  conflicting keys, i.e. the keeper's values take precedence).
+
+- `EdgeRow.created_at` is annotated `#[allow(dead_code)]` because it is fetched
+  for SQL ordering purposes but not accessed in Rust code.
+
+- Pre-existing compile errors in `src/intelligence/emotional.rs` are unrelated
+  to this task and existed before this change (verified by stashing our changes
+  and observing the same errors).
 
 ### Verification
 
-- Tests pass: yes — 10/10 passing
-- Lint clean: yes — no warnings in the new file
-- Type check: yes — compiles cleanly
-- Full suite: yes — 321 existing tests + 10 new = all pass, 0 failures
+- Tests pass: yes — 9/9 (cargo test graph::conflicts::tests)
+- Lint clean: yes — cargo clippy --lib produces no warnings from our file
+- Type check: yes — compiles cleanly modulo pre-existing emotional.rs errors

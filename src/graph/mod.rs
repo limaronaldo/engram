@@ -8,6 +8,7 @@
 //! - Filtering and traversal utilities
 //! - Temporal knowledge graph with validity periods (RML-1235)
 
+pub mod conflicts;
 pub mod temporal;
 
 use chrono::{DateTime, Utc};
