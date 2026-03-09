@@ -143,6 +143,44 @@ fn test_namespace_isolation_empty() {
     assert_eq!(result["count"], 0);
 }
 
+#[test]
+fn test_namespace_with_status_filter() {
+    let ctx = test_ctx();
+    handlers::dispatch(
+        &ctx,
+        "agent_register",
+        json!({"agent_id": "active-prod", "namespaces": ["prod"]}),
+    );
+    handlers::dispatch(
+        &ctx,
+        "agent_register",
+        json!({"agent_id": "inactive-prod", "namespaces": ["prod"]}),
+    );
+    // Deregister one agent (sets status to inactive)
+    handlers::dispatch(
+        &ctx,
+        "agent_deregister",
+        json!({"agent_id": "inactive-prod"}),
+    );
+
+    // Should find only inactive agents in prod namespace
+    let result = handlers::dispatch(
+        &ctx,
+        "agent_list",
+        json!({"status": "inactive", "namespace": "prod"}),
+    );
+    assert_eq!(result["count"], 1, "should find 1 inactive agent in prod");
+    assert_eq!(result["agents"][0]["agent_id"], "inactive-prod");
+
+    // Active filter should find 1
+    let active = handlers::dispatch(
+        &ctx,
+        "agent_list",
+        json!({"status": "active", "namespace": "prod"}),
+    );
+    assert_eq!(active["count"], 1, "should find 1 active agent in prod");
+}
+
 // ---------------------------------------------------------------------------
 // Agent lifecycle (heartbeat, deregister)
 // ---------------------------------------------------------------------------

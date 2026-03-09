@@ -95,22 +95,30 @@ pub fn agent_list(ctx: &HandlerContext, params: Value) -> Value {
     let status = params.get("status").and_then(|v| v.as_str());
     let namespace = params.get("namespace").and_then(|v| v.as_str());
 
-    // If namespace is provided, use namespace-filtered query
-    if let Some(ns) = namespace {
-        use crate::storage::agent_registry::get_agents_in_namespace;
-        return ctx
-            .storage
-            .with_connection(|conn| {
-                let agents = get_agents_in_namespace(conn, ns)?;
-                Ok(json!({"agents": agents, "count": agents.len(), "namespace": ns}))
-            })
-            .unwrap_or_else(|e| json!({"error": e.to_string()}));
-    }
-
     ctx.storage
         .with_connection(|conn| {
-            let agents = list_agents(conn, status)?;
-            Ok(json!({"agents": agents, "count": agents.len()}))
+            // When namespace is provided, get agents in that namespace then
+            // apply status filter client-side (storage query only returns active).
+            if let Some(ns) = namespace {
+                use crate::storage::agent_registry::get_agents_in_namespace;
+                let mut agents = if status == Some("inactive") {
+                    // get_agents_in_namespace hard-codes active, so for inactive
+                    // we fetch all via list_agents and filter by namespace.
+                    list_agents(conn, Some("inactive"))?
+                        .into_iter()
+                        .filter(|a| a.namespaces.iter().any(|n| n == ns))
+                        .collect()
+                } else {
+                    get_agents_in_namespace(conn, ns)?
+                };
+                if let Some(s) = status {
+                    agents.retain(|a| a.status == s);
+                }
+                Ok(json!({"agents": agents, "count": agents.len(), "namespace": ns}))
+            } else {
+                let agents = list_agents(conn, status)?;
+                Ok(json!({"agents": agents, "count": agents.len()}))
+            }
         })
         .unwrap_or_else(|e| json!({"error": e.to_string()}))
 }
