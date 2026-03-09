@@ -17,12 +17,12 @@
 //! - Context quality and deduplication (Phase 9 - ENG-48 to ENG-66)
 //! - Semantic structured compression (RML-1208)
 //! - Emotional analysis and reflective memory (RML-1215)
+//! - Autonomous memory garden maintenance (RML-1222)
 
 pub mod auto_capture;
-pub mod emotional;
-pub mod compression_semantic;
 pub mod auto_tagging;
 pub mod compression;
+pub mod compression_semantic;
 pub mod consolidation;
 pub mod consolidation_offline;
 pub mod content_utils;
@@ -30,16 +30,19 @@ pub mod context_builder;
 pub mod context_compression;
 pub mod context_quality;
 pub mod document_ingest;
+pub mod emotional;
 pub mod entities;
 pub mod entity_extraction;
 pub mod fact_extraction;
+pub mod gardening;
+pub mod memory_update;
 pub mod natural_language;
+pub mod proactive;
 pub mod project_context;
 pub mod quality;
 pub mod salience;
 pub mod session_context;
 pub mod session_indexing;
-pub mod memory_update;
 pub mod suggestions;
 pub mod synthesis;
 
@@ -127,4 +130,9 @@ pub use emotional::{
     list_reflections, save_reflection, sentiment_timeline, Reflection, ReflectionDepth,
     ReflectionEngine, Sentiment, SentimentAnalyzer, SentimentLabel, SentimentPoint,
     CREATE_REFLECTIONS_TABLE,
+};
+
+// RML-1222: Autonomous Memory Garden Maintenance
+pub use gardening::{
+    GardenAction, GardenConfig, GardenReport, MemoryGardener, CREATE_GARDEN_LOG_TABLE,
 };
