@@ -7,7 +7,7 @@ fn generate_graph(node_count: usize, edge_density: f32) -> KnowledgeGraph {
     let mut rng = StdRng::seed_from_u64(42);
     let mut nodes = Vec::with_capacity(node_count);
 
-    let memory_types = vec![
+    let memory_types = [
         "note",
         "todo",
         "issue",
@@ -15,7 +15,7 @@ fn generate_graph(node_count: usize, edge_density: f32) -> KnowledgeGraph {
         "preference",
         "learning",
     ];
-    let tag_pool = vec![
+    let tag_pool = [
         "rust",
         "python",
         "ai",
@@ -45,7 +45,7 @@ fn generate_graph(node_count: usize, edge_density: f32) -> KnowledgeGraph {
     }
 
     let mut edges = Vec::new();
-    let edge_types = vec!["related_to", "depends_on", "part_of", "contradicts"];
+    let edge_types = ["related_to", "depends_on", "part_of", "contradicts"];
 
     // Ensure some structure by creating clusters
     let cluster_size = 50;

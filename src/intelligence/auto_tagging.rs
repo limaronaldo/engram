@@ -477,9 +477,11 @@ mod tests {
 
     #[test]
     fn test_pattern_matching() {
-        let mut config = AutoTagConfig::default();
-        config.max_tags = 10;
-        config.min_confidence = 0.1; // Lower threshold to test pattern matching
+        let config = AutoTagConfig {
+            max_tags: 10,
+            min_confidence: 0.1, // Lower threshold to test pattern matching
+            ..AutoTagConfig::default()
+        };
         let tagger = AutoTagger::new(config);
 
         let result = tagger.suggest_tags(
@@ -498,9 +500,11 @@ mod tests {
 
     #[test]
     fn test_tech_keyword_detection() {
-        let mut config = AutoTagConfig::default();
-        config.max_tags = 10;
-        config.min_confidence = 0.1; // Lower threshold to test keyword matching
+        let config = AutoTagConfig {
+            max_tags: 10,
+            min_confidence: 0.1, // Lower threshold to test keyword matching
+            ..AutoTagConfig::default()
+        };
         let tagger = AutoTagger::new(config);
 
         let result = tagger.suggest_tags(
@@ -518,9 +522,11 @@ mod tests {
 
     #[test]
     fn test_action_keywords() {
-        let mut config = AutoTagConfig::default();
-        config.max_tags = 10;
-        config.min_confidence = 0.1; // Lower threshold to test keyword matching
+        let config = AutoTagConfig {
+            max_tags: 10,
+            min_confidence: 0.1, // Lower threshold to test keyword matching
+            ..AutoTagConfig::default()
+        };
         let tagger = AutoTagger::new(config);
 
         let result = tagger.suggest_tags(
@@ -613,8 +619,10 @@ mod tests {
 
     #[test]
     fn test_max_tags_limit() {
-        let mut config = AutoTagConfig::default();
-        config.max_tags = 3;
+        let config = AutoTagConfig {
+            max_tags: 3,
+            ..AutoTagConfig::default()
+        };
         let tagger = AutoTagger::new(config);
 
         let result = tagger.suggest_tags(

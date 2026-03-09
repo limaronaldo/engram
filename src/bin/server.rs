@@ -287,8 +287,14 @@ impl McpHandler for EngramHandler {
                 McpResponse::success(request.id, json!(result))
             }
             methods::INITIALIZED => {
-                // Notification, no response needed
-                McpResponse::success(request.id, json!({}))
+                // Notification — MCP spec says no response should be sent.
+                // Return a response with id=None so the server loop can skip it.
+                McpResponse {
+                    jsonrpc: "2.0".to_string(),
+                    id: None,
+                    result: None,
+                    error: None,
+                }
             }
             methods::LIST_TOOLS => {
                 let tools = get_tool_definitions();
