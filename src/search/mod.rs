@@ -12,6 +12,8 @@
 
 mod aggregation;
 mod bm25;
+pub mod explain;
+pub mod feedback;
 mod fuzzy;
 mod hybrid;
 mod metadata;
@@ -25,6 +27,7 @@ pub mod neural_rerank;
 
 pub use aggregation::*;
 pub use bm25::*;
+pub use explain::*;
 pub use fuzzy::*;
 pub use hybrid::*;
 pub use metadata::*;
