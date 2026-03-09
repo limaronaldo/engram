@@ -129,7 +129,7 @@ jobs:
 
       - name: Update formula
         run: |
-          REF="${{ github.event.inputs.version || github.ref_name }}"
+          REF="${{ env.RELEASE_VERSION }}"
           VERSION="${REF#v}"
 
           # Read SHA256 hashes
