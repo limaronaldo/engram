@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 19;
+pub const SCHEMA_VERSION: i32 = 24;
 
 /// Run all migrations
 pub fn run_migrations(conn: &Connection) -> Result<()> {
@@ -98,8 +98,28 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         migrate_v18(conn)?;
     }
 
-    if current_version < SCHEMA_VERSION {
+    if current_version < 19 {
         migrate_v19(conn)?;
+    }
+
+    if current_version < 20 {
+        migrate_v20(conn)?;
+    }
+
+    if current_version < 21 {
+        migrate_v21(conn)?;
+    }
+
+    if current_version < 22 {
+        migrate_v22(conn)?;
+    }
+
+    if current_version < 23 {
+        migrate_v23(conn)?;
+    }
+
+    if current_version < SCHEMA_VERSION {
+        migrate_v24(conn)?;
     }
 
     Ok(())
@@ -1244,6 +1264,150 @@ fn migrate_v19(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Schema v20: Embedding model tracking
+///
+/// Adds `embedding_model` column to `memories` so we can track which backend
+/// generated a particular embedding and support multi-model environments.
+fn migrate_v20(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v20: Adding embedding_model column to memories...");
+
+    conn.execute_batch(
+        r#"
+        ALTER TABLE memories ADD COLUMN embedding_model TEXT DEFAULT 'tfidf';
+
+        INSERT INTO schema_version (version) VALUES (20);
+        "#,
+    )?;
+
+    tracing::info!("Migration v20 complete: embedding_model column added");
+
+    Ok(())
+}
+
+/// Schema v21: Facts table for SPO triples
+///
+/// Stores structured subject-predicate-object facts extracted from memories.
+fn migrate_v21(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v21: Adding facts table...");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS facts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            subject TEXT NOT NULL,
+            predicate TEXT NOT NULL,
+            object TEXT NOT NULL,
+            confidence REAL NOT NULL DEFAULT 0.8,
+            source_memory_id INTEGER,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_facts_subject ON facts(subject);
+        CREATE INDEX IF NOT EXISTS idx_facts_source ON facts(source_memory_id);
+
+        INSERT INTO schema_version (version) VALUES (21);
+        "#,
+    )?;
+
+    tracing::info!("Migration v21 complete: facts table added");
+
+    Ok(())
+}
+
+/// Schema v22: Memory blocks + edit log
+///
+/// Adds Letta/MemGPT-inspired self-editing memory blocks with full revision
+/// history in `block_edit_log`.
+fn migrate_v22(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v22: Adding memory_blocks and block_edit_log tables...");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS memory_blocks (
+            name TEXT PRIMARY KEY,
+            content TEXT NOT NULL DEFAULT '',
+            version INTEGER NOT NULL DEFAULT 1,
+            max_tokens INTEGER NOT NULL DEFAULT 4096,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS block_edit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            block_name TEXT NOT NULL,
+            old_content TEXT NOT NULL,
+            new_content TEXT NOT NULL,
+            edit_reason TEXT NOT NULL DEFAULT '',
+            timestamp TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            FOREIGN KEY (block_name) REFERENCES memory_blocks(name) ON DELETE CASCADE
+        );
+
+        INSERT INTO schema_version (version) VALUES (22);
+        "#,
+    )?;
+
+    tracing::info!("Migration v22 complete: memory_blocks and block_edit_log tables added");
+
+    Ok(())
+}
+
+/// Schema v23: Temporal knowledge graph edges
+///
+/// Adds `temporal_edges` with bi-temporal validity intervals for tracking how
+/// relationships change over time.
+fn migrate_v23(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v23: Adding temporal_edges table...");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS temporal_edges (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            from_id INTEGER NOT NULL,
+            to_id INTEGER NOT NULL,
+            relation TEXT NOT NULL,
+            properties TEXT NOT NULL DEFAULT '{}',
+            valid_from TEXT NOT NULL,
+            valid_to TEXT,
+            confidence REAL NOT NULL DEFAULT 1.0,
+            source TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_temporal_edges_from ON temporal_edges(from_id);
+        CREATE INDEX IF NOT EXISTS idx_temporal_edges_to ON temporal_edges(to_id);
+        CREATE INDEX IF NOT EXISTS idx_temporal_edges_valid ON temporal_edges(valid_from, valid_to);
+
+        INSERT INTO schema_version (version) VALUES (23);
+        "#,
+    )?;
+
+    tracing::info!("Migration v23 complete: temporal_edges table added");
+
+    Ok(())
+}
+
+/// Schema v24: Scope path column on memories
+///
+/// Enables hierarchical scoping (Global > Org > User > Session > Agent) for
+/// fine-grained multi-tenant memory isolation.
+fn migrate_v24(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v24: Adding scope_path column to memories...");
+
+    conn.execute_batch(
+        r#"
+        ALTER TABLE memories ADD COLUMN scope_path TEXT DEFAULT 'global';
+
+        CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope_path);
+
+        INSERT INTO schema_version (version) VALUES (24);
+        "#,
+    )?;
+
+    tracing::info!("Migration v24 complete: scope_path column added");
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1265,12 +1429,12 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query schema version");
-        assert_eq!(version, 19);
+        assert_eq!(version, 24);
     }
 
     #[test]
     fn test_schema_version_constant_is_19() {
-        assert_eq!(SCHEMA_VERSION, 19);
+        assert_eq!(SCHEMA_VERSION, 24);
     }
 
     #[test]
@@ -1422,7 +1586,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query schema version");
-        assert_eq!(version, 19, "should reach v19 after full migration");
+        assert_eq!(version, 24, "should reach v24 after full migration");
 
         // Verify both new tables exist
         let auto_links_exists: i32 = conn

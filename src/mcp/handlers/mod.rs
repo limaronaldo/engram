@@ -14,15 +14,18 @@ use crate::search::{FuzzyEngine, SearchConfig, SearchResultCache};
 use crate::storage::Storage;
 
 pub mod agent;
+pub mod context;
 pub mod graph;
 pub mod identity;
 pub mod lifecycle;
 pub mod memory_crud;
 pub mod misc;
 pub mod quality;
+pub mod retrieval;
 pub mod search;
 pub mod session;
 pub mod sync;
+pub mod temporal;
 pub mod workspace;
 
 #[cfg(feature = "emergent-graph")]
@@ -285,6 +288,36 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         "memory_process_video" => multimodal::memory_process_video(ctx, params),
         #[cfg(feature = "multimodal")]
         "memory_list_media" => multimodal::memory_list_media(ctx, params),
+
+        // ── Retrieval excellence ─────────────────────────────────────────────
+        "memory_cache_stats" => retrieval::memory_cache_stats(ctx, params),
+        "memory_cache_clear" => retrieval::memory_cache_clear(ctx, params),
+        "memory_embedding_providers" => retrieval::memory_embedding_providers(ctx, params),
+        "memory_embedding_migrate" => retrieval::memory_embedding_migrate(ctx, params),
+
+        // ── Context engineering / fact extraction ────────────────────────────
+        "memory_extract_facts" => context::memory_extract_facts(ctx, params),
+        "memory_list_facts" => context::memory_list_facts(ctx, params),
+        "memory_fact_graph" => context::memory_fact_graph(ctx, params),
+        "memory_build_context" => context::memory_build_context(ctx, params),
+        "memory_block_get" => context::memory_block_get(ctx, params),
+        "memory_block_edit" => context::memory_block_edit(ctx, params),
+        "memory_block_list" => context::memory_block_list(ctx, params),
+        "memory_block_create" => context::memory_block_create(ctx, params),
+        "memory_block_archive" => context::memory_block_archive(ctx, params),
+        "memory_block_history" => context::memory_block_history(ctx, params),
+
+        // ── Temporal graph + scoping ─────────────────────────────────────────
+        "temporal_add_edge" => temporal::temporal_add_edge(ctx, params),
+        "temporal_snapshot" => temporal::temporal_snapshot(ctx, params),
+        "temporal_timeline" => temporal::temporal_timeline(ctx, params),
+        "temporal_contradictions" => temporal::temporal_contradictions(ctx, params),
+        "temporal_diff" => temporal::temporal_diff(ctx, params),
+        "scope_set" => temporal::scope_set(ctx, params),
+        "scope_get" => temporal::scope_get(ctx, params),
+        "scope_list" => temporal::scope_list(ctx, params),
+        "scope_search" => temporal::scope_search(ctx, params),
+        "scope_tree" => temporal::scope_tree_handler(ctx, params),
 
         _ => json!({"error": format!("Unknown tool: {}", tool_name)}),
     }

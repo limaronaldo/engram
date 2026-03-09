@@ -20,6 +20,9 @@ mod rerank;
 pub mod result_cache;
 pub mod semantic_cache;
 
+#[cfg(feature = "neural-rerank")]
+pub mod neural_rerank;
+
 pub use aggregation::*;
 pub use bm25::*;
 pub use fuzzy::*;
