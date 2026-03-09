@@ -12,9 +12,10 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use engram::embedding::create_embedder;
 use engram::error::Result;
 use engram::mcp::{
-    get_tool_definitions, handlers, methods, InitializeResult, McpHandler, McpRequest, McpResponse,
-    McpServer, ToolCallResult, MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_LEGACY,
-    PromptCapabilities, ResourceCapabilities, ServerCapabilities, ToolsCapability,
+    get_prompt, get_tool_definitions, handlers, http_transport, list_prompts, methods,
+    InitializeResult, McpHandler, McpRequest, McpResponse, McpServer, ToolCallResult,
+    MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_LEGACY, PromptCapabilities, ResourceCapabilities,
+    ServerCapabilities, ToolsCapability,
 };
 use engram::realtime::{RealtimeManager, RealtimeServer};
 use engram::search::{FuzzyEngine, SearchConfig};
@@ -22,6 +23,17 @@ use engram::storage::Storage;
 #[cfg(feature = "meilisearch")]
 use engram::storage::{MeilisearchBackend, MeilisearchIndexer, SqliteBackend};
 use engram::types::*;
+
+/// Transport mode for the MCP server.
+#[derive(Debug, Clone, clap::ValueEnum)]
+enum TransportMode {
+    /// JSON-RPC over stdio (default, for MCP clients like Claude)
+    Stdio,
+    /// Streamable HTTP transport (JSON-RPC over HTTP)
+    Http,
+    /// Both stdio and HTTP transports simultaneously
+    Both,
+}
 
 #[derive(Parser, Debug)]
 #[command(name = "engram-server")]
@@ -108,6 +120,18 @@ struct Args {
     /// WebSocket server port for real-time events (0 = disabled)
     #[arg(long, env = "ENGRAM_WS_PORT", default_value = "0")]
     ws_port: u16,
+
+    /// Transport mode: stdio (default), http, or both
+    #[arg(long, env = "ENGRAM_TRANSPORT", value_enum, default_value = "stdio")]
+    transport: TransportMode,
+
+    /// HTTP transport port (used when --transport is http or both)
+    #[arg(long, env = "ENGRAM_HTTP_PORT", default_value = "3100")]
+    http_port: u16,
+
+    /// API key for HTTP transport authentication (optional)
+    #[arg(long, env = "ENGRAM_HTTP_API_KEY")]
+    http_api_key: Option<String>,
 
     /// Meilisearch URL for optional search indexing
     #[cfg(feature = "meilisearch")]
@@ -295,12 +319,26 @@ impl McpHandler for EngramHandler {
                 McpResponse::error(request.id, -32002, "Resource not found".to_string())
             }
             methods::LIST_PROMPTS => {
-                // Prompts are not yet implemented; return empty list (T5 will implement)
-                McpResponse::success(request.id, json!({"prompts": []}))
+                let prompts = list_prompts();
+                McpResponse::success(request.id, json!({"prompts": prompts}))
             }
             methods::GET_PROMPT => {
-                // Prompts are not yet implemented (T5 will implement)
-                McpResponse::error(request.id, -32002, "Prompt not found".to_string())
+                let name = request
+                    .params
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let arguments = request
+                    .params
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or(json!({}));
+                match get_prompt(name, &arguments) {
+                    Ok(messages) => {
+                        McpResponse::success(request.id, json!({"messages": messages}))
+                    }
+                    Err(e) => McpResponse::error(request.id, -32002, e),
+                }
             }
             _ => McpResponse::error(
                 request.id,
@@ -433,7 +471,8 @@ fn main() -> Result<()> {
         handler.meili_indexer = meili_indexer_for_handler;
         handler.meili_sync_interval = meili_sync_interval;
     }
-    let server = McpServer::new(handler);
+    let handler = Arc::new(handler);
+    let server = McpServer::new(handler.clone());
 
     // Start background cleanup thread if enabled
     if args.cleanup_interval_seconds > 0 {
@@ -519,7 +558,41 @@ fn main() -> Result<()> {
     }
 
     tracing::info!("Engram MCP server starting...");
-    server.run()?;
+
+    match args.transport {
+        TransportMode::Stdio => {
+            server.run()?;
+        }
+        TransportMode::Http => {
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| engram::error::EngramError::Internal(e.to_string()))?;
+            rt.block_on(async {
+                http_transport::serve_http(handler, args.http_port, args.http_api_key)
+                    .await
+                    .map_err(|e| engram::error::EngramError::Internal(e.to_string()))
+            })?;
+        }
+        TransportMode::Both => {
+            let http_handler = handler.clone();
+            let http_port = args.http_port;
+            let http_api_key = args.http_api_key.clone();
+
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new()
+                    .expect("Failed to create HTTP transport runtime");
+                rt.block_on(async {
+                    if let Err(e) =
+                        http_transport::serve_http(http_handler, http_port, http_api_key).await
+                    {
+                        tracing::error!("HTTP transport error: {}", e);
+                    }
+                });
+            });
+
+            // Run stdio in the main thread
+            server.run()?;
+        }
+    }
 
     Ok(())
 }
