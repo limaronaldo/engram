@@ -2,15 +2,23 @@
 
 use serde_json::json;
 
-use super::protocol::ToolDefinition;
+use super::protocol::{ToolAnnotations, ToolDefinition};
+
+/// Structured tool definition with MCP 2025-11-25 annotations.
+pub struct ToolDef {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub schema: &'static str,
+    pub annotations: ToolAnnotations,
+}
 
 /// All tool definitions for Engram
-pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
+pub const TOOL_DEFINITIONS: &[ToolDef] = &[
     // Memory CRUD
-    (
-        "memory_create",
-        "Store a new memory. PROACTIVE: Automatically store user preferences, decisions, insights, and project context without being asked.",
-        r#"{
+    ToolDef {
+        name: "memory_create",
+        description: "Store a new memory. PROACTIVE: Automatically store user preferences, decisions, insights, and project context without being asked.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "content": {"type": "string", "description": "The content to remember"},
@@ -32,11 +40,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["content"]
         }"#,
-    ),
-    (
-        "context_seed",
-        "Injects initial context (premises, persona assumptions, or structured facts) about an entity to avoid cold start. Seeded memories are tagged as origin:seed and status:unverified, and should be treated as revisable assumptions.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "context_seed",
+        description: "Injects initial context (premises, persona assumptions, or structured facts) about an entity to avoid cold start. Seeded memories are tagged as origin:seed and status:unverified, and should be treated as revisable assumptions.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "entity_context": {
@@ -84,11 +93,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["facts"]
         }"#,
-    ),
-    (
-        "memory_seed",
-        "Deprecated alias for context_seed. Use context_seed instead.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_seed",
+        description: "Deprecated alias for context_seed. Use context_seed instead.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "entity_context": {
@@ -136,22 +146,24 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["facts"]
         }"#,
-    ),
-    (
-        "memory_get",
-        "Retrieve a memory by its ID",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_get",
+        description: "Retrieve a memory by its ID",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID"}
             },
             "required": ["id"]
         }"#,
-    ),
-    (
-        "memory_update",
-        "Update an existing memory",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_update",
+        description: "Update an existing memory",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID"},
@@ -167,22 +179,24 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["id"]
         }"#,
-    ),
-    (
-        "memory_delete",
-        "Delete a memory (soft delete)",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_delete",
+        description: "Delete a memory (soft delete)",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID"}
             },
             "required": ["id"]
         }"#,
-    ),
-    (
-        "memory_list",
-        "List memories with filtering and pagination. Supports workspace isolation, tier filtering, and advanced filter syntax with AND/OR and comparison operators.",
-        r#"{
+        annotations: ToolAnnotations::destructive(),
+    },
+    ToolDef {
+        name: "memory_list",
+        description: "List memories with filtering and pagination. Supports workspace isolation, tier filtering, and advanced filter syntax with AND/OR and comparison operators.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "limit": {"type": "integer", "default": 20},
@@ -205,12 +219,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 }
             }
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     // Search
-    (
-        "memory_search",
-        "Search memories using hybrid search (keyword + semantic). Automatically selects optimal strategy with optional reranking. Supports workspace isolation, tier filtering, and advanced filters.",
-        r#"{
+    ToolDef {
+        name: "memory_search",
+        description: "Search memories using hybrid search (keyword + semantic). Automatically selects optimal strategy with optional reranking. Supports workspace isolation, tier filtering, and advanced filters.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search query"},
@@ -234,23 +249,25 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["query"]
         }"#,
-    ),
-    (
-        "memory_search_suggest",
-        "Get search suggestions and typo corrections",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_search_suggest",
+        description: "Get search suggestions and typo corrections",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "query": {"type": "string"}
             },
             "required": ["query"]
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     // Cross-references
-    (
-        "memory_link",
-        "Create a cross-reference between two memories",
-        r#"{
+    ToolDef {
+        name: "memory_link",
+        description: "Create a cross-reference between two memories",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "from_id": {"type": "integer"},
@@ -262,11 +279,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["from_id", "to_id"]
         }"#,
-    ),
-    (
-        "memory_unlink",
-        "Remove a cross-reference",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_unlink",
+        description: "Remove a cross-reference",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "from_id": {"type": "integer"},
@@ -275,11 +293,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["from_id", "to_id"]
         }"#,
-    ),
-    (
-        "memory_related",
-        "Get memories related to a given memory (depth>1 or include_entities returns traversal result)",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_related",
+        description: "Get memories related to a given memory (depth>1 or include_entities returns traversal result)",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Starting memory ID"},
@@ -290,12 +309,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["id"]
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     // Convenience creators
-    (
-        "memory_create_todo",
-        "Create a TODO memory with priority",
-        r#"{
+    ToolDef {
+        name: "memory_create_todo",
+        description: "Create a TODO memory with priority",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "content": {"type": "string"},
@@ -305,11 +325,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["content"]
         }"#,
-    ),
-    (
-        "memory_create_issue",
-        "Create an ISSUE memory for tracking problems",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_create_issue",
+        description: "Create an ISSUE memory for tracking problems",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "title": {"type": "string"},
@@ -319,23 +340,25 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["title"]
         }"#,
-    ),
+        annotations: ToolAnnotations::mutating(),
+    },
     // Versioning
-    (
-        "memory_versions",
-        "Get version history for a memory",
-        r#"{
+    ToolDef {
+        name: "memory_versions",
+        description: "Get version history for a memory",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer"}
             },
             "required": ["id"]
         }"#,
-    ),
-    (
-        "memory_get_version",
-        "Get a specific version of a memory",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_get_version",
+        description: "Get a specific version of a memory",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer"},
@@ -343,11 +366,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["id", "version"]
         }"#,
-    ),
-    (
-        "memory_revert",
-        "Revert a memory to a previous version",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_revert",
+        description: "Revert a memory to a previous version",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer"},
@@ -355,24 +379,26 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["id", "version"]
         }"#,
-    ),
+        annotations: ToolAnnotations::mutating(),
+    },
     // Embedding status
-    (
-        "memory_embedding_status",
-        "Check embedding computation status",
-        r#"{
+    ToolDef {
+        name: "memory_embedding_status",
+        description: "Check embedding computation status",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer"}
             },
             "required": ["id"]
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     // Memory TTL / Expiration (RML-930)
-    (
-        "memory_set_expiration",
-        "Set or update the expiration time for a memory",
-        r#"{
+    ToolDef {
+        name: "memory_set_expiration",
+        description: "Set or update the expiration time for a memory",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID"},
@@ -380,31 +406,35 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["id", "ttl_seconds"]
         }"#,
-    ),
-    (
-        "memory_cleanup_expired",
-        "Delete all expired memories. Typically called by a background job, but can be invoked manually.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_cleanup_expired",
+        description: "Delete all expired memories. Typically called by a background job, but can be invoked manually.",
+        schema: r#"{
             "type": "object",
             "properties": {}
         }"#,
-    ),
+        annotations: ToolAnnotations::destructive(),
+    },
     // Sync
-    (
-        "memory_sync_status",
-        "Get cloud sync status",
-        r#"{"type": "object", "properties": {}}"#,
-    ),
+    ToolDef {
+        name: "memory_sync_status",
+        description: "Get cloud sync status",
+        schema: r#"{"type": "object", "properties": {}}"#,
+        annotations: ToolAnnotations::read_only(),
+    },
     // Stats and aggregation
-    (
-        "memory_stats",
-        "Get storage statistics",
-        r#"{"type": "object", "properties": {}}"#,
-    ),
-    (
-        "memory_aggregate",
-        "Aggregate memories by field",
-        r#"{
+    ToolDef {
+        name: "memory_stats",
+        description: "Get storage statistics",
+        schema: r#"{"type": "object", "properties": {}}"#,
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_aggregate",
+        description: "Aggregate memories by field",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "group_by": {"type": "string", "enum": ["type", "tags", "month"]},
@@ -412,12 +442,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["group_by"]
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     // Graph
-    (
-        "memory_export_graph",
-        "Export knowledge graph visualization",
-        r#"{
+    ToolDef {
+        name: "memory_export_graph",
+        description: "Export knowledge graph visualization",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "format": {"type": "string", "enum": ["html", "json"], "default": "html"},
@@ -425,45 +456,49 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "focus_id": {"type": "integer", "description": "Center graph on this memory"}
             }
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     // Quality
-    (
-        "memory_quality_report",
-        "Get quality report for memories",
-        r#"{
+    ToolDef {
+        name: "memory_quality_report",
+        description: "Get quality report for memories",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "limit": {"type": "integer", "default": 20},
                 "min_quality": {"type": "number", "minimum": 0, "maximum": 1}
             }
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     // Clustering and duplicates
-    (
-        "memory_clusters",
-        "Find clusters of related memories",
-        r#"{
+    ToolDef {
+        name: "memory_clusters",
+        description: "Find clusters of related memories",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "min_similarity": {"type": "number", "default": 0.7},
                 "min_cluster_size": {"type": "integer", "default": 2}
             }
         }"#,
-    ),
-    (
-        "memory_find_duplicates",
-        "Find potential duplicate memories",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_find_duplicates",
+        description: "Find potential duplicate memories",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "threshold": {"type": "number", "default": 0.9}
             }
         }"#,
-    ),
-    (
-        "memory_find_semantic_duplicates",
-        "Find semantically similar memories using embedding cosine similarity (LLM-powered dedup). Goes beyond hash/n-gram to detect paraphrased content.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_find_semantic_duplicates",
+        description: "Find semantically similar memories using embedding cosine similarity (LLM-powered dedup). Goes beyond hash/n-gram to detect paraphrased content.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "threshold": {"type": "number", "default": 0.92, "description": "Cosine similarity threshold (0.92 = very similar)"},
@@ -471,11 +506,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "limit": {"type": "integer", "default": 50, "description": "Maximum duplicate pairs to return"}
             }
         }"#,
-    ),
-    (
-        "memory_merge",
-        "Merge duplicate memories",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_merge",
+        description: "Merge duplicate memories",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "ids": {"type": "array", "items": {"type": "integer"}, "minItems": 2},
@@ -483,12 +519,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["ids"]
         }"#,
-    ),
+        annotations: ToolAnnotations::mutating(),
+    },
     // Project Context Discovery
-    (
-        "memory_scan_project",
-        "Scan current directory for AI instruction files (CLAUDE.md, AGENTS.md, .cursorrules, etc.) and ingest them as memories. Creates parent memory for each file and child memories for sections.",
-        r#"{
+    ToolDef {
+        name: "memory_scan_project",
+        description: "Scan current directory for AI instruction files (CLAUDE.md, AGENTS.md, .cursorrules, etc.) and ingest them as memories. Creates parent memory for each file and child memories for sections.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "Directory to scan (defaults to current working directory)"},
@@ -496,11 +533,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "extract_sections": {"type": "boolean", "default": true, "description": "Create separate memories for each section"}
             }
         }"#,
-    ),
-    (
-        "memory_get_project_context",
-        "Get all project context memories for the current working directory. Returns instruction files and their sections.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_get_project_context",
+        description: "Get all project context memories for the current working directory. Returns instruction files and their sections.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "Project path (defaults to current working directory)"},
@@ -508,45 +546,49 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "file_types": {"type": "array", "items": {"type": "string"}, "description": "Filter by file type (claude-md, cursorrules, etc.)"}
             }
         }"#,
-    ),
-    (
-        "memory_list_instruction_files",
-        "List AI instruction files (CLAUDE.md, AGENTS.md, .cursorrules, etc.) in a directory without ingesting them. Returns file paths, types, and sizes for discovery purposes.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_list_instruction_files",
+        description: "List AI instruction files (CLAUDE.md, AGENTS.md, .cursorrules, etc.) in a directory without ingesting them. Returns file paths, types, and sizes for discovery purposes.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "Directory to scan (defaults to current working directory)"},
                 "scan_parents": {"type": "boolean", "default": false, "description": "Also scan parent directories for instruction files"}
             }
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     // Entity Extraction (RML-925)
-    (
-        "memory_extract_entities",
-        "Extract named entities (people, organizations, projects, concepts) from a memory and store them",
-        r#"{
+    ToolDef {
+        name: "memory_extract_entities",
+        description: "Extract named entities (people, organizations, projects, concepts) from a memory and store them",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID to extract entities from"}
             },
             "required": ["id"]
         }"#,
-    ),
-    (
-        "memory_get_entities",
-        "Get all entities linked to a memory",
-        r#"{
+        annotations: ToolAnnotations::idempotent(),
+    },
+    ToolDef {
+        name: "memory_get_entities",
+        description: "Get all entities linked to a memory",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID"}
             },
             "required": ["id"]
         }"#,
-    ),
-    (
-        "memory_search_entities",
-        "Search for entities by name prefix",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_search_entities",
+        description: "Search for entities by name prefix",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search query (prefix match)"},
@@ -555,20 +597,22 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["query"]
         }"#,
-    ),
-    (
-        "memory_entity_stats",
-        "Get statistics about extracted entities",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_entity_stats",
+        description: "Get statistics about extracted entities",
+        schema: r#"{
             "type": "object",
             "properties": {}
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     // Graph Traversal (RML-926)
-    (
-        "memory_traverse",
-        "Traverse the knowledge graph from a starting memory with full control over traversal options",
-        r#"{
+    ToolDef {
+        name: "memory_traverse",
+        description: "Traverse the knowledge graph from a starting memory with full control over traversal options",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Starting memory ID"},
@@ -582,11 +626,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["id"]
         }"#,
-    ),
-    (
-        "memory_find_path",
-        "Find the shortest path between two memories in the knowledge graph",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_find_path",
+        description: "Find the shortest path between two memories in the knowledge graph",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "from_id": {"type": "integer", "description": "Starting memory ID"},
@@ -595,12 +640,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["from_id", "to_id"]
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     // Document Ingestion (RML-928)
-    (
-        "memory_ingest_document",
-        "Ingest a document (PDF or Markdown) into memory. Extracts text, splits into chunks with overlap, and creates memories with deduplication.",
-        r#"{
+    ToolDef {
+        name: "memory_ingest_document",
+        description: "Ingest a document (PDF or Markdown) into memory. Extracts text, splits into chunks with overlap, and creates memories with deduplication.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "Local file path to the document"},
@@ -612,31 +658,34 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["path"]
         }"#,
-    ),
+        annotations: ToolAnnotations::mutating(),
+    },
     // Workspace Management
-    (
-        "workspace_list",
-        "List all workspaces with their statistics (memory count, tier breakdown, etc.)",
-        r#"{
+    ToolDef {
+        name: "workspace_list",
+        description: "List all workspaces with their statistics (memory count, tier breakdown, etc.)",
+        schema: r#"{
             "type": "object",
             "properties": {}
         }"#,
-    ),
-    (
-        "workspace_stats",
-        "Get detailed statistics for a specific workspace",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "workspace_stats",
+        description: "Get detailed statistics for a specific workspace",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "workspace": {"type": "string", "description": "Workspace name"}
             },
             "required": ["workspace"]
         }"#,
-    ),
-    (
-        "workspace_move",
-        "Move a memory to a different workspace",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "workspace_move",
+        description: "Move a memory to a different workspace",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID to move"},
@@ -644,11 +693,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["id", "workspace"]
         }"#,
-    ),
-    (
-        "workspace_delete",
-        "Delete a workspace. Can either move all memories to 'default' workspace or hard delete them.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "workspace_delete",
+        description: "Delete a workspace. Can either move all memories to 'default' workspace or hard delete them.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "workspace": {"type": "string", "description": "Workspace to delete"},
@@ -656,12 +706,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["workspace"]
         }"#,
-    ),
+        annotations: ToolAnnotations::destructive(),
+    },
     // Memory Tiering
-    (
-        "memory_create_daily",
-        "Create a daily (ephemeral) memory that auto-expires after the specified TTL. Useful for session context and scratch notes.",
-        r#"{
+    ToolDef {
+        name: "memory_create_daily",
+        description: "Create a daily (ephemeral) memory that auto-expires after the specified TTL. Useful for session context and scratch notes.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "content": {"type": "string", "description": "The content to remember"},
@@ -674,40 +725,44 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["content"]
         }"#,
-    ),
-    (
-        "memory_promote_to_permanent",
-        "Promote a daily memory to permanent tier. Clears the expiration and makes the memory permanent.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_promote_to_permanent",
+        description: "Promote a daily memory to permanent tier. Clears the expiration and makes the memory permanent.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID to promote"}
             },
             "required": ["id"]
         }"#,
-    ),
+        annotations: ToolAnnotations::mutating(),
+    },
     // Embedding Cache
-    (
-        "embedding_cache_stats",
-        "Get statistics about the embedding cache (hits, misses, entries, bytes used, hit rate)",
-        r#"{
+    ToolDef {
+        name: "embedding_cache_stats",
+        description: "Get statistics about the embedding cache (hits, misses, entries, bytes used, hit rate)",
+        schema: r#"{
             "type": "object",
             "properties": {}
         }"#,
-    ),
-    (
-        "embedding_cache_clear",
-        "Clear all entries from the embedding cache",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "embedding_cache_clear",
+        description: "Clear all entries from the embedding cache",
+        schema: r#"{
             "type": "object",
             "properties": {}
         }"#,
-    ),
+        annotations: ToolAnnotations::destructive(),
+    },
     // Session Transcript Indexing
-    (
-        "session_index",
-        "Index a conversation into searchable memory chunks. Uses dual-limiter chunking (messages + characters) with overlap.",
-        r#"{
+    ToolDef {
+        name: "session_index",
+        description: "Index a conversation into searchable memory chunks. Uses dual-limiter chunking (messages + characters) with overlap.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "session_id": {"type": "string", "description": "Unique session identifier"},
@@ -735,11 +790,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["session_id", "messages"]
         }"#,
-    ),
-    (
-        "session_index_delta",
-        "Incrementally index new messages to an existing session. More efficient than full reindex.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "session_index_delta",
+        description: "Incrementally index new messages to an existing session. More efficient than full reindex.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "session_id": {"type": "string", "description": "Session to update"},
@@ -760,45 +816,49 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["session_id", "messages"]
         }"#,
-    ),
-    (
-        "session_get",
-        "Get information about an indexed session",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "session_get",
+        description: "Get information about an indexed session",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "session_id": {"type": "string", "description": "Session ID to retrieve"}
             },
             "required": ["session_id"]
         }"#,
-    ),
-    (
-        "session_list",
-        "List indexed sessions with optional workspace filter",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "session_list",
+        description: "List indexed sessions with optional workspace filter",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "workspace": {"type": "string", "description": "Filter by workspace"},
                 "limit": {"type": "integer", "default": 20, "description": "Maximum sessions to return"}
             }
         }"#,
-    ),
-    (
-        "session_delete",
-        "Delete a session and all its indexed chunks",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "session_delete",
+        description: "Delete a session and all its indexed chunks",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "session_id": {"type": "string", "description": "Session to delete"}
             },
             "required": ["session_id"]
         }"#,
-    ),
+        annotations: ToolAnnotations::destructive(),
+    },
     // Identity Management
-    (
-        "identity_create",
-        "Create a new identity with canonical ID, display name, and optional aliases",
-        r#"{
+    ToolDef {
+        name: "identity_create",
+        description: "Create a new identity with canonical ID, display name, and optional aliases",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "canonical_id": {"type": "string", "description": "Unique canonical identifier (e.g., 'user:ronaldo', 'org:acme')"},
@@ -810,22 +870,24 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["canonical_id", "display_name"]
         }"#,
-    ),
-    (
-        "identity_get",
-        "Get an identity by its canonical ID",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "identity_get",
+        description: "Get an identity by its canonical ID",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "canonical_id": {"type": "string", "description": "Canonical identifier"}
             },
             "required": ["canonical_id"]
         }"#,
-    ),
-    (
-        "identity_update",
-        "Update an identity's display name, description, or type",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "identity_update",
+        description: "Update an identity's display name, description, or type",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "canonical_id": {"type": "string", "description": "Canonical identifier"},
@@ -835,22 +897,24 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["canonical_id"]
         }"#,
-    ),
-    (
-        "identity_delete",
-        "Delete an identity and all its aliases",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "identity_delete",
+        description: "Delete an identity and all its aliases",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "canonical_id": {"type": "string", "description": "Canonical identifier to delete"}
             },
             "required": ["canonical_id"]
         }"#,
-    ),
-    (
-        "identity_add_alias",
-        "Add an alias to an identity. Aliases are normalized (lowercase, trimmed). Conflicts with existing aliases are rejected.",
-        r#"{
+        annotations: ToolAnnotations::destructive(),
+    },
+    ToolDef {
+        name: "identity_add_alias",
+        description: "Add an alias to an identity. Aliases are normalized (lowercase, trimmed). Conflicts with existing aliases are rejected.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "canonical_id": {"type": "string", "description": "Canonical identifier"},
@@ -859,44 +923,48 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["canonical_id", "alias"]
         }"#,
-    ),
-    (
-        "identity_remove_alias",
-        "Remove an alias from any identity",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "identity_remove_alias",
+        description: "Remove an alias from any identity",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "alias": {"type": "string", "description": "Alias to remove"}
             },
             "required": ["alias"]
         }"#,
-    ),
-    (
-        "identity_resolve",
-        "Resolve an alias to its canonical identity. Returns the identity if found, null otherwise.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "identity_resolve",
+        description: "Resolve an alias to its canonical identity. Returns the identity if found, null otherwise.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "alias": {"type": "string", "description": "Alias to resolve"}
             },
             "required": ["alias"]
         }"#,
-    ),
-    (
-        "identity_list",
-        "List all identities with optional type filter",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "identity_list",
+        description: "List all identities with optional type filter",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "entity_type": {"type": "string", "enum": ["person", "organization", "project", "tool", "concept", "other"]},
                 "limit": {"type": "integer", "default": 50}
             }
         }"#,
-    ),
-    (
-        "identity_search",
-        "Search identities by alias or display name",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "identity_search",
+        description: "Search identities by alias or display name",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search query"},
@@ -904,11 +972,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["query"]
         }"#,
-    ),
-    (
-        "identity_link",
-        "Link an identity to a memory (mark that the identity is mentioned in the memory)",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "identity_link",
+        description: "Link an identity to a memory (mark that the identity is mentioned in the memory)",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "memory_id": {"type": "integer", "description": "Memory ID"},
@@ -917,11 +986,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["memory_id", "canonical_id"]
         }"#,
-    ),
-    (
-        "identity_unlink",
-        "Remove the link between an identity and a memory",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "identity_unlink",
+        description: "Remove the link between an identity and a memory",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "memory_id": {"type": "integer", "description": "Memory ID"},
@@ -929,23 +999,25 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["memory_id", "canonical_id"]
         }"#,
-    ),
-    (
-        "memory_get_identities",
-        "Get all identities (persons, organizations, projects, etc.) linked to a memory. Returns identity details including display name, type, aliases, and mention information.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_get_identities",
+        description: "Get all identities (persons, organizations, projects, etc.) linked to a memory. Returns identity details including display name, type, aliases, and mention information.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID"}
             },
             "required": ["id"]
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     // Content Utilities
-    (
-        "memory_soft_trim",
-        "Intelligently trim memory content while preserving context. Keeps the beginning (head) and end (tail) of content with an ellipsis in the middle. Useful for displaying long content in limited space while keeping important context from both ends.",
-        r#"{
+    ToolDef {
+        name: "memory_soft_trim",
+        description: "Intelligently trim memory content while preserving context. Keeps the beginning (head) and end (tail) of content with an ellipsis in the middle. Useful for displaying long content in limited space while keeping important context from both ends.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID to trim"},
@@ -957,11 +1029,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["id"]
         }"#,
-    ),
-    (
-        "memory_list_compact",
-        "List memories with compact preview instead of full content. More efficient for browsing/listing UIs. Returns only essential fields and a truncated content preview with metadata about original content length.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_list_compact",
+        description: "List memories with compact preview instead of full content. More efficient for browsing/listing UIs. Returns only essential fields and a truncated content preview with metadata about original content length.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "limit": {"type": "integer", "default": 20, "description": "Maximum memories to return"},
@@ -976,23 +1049,25 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "preview_chars": {"type": "integer", "default": 100, "description": "Maximum characters for content preview"}
             }
         }"#,
-    ),
-    (
-        "memory_content_stats",
-        "Get content statistics for a memory (character count, word count, line count, sentence count, paragraph count)",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_content_stats",
+        description: "Get content statistics for a memory (character count, word count, line count, sentence count, paragraph count)",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID"}
             },
             "required": ["id"]
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     // Batch Operations
-    (
-        "memory_create_batch",
-        "Create multiple memories in a single operation. More efficient than individual creates for bulk imports.",
-        r#"{
+    ToolDef {
+        name: "memory_create_batch",
+        description: "Create multiple memories in a single operation. More efficient than individual creates for bulk imports.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "memories": {
@@ -1014,11 +1089,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["memories"]
         }"#,
-    ),
-    (
-        "memory_delete_batch",
-        "Delete multiple memories in a single operation.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_delete_batch",
+        description: "Delete multiple memories in a single operation.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "ids": {
@@ -1029,48 +1105,53 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["ids"]
         }"#,
-    ),
+        annotations: ToolAnnotations::destructive(),
+    },
     // Tag Utilities
-    (
-        "memory_tags",
-        "List all tags with usage counts and most recent usage timestamps.",
-        r#"{
+    ToolDef {
+        name: "memory_tags",
+        description: "List all tags with usage counts and most recent usage timestamps.",
+        schema: r#"{
             "type": "object",
             "properties": {}
         }"#,
-    ),
-    (
-        "memory_tag_hierarchy",
-        "Get tags organized in a hierarchical tree structure. Tags with slashes are treated as paths (e.g., 'project/engram/core').",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_tag_hierarchy",
+        description: "Get tags organized in a hierarchical tree structure. Tags with slashes are treated as paths (e.g., 'project/engram/core').",
+        schema: r#"{
             "type": "object",
             "properties": {}
         }"#,
-    ),
-    (
-        "memory_validate_tags",
-        "Validate tag consistency across memories. Reports orphaned tags, unused tags, and suggested normalizations.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_validate_tags",
+        description: "Validate tag consistency across memories. Reports orphaned tags, unused tags, and suggested normalizations.",
+        schema: r#"{
             "type": "object",
             "properties": {}
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     // Import/Export
-    (
-        "memory_export",
-        "Export all memories to a JSON-serializable format for backup or migration.",
-        r#"{
+    ToolDef {
+        name: "memory_export",
+        description: "Export all memories to a JSON-serializable format for backup or migration.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "workspace": {"type": "string", "description": "Optional: export only from specific workspace"},
                 "include_embeddings": {"type": "boolean", "default": false, "description": "Include embedding vectors in export (larger file size)"}
             }
         }"#,
-    ),
-    (
-        "memory_import",
-        "Import memories from a previously exported JSON format.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_import",
+        description: "Import memories from a previously exported JSON format.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "data": {"type": "object", "description": "The exported data object"},
@@ -1078,29 +1159,32 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["data"]
         }"#,
-    ),
+        annotations: ToolAnnotations::mutating(),
+    },
     // Maintenance
-    (
-        "memory_rebuild_embeddings",
-        "Rebuild embeddings for all memories that are missing them. Useful after model changes or data recovery.",
-        r#"{
+    ToolDef {
+        name: "memory_rebuild_embeddings",
+        description: "Rebuild embeddings for all memories that are missing them. Useful after model changes or data recovery.",
+        schema: r#"{
             "type": "object",
             "properties": {}
         }"#,
-    ),
-    (
-        "memory_rebuild_crossrefs",
-        "Rebuild cross-reference links between memories. Re-analyzes all memories to find and create links.",
-        r#"{
+        annotations: ToolAnnotations::idempotent(),
+    },
+    ToolDef {
+        name: "memory_rebuild_crossrefs",
+        description: "Rebuild cross-reference links between memories. Re-analyzes all memories to find and create links.",
+        schema: r#"{
             "type": "object",
             "properties": {}
         }"#,
-    ),
+        annotations: ToolAnnotations::idempotent(),
+    },
     // Special Memory Types
-    (
-        "memory_create_section",
-        "Create a section memory for organizing content hierarchically. Sections can have parent sections for nested organization.",
-        r#"{
+    ToolDef {
+        name: "memory_create_section",
+        description: "Create a section memory for organizing content hierarchically. Sections can have parent sections for nested organization.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "title": {"type": "string", "description": "Section title"},
@@ -1111,11 +1195,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["title"]
         }"#,
-    ),
-    (
-        "memory_checkpoint",
-        "Create a checkpoint memory marking a significant point in a session. Useful for session resumption and context restoration.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_checkpoint",
+        description: "Create a checkpoint memory marking a significant point in a session. Useful for session resumption and context restoration.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "session_id": {"type": "string", "description": "Session identifier"},
@@ -1125,12 +1210,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["session_id", "summary"]
         }"#,
-    ),
+        annotations: ToolAnnotations::mutating(),
+    },
     // Phase 1: Cognitive Memory Types (ENG-33)
-    (
-        "memory_create_episodic",
-        "Create an episodic memory representing an event with temporal context. Use for tracking when things happened and their duration.",
-        r#"{
+    ToolDef {
+        name: "memory_create_episodic",
+        description: "Create an episodic memory representing an event with temporal context. Use for tracking when things happened and their duration.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "content": {"type": "string", "description": "Description of the event"},
@@ -1143,11 +1229,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["content", "event_time"]
         }"#,
-    ),
-    (
-        "memory_create_procedural",
-        "Create a procedural memory representing a learned pattern or workflow. Tracks success/failure to measure effectiveness.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_create_procedural",
+        description: "Create a procedural memory representing a learned pattern or workflow. Tracks success/failure to measure effectiveness.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "content": {"type": "string", "description": "Description of the procedure/workflow"},
@@ -1159,11 +1246,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["content", "trigger_pattern"]
         }"#,
-    ),
-    (
-        "memory_get_timeline",
-        "Query episodic memories by time range. Returns events ordered by event_time.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_get_timeline",
+        description: "Query episodic memories by time range. Returns events ordered by event_time.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "start_time": {"type": "string", "format": "date-time", "description": "Start of time range (ISO8601)"},
@@ -1173,11 +1261,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "limit": {"type": "integer", "default": 50, "description": "Maximum results to return"}
             }
         }"#,
-    ),
-    (
-        "memory_get_procedures",
-        "List procedural memories (learned patterns/workflows). Optionally filter by trigger pattern.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_get_procedures",
+        description: "List procedural memories (learned patterns/workflows). Optionally filter by trigger pattern.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "trigger_pattern": {"type": "string", "description": "Filter by trigger pattern (partial match)"},
@@ -1186,11 +1275,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "limit": {"type": "integer", "default": 50, "description": "Maximum results to return"}
             }
         }"#,
-    ),
-    (
-        "memory_record_procedure_outcome",
-        "Record a success or failure for a procedural memory. Increments the corresponding counter.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_record_procedure_outcome",
+        description: "Record a success or failure for a procedural memory. Increments the corresponding counter.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Procedural memory ID"},
@@ -1198,11 +1288,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["id", "success"]
         }"#,
-    ),
-    (
-        "memory_boost",
-        "Temporarily boost a memory's importance score. The boost can optionally decay over time.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_boost",
+        description: "Temporarily boost a memory's importance score. The boost can optionally decay over time.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID to boost"},
@@ -1211,12 +1302,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["id"]
         }"#,
-    ),
+        annotations: ToolAnnotations::mutating(),
+    },
     // Phase 2: Context Compression Engine
-    (
-        "memory_summarize",
-        "Create a summary of one or more memories. Returns a new Summary-type memory with summary_of_id set.",
-        r#"{
+    ToolDef {
+        name: "memory_summarize",
+        description: "Create a summary of one or more memories. Returns a new Summary-type memory with summary_of_id set.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "memory_ids": {
@@ -1231,22 +1323,24 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["memory_ids"]
         }"#,
-    ),
-    (
-        "memory_get_full",
-        "Get the full/original content of a memory. If the memory is a Summary, returns the original content from summary_of_id.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_get_full",
+        description: "Get the full/original content of a memory. If the memory is a Summary, returns the original content from summary_of_id.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID to get full content for"}
             },
             "required": ["id"]
         }"#,
-    ),
-    (
-        "context_budget_check",
-        "Check token usage of memories against a budget. Returns token counts and suggestions if over budget.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "context_budget_check",
+        description: "Check token usage of memories against a budget. Returns token counts and suggestions if over budget.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "memory_ids": {
@@ -1266,11 +1360,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["memory_ids", "model", "budget"]
         }"#,
-    ),
-    (
-        "memory_archive_old",
-        "Archive old, low-importance memories by creating summaries. Moves originals to archived state.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_archive_old",
+        description: "Archive old, low-importance memories by creating summaries. Moves originals to archived state.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "max_age_days": {"type": "integer", "default": 90, "description": "Archive memories older than this many days"},
@@ -1280,13 +1375,14 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "dry_run": {"type": "boolean", "default": true, "description": "If true, only report what would be archived"}
             }
         }"#,
-    ),
+        annotations: ToolAnnotations::destructive(),
+    },
     // Phase 3: Langfuse Integration (ENG-35) - feature-gated
     #[cfg(feature = "langfuse")]
-    (
-        "langfuse_connect",
-        "Configure Langfuse connection for observability integration. Stores config in metadata.",
-        r#"{
+    ToolDef {
+        name: "langfuse_connect",
+        description: "Configure Langfuse connection for observability integration. Stores config in metadata.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "public_key": {"type": "string", "description": "Langfuse public key (or use LANGFUSE_PUBLIC_KEY env var)"},
@@ -1294,12 +1390,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "base_url": {"type": "string", "default": "https://cloud.langfuse.com", "description": "Langfuse API base URL"}
             }
         }"#,
-    ),
+        annotations: ToolAnnotations::mutating(),
+    },
     #[cfg(feature = "langfuse")]
-    (
-        "langfuse_sync",
-        "Start background sync from Langfuse traces to memories. Returns task_id for status checking.",
-        r#"{
+    ToolDef {
+        name: "langfuse_sync",
+        description: "Start background sync from Langfuse traces to memories. Returns task_id for status checking.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "since": {"type": "string", "format": "date-time", "description": "Sync traces since this timestamp (default: 24h ago)"},
@@ -1308,24 +1405,26 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "dry_run": {"type": "boolean", "default": false, "description": "Preview what would be synced without creating memories"}
             }
         }"#,
-    ),
+        annotations: ToolAnnotations::mutating(),
+    },
     #[cfg(feature = "langfuse")]
-    (
-        "langfuse_sync_status",
-        "Check the status of a Langfuse sync task.",
-        r#"{
+    ToolDef {
+        name: "langfuse_sync_status",
+        description: "Check the status of a Langfuse sync task.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "task_id": {"type": "string", "description": "Task ID returned from langfuse_sync"}
             },
             "required": ["task_id"]
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     #[cfg(feature = "langfuse")]
-    (
-        "langfuse_extract_patterns",
-        "Extract patterns from Langfuse traces without saving. Preview mode for pattern discovery.",
-        r#"{
+    ToolDef {
+        name: "langfuse_extract_patterns",
+        description: "Extract patterns from Langfuse traces without saving. Preview mode for pattern discovery.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "since": {"type": "string", "format": "date-time", "description": "Analyze traces since this timestamp"},
@@ -1333,12 +1432,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "min_confidence": {"type": "number", "default": 0.7, "description": "Minimum confidence for patterns"}
             }
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     #[cfg(feature = "langfuse")]
-    (
-        "memory_from_trace",
-        "Create a memory from a specific Langfuse trace ID.",
-        r#"{
+    ToolDef {
+        name: "memory_from_trace",
+        description: "Create a memory from a specific Langfuse trace ID.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "trace_id": {"type": "string", "description": "Langfuse trace ID"},
@@ -1348,12 +1448,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["trace_id"]
         }"#,
-    ),
+        annotations: ToolAnnotations::mutating(),
+    },
     // Phase 4: Search Result Caching (ENG-36)
-    (
-        "search_cache_feedback",
-        "Report feedback on search results quality. Helps tune the adaptive cache threshold.",
-        r#"{
+    ToolDef {
+        name: "search_cache_feedback",
+        description: "Report feedback on search results quality. Helps tune the adaptive cache threshold.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "The search query"},
@@ -1362,40 +1463,44 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["query", "positive"]
         }"#,
-    ),
-    (
-        "search_cache_stats",
-        "Get search result cache statistics including hit rate, entry count, and current threshold.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "search_cache_stats",
+        description: "Get search result cache statistics including hit rate, entry count, and current threshold.",
+        schema: r#"{
             "type": "object",
             "properties": {}
         }"#,
-    ),
-    (
-        "search_cache_clear",
-        "Clear the search result cache. Useful after bulk operations.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "search_cache_clear",
+        description: "Clear the search result cache. Useful after bulk operations.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "workspace": {"type": "string", "description": "Only clear cache for this workspace (optional)"}
             }
         }"#,
-    ),
+        annotations: ToolAnnotations::destructive(),
+    },
     // Phase 5: Memory Lifecycle Management (ENG-37)
-    (
-        "lifecycle_status",
-        "Get lifecycle statistics (active/stale/archived counts by workspace).",
-        r#"{
+    ToolDef {
+        name: "lifecycle_status",
+        description: "Get lifecycle statistics (active/stale/archived counts by workspace).",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "workspace": {"type": "string", "description": "Filter by workspace (optional)"}
             }
         }"#,
-    ),
-    (
-        "lifecycle_run",
-        "Manually trigger a lifecycle cycle (mark stale, archive old). Dry run by default.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "lifecycle_run",
+        description: "Manually trigger a lifecycle cycle (mark stale, archive old). Dry run by default.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "dry_run": {"type": "boolean", "default": true, "description": "Preview changes without applying"},
@@ -1405,11 +1510,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "min_importance": {"type": "number", "default": 0.5, "description": "Only process memories below this importance"}
             }
         }"#,
-    ),
-    (
-        "memory_set_lifecycle",
-        "Manually set the lifecycle state of a memory.",
-        r#"{
+        annotations: ToolAnnotations::idempotent(),
+    },
+    ToolDef {
+        name: "memory_set_lifecycle",
+        description: "Manually set the lifecycle state of a memory.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID"},
@@ -1417,11 +1523,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["id", "state"]
         }"#,
-    ),
-    (
-        "lifecycle_config",
-        "Get or set lifecycle configuration (intervals, thresholds).",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "lifecycle_config",
+        description: "Get or set lifecycle configuration (intervals, thresholds).",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "stale_days": {"type": "integer", "description": "Days before marking as stale"},
@@ -1430,12 +1537,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "min_access_count": {"type": "integer", "description": "Access count threshold"}
             }
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     // Retention Policies
-    (
-        "retention_policy_set",
-        "Set a retention policy for a workspace. Controls auto-compression, max memory count, and auto-deletion.",
-        r#"{
+    ToolDef {
+        name: "retention_policy_set",
+        description: "Set a retention policy for a workspace. Controls auto-compression, max memory count, and auto-deletion.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "workspace": {"type": "string", "description": "Workspace name"},
@@ -1449,52 +1557,57 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["workspace"]
         }"#,
-    ),
-    (
-        "retention_policy_get",
-        "Get the retention policy for a workspace.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "retention_policy_get",
+        description: "Get the retention policy for a workspace.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "workspace": {"type": "string", "description": "Workspace name"}
             },
             "required": ["workspace"]
         }"#,
-    ),
-    (
-        "retention_policy_list",
-        "List all retention policies across all workspaces.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "retention_policy_list",
+        description: "List all retention policies across all workspaces.",
+        schema: r#"{
             "type": "object",
             "properties": {}
         }"#,
-    ),
-    (
-        "retention_policy_delete",
-        "Delete a retention policy for a workspace.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "retention_policy_delete",
+        description: "Delete a retention policy for a workspace.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "workspace": {"type": "string", "description": "Workspace name"}
             },
             "required": ["workspace"]
         }"#,
-    ),
-    (
-        "retention_policy_apply",
-        "Apply all retention policies now. Compresses, caps, and deletes per workspace rules.",
-        r#"{
+        annotations: ToolAnnotations::destructive(),
+    },
+    ToolDef {
+        name: "retention_policy_apply",
+        description: "Apply all retention policies now. Compresses, caps, and deletes per workspace rules.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "dry_run": {"type": "boolean", "default": false, "description": "Preview what would happen without making changes"}
             }
         }"#,
-    ),
+        annotations: ToolAnnotations::idempotent(),
+    },
     // Event System
-    (
-        "memory_events_poll",
-        "Poll for memory events (create, update, delete, etc.) since a given point. Useful for syncing and monitoring.",
-        r#"{
+    ToolDef {
+        name: "memory_events_poll",
+        description: "Poll for memory events (create, update, delete, etc.) since a given point. Useful for syncing and monitoring.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "since_id": {"type": "integer", "description": "Return events after this event ID"},
@@ -1503,11 +1616,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "limit": {"type": "integer", "default": 100, "description": "Maximum events to return"}
             }
         }"#,
-    ),
-    (
-        "memory_events_clear",
-        "Clear old events from the event log. Helps manage storage for long-running systems.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_events_clear",
+        description: "Clear old events from the event log. Helps manage storage for long-running systems.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "before_id": {"type": "integer", "description": "Delete events before this ID"},
@@ -1515,31 +1629,34 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "keep_recent": {"type": "integer", "description": "Keep only the N most recent events"}
             }
         }"#,
-    ),
+        annotations: ToolAnnotations::destructive(),
+    },
     // Advanced Sync
-    (
-        "sync_version",
-        "Get the current sync version and metadata. Used to check if local data is up-to-date.",
-        r#"{
+    ToolDef {
+        name: "sync_version",
+        description: "Get the current sync version and metadata. Used to check if local data is up-to-date.",
+        schema: r#"{
             "type": "object",
             "properties": {}
         }"#,
-    ),
-    (
-        "sync_delta",
-        "Get changes (delta) since a specific version. Returns created, updated, and deleted memories.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "sync_delta",
+        description: "Get changes (delta) since a specific version. Returns created, updated, and deleted memories.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "since_version": {"type": "integer", "description": "Version to get changes from"}
             },
             "required": ["since_version"]
         }"#,
-    ),
-    (
-        "sync_state",
-        "Get or update sync state for a specific agent. Tracks what each agent has synced.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "sync_state",
+        description: "Get or update sync state for a specific agent. Tracks what each agent has synced.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "agent_id": {"type": "string", "description": "Agent identifier"},
@@ -1547,22 +1664,24 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["agent_id"]
         }"#,
-    ),
-    (
-        "sync_cleanup",
-        "Clean up old sync data (events, etc.) older than specified days.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "sync_cleanup",
+        description: "Clean up old sync data (events, etc.) older than specified days.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "older_than_days": {"type": "integer", "default": 30, "description": "Delete sync data older than this many days"}
             }
         }"#,
-    ),
+        annotations: ToolAnnotations::destructive(),
+    },
     // Multi-Agent Sharing
-    (
-        "memory_share",
-        "Share a memory with another agent. The target agent can poll for shared memories.",
-        r#"{
+    ToolDef {
+        name: "memory_share",
+        description: "Share a memory with another agent. The target agent can poll for shared memories.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "memory_id": {"type": "integer", "description": "ID of memory to share"},
@@ -1572,11 +1691,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["memory_id", "from_agent", "to_agent"]
         }"#,
-    ),
-    (
-        "memory_shared_poll",
-        "Poll for memories shared with this agent.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_shared_poll",
+        description: "Poll for memories shared with this agent.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "agent_id": {"type": "string", "description": "Agent identifier to check shares for"},
@@ -1584,11 +1704,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["agent_id"]
         }"#,
-    ),
-    (
-        "memory_share_ack",
-        "Acknowledge receipt of a shared memory.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_share_ack",
+        description: "Acknowledge receipt of a shared memory.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "share_id": {"type": "integer", "description": "Share ID to acknowledge"},
@@ -1596,12 +1717,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["share_id", "agent_id"]
         }"#,
-    ),
+        annotations: ToolAnnotations::mutating(),
+    },
     // Search Variants
-    (
-        "memory_search_by_identity",
-        "Search memories by identity (person, entity, or alias). Finds all mentions of a specific identity across memories.",
-        r#"{
+    ToolDef {
+        name: "memory_search_by_identity",
+        description: "Search memories by identity (person, entity, or alias). Finds all mentions of a specific identity across memories.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "identity": {"type": "string", "description": "Identity name or alias to search for"},
@@ -1610,11 +1732,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["identity"]
         }"#,
-    ),
-    (
-        "memory_session_search",
-        "Search within session transcript chunks. Useful for finding content from past conversations.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_session_search",
+        description: "Search within session transcript chunks. Useful for finding content from past conversations.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search query"},
@@ -1624,12 +1747,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["query"]
         }"#,
-    ),
+        annotations: ToolAnnotations::mutating(),
+    },
     // Image Handling
-    (
-        "memory_upload_image",
-        "Upload an image file and attach it to a memory. The image will be stored locally and linked to the memory's metadata.",
-        r#"{
+    ToolDef {
+        name: "memory_upload_image",
+        description: "Upload an image file and attach it to a memory. The image will be stored locally and linked to the memory's metadata.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "memory_id": {"type": "integer", "description": "ID of the memory to attach the image to"},
@@ -1639,22 +1763,24 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["memory_id", "file_path"]
         }"#,
-    ),
-    (
-        "memory_migrate_images",
-        "Migrate existing base64-encoded images in memories to file storage. Scans all memories and uploads any embedded data URIs to storage, replacing them with file references.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_migrate_images",
+        description: "Migrate existing base64-encoded images in memories to file storage. Scans all memories and uploads any embedded data URIs to storage, replacing them with file references.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "dry_run": {"type": "boolean", "default": false, "description": "If true, only report what would be migrated without making changes"}
             }
         }"#,
-    ),
+        annotations: ToolAnnotations::idempotent(),
+    },
     // Auto-Tagging
-    (
-        "memory_suggest_tags",
-        "Suggest tags for a memory based on AI content analysis. Uses pattern matching, keyword extraction, and structure detection to suggest relevant tags with confidence scores.",
-        r#"{
+    ToolDef {
+        name: "memory_suggest_tags",
+        description: "Suggest tags for a memory based on AI content analysis. Uses pattern matching, keyword extraction, and structure detection to suggest relevant tags with confidence scores.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID to analyze (alternative to content)"},
@@ -1671,11 +1797,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "keyword_mappings": {"type": "object", "description": "Custom keyword-to-tag mappings (e.g., {\"ibvi\": \"project/ibvi\"})"}
             }
         }"#,
-    ),
-    (
-        "memory_auto_tag",
-        "Automatically suggest and optionally apply tags to a memory. Analyzes content using AI heuristics and can merge suggested tags with existing ones.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_auto_tag",
+        description: "Automatically suggest and optionally apply tags to a memory. Analyzes content using AI heuristics and can merge suggested tags with existing ones.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID to auto-tag"},
@@ -1688,12 +1815,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["id"]
         }"#,
-    ),
+        annotations: ToolAnnotations::mutating(),
+    },
     // Phase 8: Salience & Sessions (ENG-66 to ENG-77)
-    (
-        "salience_get",
-        "Get the salience score for a memory. Returns recency, frequency, importance, and feedback components with the combined score and lifecycle state.",
-        r#"{
+    ToolDef {
+        name: "salience_get",
+        description: "Get the salience score for a memory. Returns recency, frequency, importance, and feedback components with the combined score and lifecycle state.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID to get salience for"},
@@ -1701,11 +1829,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["id"]
         }"#,
-    ),
-    (
-        "salience_set_importance",
-        "Set the importance score for a memory. This is the static importance component of salience.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "salience_set_importance",
+        description: "Set the importance score for a memory. This is the static importance component of salience.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID"},
@@ -1713,11 +1842,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["id", "importance"]
         }"#,
-    ),
-    (
-        "salience_boost",
-        "Boost a memory's salience score temporarily or permanently. Useful for marking memories as contextually relevant.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "salience_boost",
+        description: "Boost a memory's salience score temporarily or permanently. Useful for marking memories as contextually relevant.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID to boost"},
@@ -1726,11 +1856,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["id"]
         }"#,
-    ),
-    (
-        "salience_demote",
-        "Demote a memory's salience score. Useful for marking memories as less relevant.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "salience_demote",
+        description: "Demote a memory's salience score. Useful for marking memories as less relevant.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID to demote"},
@@ -1739,11 +1870,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["id"]
         }"#,
-    ),
-    (
-        "salience_decay_run",
-        "Run temporal decay on all memories. Updates lifecycle states (Active → Stale → Archived) based on salience scores.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "salience_decay_run",
+        description: "Run temporal decay on all memories. Updates lifecycle states (Active → Stale → Archived) based on salience scores.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "dry_run": {"type": "boolean", "default": false, "description": "If true, compute changes without persisting updates"},
@@ -1753,21 +1885,23 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "archive_threshold_days": {"type": "integer", "minimum": 1, "description": "Days of inactivity before suggesting archive"}
             }
         }"#,
-    ),
-    (
-        "salience_stats",
-        "Get salience statistics across all memories. Returns distribution, percentiles, and state counts.",
-        r#"{
+        annotations: ToolAnnotations::destructive(),
+    },
+    ToolDef {
+        name: "salience_stats",
+        description: "Get salience statistics across all memories. Returns distribution, percentiles, and state counts.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "workspace": {"type": "string", "description": "Limit to specific workspace"}
             }
         }"#,
-    ),
-    (
-        "salience_history",
-        "Get salience score history for a memory. Shows how salience has changed over time.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "salience_history",
+        description: "Get salience score history for a memory. Shows how salience has changed over time.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID"},
@@ -1775,11 +1909,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["id"]
         }"#,
-    ),
-    (
-        "salience_top",
-        "Get top memories by salience score. Useful for context injection.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "salience_top",
+        description: "Get top memories by salience score. Useful for context injection.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "limit": {"type": "integer", "default": 20, "description": "Maximum memories to return"},
@@ -1788,12 +1923,13 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "memory_type": {"type": "string", "description": "Filter by memory type"}
             }
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     // Session Context Tools (ENG-70, ENG-71)
-    (
-        "session_context_create",
-        "Create a new session context for tracking related memories during a conversation or task.",
-        r#"{
+    ToolDef {
+        name: "session_context_create",
+        description: "Create a new session context for tracking related memories during a conversation or task.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "name": {"type": "string", "description": "Session name"},
@@ -1803,11 +1939,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["name"]
         }"#,
-    ),
-    (
-        "session_context_add_memory",
-        "Add a memory to a session context with relevance score and role.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "session_context_add_memory",
+        description: "Add a memory to a session context with relevance score and role.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "session_id": {"type": "string", "description": "Session ID"},
@@ -1817,11 +1954,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["session_id", "memory_id"]
         }"#,
-    ),
-    (
-        "session_context_remove_memory",
-        "Remove a memory from a session context.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "session_context_remove_memory",
+        description: "Remove a memory from a session context.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "session_id": {"type": "string", "description": "Session ID"},
@@ -1829,22 +1967,24 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["session_id", "memory_id"]
         }"#,
-    ),
-    (
-        "session_context_get",
-        "Get a session context with its linked memories.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "session_context_get",
+        description: "Get a session context with its linked memories.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "session_id": {"type": "string", "description": "Session ID"}
             },
             "required": ["session_id"]
         }"#,
-    ),
-    (
-        "session_context_list",
-        "List all session contexts with optional filtering.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "session_context_list",
+        description: "List all session contexts with optional filtering.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "workspace": {"type": "string", "description": "Filter by workspace"},
@@ -1853,11 +1993,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
                 "offset": {"type": "integer", "default": 0, "description": "Offset for pagination"}
             }
         }"#,
-    ),
-    (
-        "session_context_search",
-        "Search memories within a specific session context.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "session_context_search",
+        description: "Search memories within a specific session context.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "session_id": {"type": "string", "description": "Session ID to search within"},
@@ -1866,11 +2007,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["session_id", "query"]
         }"#,
-    ),
-    (
-        "session_context_update_summary",
-        "Update the summary of a session context.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "session_context_update_summary",
+        description: "Update the summary of a session context.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "session_id": {"type": "string", "description": "Session ID"},
@@ -1878,11 +2020,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["session_id", "summary"]
         }"#,
-    ),
-    (
-        "session_context_end",
-        "End a session context, marking it as inactive.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "session_context_end",
+        description: "End a session context, marking it as inactive.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "session_id": {"type": "string", "description": "Session ID to end"},
@@ -1890,11 +2033,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["session_id"]
         }"#,
-    ),
-    (
-        "session_context_export",
-        "Export a session context with all its memories for archival or sharing.",
-        r#"{
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "session_context_export",
+        description: "Export a session context with all its memories for archival or sharing.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "session_id": {"type": "string", "description": "Session ID to export"},
@@ -1903,75 +2047,82 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["session_id"]
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     // Phase 9: Context Quality (ENG-48 to ENG-66)
-    (
-        "quality_score",
-        "Get the quality score for a memory with detailed breakdown of clarity, completeness, freshness, consistency, and source trust components.",
-        r#"{
+    ToolDef {
+        name: "quality_score",
+        description: "Get the quality score for a memory with detailed breakdown of clarity, completeness, freshness, consistency, and source trust components.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID to score"}
             },
             "required": ["id"]
         }"#,
-    ),
-    (
-        "quality_report",
-        "Generate a comprehensive quality report for a workspace. Includes quality distribution, top issues, conflict and duplicate counts.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "quality_report",
+        description: "Generate a comprehensive quality report for a workspace. Includes quality distribution, top issues, conflict and duplicate counts.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "workspace": {"type": "string", "description": "Workspace to analyze (default: 'default')"}
             }
         }"#,
-    ),
-    (
-        "quality_find_duplicates",
-        "Find near-duplicate memories using text similarity. Returns pairs of similar memories above the threshold.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "quality_find_duplicates",
+        description: "Find near-duplicate memories using text similarity. Returns pairs of similar memories above the threshold.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "threshold": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.85, "description": "Similarity threshold (0-1)"},
                 "limit": {"type": "integer", "default": 100, "description": "Maximum memories to compare"}
             }
         }"#,
-    ),
-    (
-        "quality_get_duplicates",
-        "Get pending duplicate candidates that need review.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "quality_get_duplicates",
+        description: "Get pending duplicate candidates that need review.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "limit": {"type": "integer", "default": 50, "description": "Maximum duplicates to return"}
             }
         }"#,
-    ),
-    (
-        "quality_find_conflicts",
-        "Detect conflicts for a memory against existing memories. Finds contradictions, staleness, and semantic overlaps.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "quality_find_conflicts",
+        description: "Detect conflicts for a memory against existing memories. Finds contradictions, staleness, and semantic overlaps.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID to check for conflicts"}
             },
             "required": ["id"]
         }"#,
-    ),
-    (
-        "quality_get_conflicts",
-        "Get unresolved conflicts that need attention.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "quality_get_conflicts",
+        description: "Get unresolved conflicts that need attention.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "limit": {"type": "integer", "default": 50, "description": "Maximum conflicts to return"}
             }
         }"#,
-    ),
-    (
-        "quality_resolve_conflict",
-        "Resolve a conflict between memories. Options: keep_a, keep_b, merge, keep_both, delete_both, false_positive.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "quality_resolve_conflict",
+        description: "Resolve a conflict between memories. Options: keep_a, keep_b, merge, keep_both, delete_both, false_positive.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "conflict_id": {"type": "integer", "description": "Conflict ID to resolve"},
@@ -1980,11 +2131,12 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["conflict_id", "resolution"]
         }"#,
-    ),
-    (
-        "quality_source_trust",
-        "Get or update trust score for a source type. Higher trust means memories from this source are weighted more in quality calculations.",
-        r#"{
+        annotations: ToolAnnotations::destructive(),
+    },
+    ToolDef {
+        name: "quality_source_trust",
+        description: "Get or update trust score for a source type. Higher trust means memories from this source are weighted more in quality calculations.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "source_type": {"type": "string", "description": "Source type (user, seed, extraction, inference, external)"},
@@ -1994,24 +2146,26 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["source_type"]
         }"#,
-    ),
-    (
-        "quality_improve",
-        "Get suggestions for improving a memory's quality. Returns actionable recommendations.",
-        r#"{
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "quality_improve",
+        description: "Get suggestions for improving a memory's quality. Returns actionable recommendations.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID to analyze"}
             },
             "required": ["id"]
         }"#,
-    ),
+        annotations: ToolAnnotations::mutating(),
+    },
     // Phase 7: Meilisearch Integration (ENG-58) - feature-gated
     #[cfg(feature = "meilisearch")]
-    (
-        "meilisearch_search",
-        "Search memories using Meilisearch (typo-tolerant, fast full-text). Requires Meilisearch to be configured. Falls back to hybrid search if unavailable.",
-        r#"{
+    ToolDef {
+        name: "meilisearch_search",
+        description: "Search memories using Meilisearch (typo-tolerant, fast full-text). Requires Meilisearch to be configured. Falls back to hybrid search if unavailable.",
+        schema: r#"{
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Search query text"},
@@ -2023,44 +2177,152 @@ pub const TOOL_DEFINITIONS: &[(&str, &str, &str)] = &[
             },
             "required": ["query"]
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     #[cfg(feature = "meilisearch")]
-    (
-        "meilisearch_reindex",
-        "Trigger a full re-sync from SQLite to Meilisearch. Use after bulk imports or if the index is out of sync.",
-        r#"{
+    ToolDef {
+        name: "meilisearch_reindex",
+        description: "Trigger a full re-sync from SQLite to Meilisearch. Use after bulk imports or if the index is out of sync.",
+        schema: r#"{
             "type": "object",
             "properties": {}
         }"#,
-    ),
+        annotations: ToolAnnotations::idempotent(),
+    },
     #[cfg(feature = "meilisearch")]
-    (
-        "meilisearch_status",
-        "Get Meilisearch index status including document count, indexing state, and health.",
-        r#"{
+    ToolDef {
+        name: "meilisearch_status",
+        description: "Get Meilisearch index status including document count, indexing state, and health.",
+        schema: r#"{
             "type": "object",
             "properties": {}
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
     #[cfg(feature = "meilisearch")]
-    (
-        "meilisearch_config",
-        "Show current Meilisearch configuration (URL, sync interval, enabled status).",
-        r#"{
+    ToolDef {
+        name: "meilisearch_config",
+        description: "Show current Meilisearch configuration (URL, sync interval, enabled status).",
+        schema: r#"{
             "type": "object",
             "properties": {}
         }"#,
-    ),
+        annotations: ToolAnnotations::read_only(),
+    },
 ];
 
 /// Get all tool definitions as ToolDefinition structs
 pub fn get_tool_definitions() -> Vec<ToolDefinition> {
     TOOL_DEFINITIONS
         .iter()
-        .map(|(name, description, schema)| ToolDefinition {
-            name: name.to_string(),
-            description: description.to_string(),
-            input_schema: serde_json::from_str(schema).unwrap_or(json!({})),
+        .map(|def| ToolDefinition {
+            name: def.name.to_string(),
+            description: def.description.to_string(),
+            input_schema: serde_json::from_str(def.schema).unwrap_or(json!({})),
+            annotations: Some(def.annotations.clone()),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tool_definitions_all_parseable() {
+        let tools = get_tool_definitions();
+        assert!(!tools.is_empty(), "TOOL_DEFINITIONS must not be empty");
+        for tool in &tools {
+            assert!(!tool.name.is_empty(), "tool name must not be empty");
+            assert!(!tool.description.is_empty(), "tool description must not be empty");
+            assert!(
+                tool.input_schema.is_object(),
+                "tool '{}' schema must be a JSON object",
+                tool.name
+            );
+        }
+    }
+
+    #[test]
+    fn test_read_only_tools_have_annotation() {
+        let tools = get_tool_definitions();
+        let read_only_names = ["memory_get", "memory_list", "memory_search", "memory_stats"];
+        for name in read_only_names {
+            let tool = tools.iter().find(|t| t.name == name).unwrap_or_else(|| {
+                panic!("tool '{}' not found", name)
+            });
+            let ann = tool.annotations.as_ref().expect("annotations must be present");
+            assert_eq!(
+                ann.read_only_hint,
+                Some(true),
+                "tool '{}' should have readOnlyHint=true",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_destructive_tools_have_annotation() {
+        let tools = get_tool_definitions();
+        let destructive_names = ["memory_delete", "memory_cleanup_expired", "embedding_cache_clear"];
+        for name in destructive_names {
+            let tool = tools.iter().find(|t| t.name == name).unwrap_or_else(|| {
+                panic!("tool '{}' not found", name)
+            });
+            let ann = tool.annotations.as_ref().expect("annotations must be present");
+            assert_eq!(
+                ann.destructive_hint,
+                Some(true),
+                "tool '{}' should have destructiveHint=true",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_idempotent_tools_have_annotation() {
+        let tools = get_tool_definitions();
+        let idempotent_names = [
+            "memory_extract_entities",
+            "memory_rebuild_embeddings",
+            "memory_rebuild_crossrefs",
+            "lifecycle_run",
+            "retention_policy_apply",
+        ];
+        for name in idempotent_names {
+            let tool = tools.iter().find(|t| t.name == name).unwrap_or_else(|| {
+                panic!("tool '{}' not found", name)
+            });
+            let ann = tool.annotations.as_ref().expect("annotations must be present");
+            assert_eq!(
+                ann.idempotent_hint,
+                Some(true),
+                "tool '{}' should have idempotentHint=true",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_annotations_serialize_with_camel_case_keys() {
+        let tools = get_tool_definitions();
+        let memory_get = tools.iter().find(|t| t.name == "memory_get").unwrap();
+        let json = serde_json::to_string(memory_get).expect("serialization must succeed");
+        assert!(json.contains("readOnlyHint"), "should serialize as readOnlyHint");
+        assert!(!json.contains("read_only_hint"), "must not use snake_case key");
+    }
+
+    #[test]
+    fn test_mutating_tool_has_no_hints() {
+        let tools = get_tool_definitions();
+        let memory_create = tools.iter().find(|t| t.name == "memory_create").unwrap();
+        let ann = memory_create.annotations.as_ref().expect("annotations must be present");
+        assert!(ann.read_only_hint.is_none());
+        assert!(ann.destructive_hint.is_none());
+        assert!(ann.idempotent_hint.is_none());
+        // Serialized form should omit None fields
+        let json = serde_json::to_string(ann).expect("serialization must succeed");
+        // mutating annotations serialize as empty object since all fields are None
+        assert_eq!(json, "{}");
+    }
 }

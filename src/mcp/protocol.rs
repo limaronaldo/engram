@@ -143,6 +143,72 @@ pub mod methods {
     pub const READ_RESOURCE: &str = "resources/read";
 }
 
+/// MCP tool annotations per MCP 2025-11-25 spec.
+///
+/// Hints about tool behavior — not security guarantees.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ToolAnnotations {
+    /// If true, the tool does not modify any state.
+    #[serde(rename = "readOnlyHint", skip_serializing_if = "Option::is_none")]
+    pub read_only_hint: Option<bool>,
+
+    /// If true, the tool may perform destructive / irreversible operations.
+    #[serde(rename = "destructiveHint", skip_serializing_if = "Option::is_none")]
+    pub destructive_hint: Option<bool>,
+
+    /// If true, calling the tool multiple times with the same arguments produces
+    /// the same result as calling it once.
+    #[serde(rename = "idempotentHint", skip_serializing_if = "Option::is_none")]
+    pub idempotent_hint: Option<bool>,
+
+    /// If true, the tool may interact with an unbounded set of external entities
+    /// (e.g., the filesystem, network).
+    #[serde(rename = "openWorldHint", skip_serializing_if = "Option::is_none")]
+    pub open_world_hint: Option<bool>,
+}
+
+impl ToolAnnotations {
+    /// Read-only tool — does not modify state.
+    pub const fn read_only() -> Self {
+        Self {
+            read_only_hint: Some(true),
+            destructive_hint: None,
+            idempotent_hint: None,
+            open_world_hint: None,
+        }
+    }
+
+    /// Destructive tool — may perform irreversible operations.
+    pub const fn destructive() -> Self {
+        Self {
+            read_only_hint: None,
+            destructive_hint: Some(true),
+            idempotent_hint: None,
+            open_world_hint: None,
+        }
+    }
+
+    /// Idempotent tool — safe to call multiple times with the same args.
+    pub const fn idempotent() -> Self {
+        Self {
+            read_only_hint: None,
+            destructive_hint: None,
+            idempotent_hint: Some(true),
+            open_world_hint: None,
+        }
+    }
+
+    /// Plain mutating tool — creates or updates state but not destructive.
+    pub const fn mutating() -> Self {
+        Self {
+            read_only_hint: None,
+            destructive_hint: None,
+            idempotent_hint: None,
+            open_world_hint: None,
+        }
+    }
+}
+
 /// MCP tool definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
@@ -150,6 +216,8 @@ pub struct ToolDefinition {
     pub description: String,
     #[serde(rename = "inputSchema")]
     pub input_schema: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub annotations: Option<ToolAnnotations>,
 }
 
 /// MCP initialize result
