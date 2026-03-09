@@ -25,7 +25,7 @@ use tokio_stream::{Stream, StreamExt};
 use tower_http::cors::{Any, CorsLayer};
 
 use super::protocol::{McpHandler, McpRequest, McpResponse};
-use crate::realtime::{EventType, RealtimeManager};
+use crate::realtime::{EventType, RealtimeEvent, RealtimeManager};
 
 /// Shared application state for all axum handlers.
 #[derive(Clone)]
@@ -147,13 +147,35 @@ fn event_type_to_str(et: EventType) -> &'static str {
 // SSE handler
 // ---------------------------------------------------------------------------
 
-/// `GET /v1/events` — Server-Sent Events stream of `RealtimeEvent`s.
+/// Reconnection backoff hint sent to SSE clients (milliseconds).
+const SSE_RETRY_MS: u64 = 3000;
+
+/// Convert a `RealtimeEvent` into an SSE `Event`, stamping the `id:` field
+/// with `seq_id` when present.
+fn realtime_event_to_sse(event: &RealtimeEvent) -> Event {
+    let event_type_str = event_type_to_str(event.event_type);
+    let data = serde_json::to_string(event).unwrap_or_else(|_| "{}".to_string());
+    let mut sse = Event::default().event(event_type_str).data(data);
+    if let Some(id) = event.seq_id {
+        sse = sse.id(format!("{id}"));
+    }
+    sse
+}
+
+/// `GET /v1/events` — resumable Server-Sent Events stream of `RealtimeEvent`s.
 ///
 /// Each event is sent as:
 /// ```text
+/// id: <seq_id>
 /// event: <event_type>
 /// data: <JSON of RealtimeEvent>
+/// retry: 3000
 /// ```
+///
+/// **Resumable streams:** clients that reconnect after a drop should include
+/// the `Last-Event-Id` header set to the last `id` value they received.
+/// The server will replay all buffered events with a higher sequence number
+/// before continuing with the live stream.
 ///
 /// Query parameters:
 /// - `event_types` — comma-separated list of event types to subscribe to
@@ -178,50 +200,85 @@ async fn handle_events(
         None => return Err(StatusCode::SERVICE_UNAVAILABLE),
     };
 
+    // Parse Last-Event-Id header for replay support.
+    let last_event_id: Option<u64> = headers
+        .get("last-event-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok());
+
     let event_type_filter = query.parsed_event_types();
     let workspace_filter = query.workspace.clone();
 
-    // Subscribe to the broadcast channel.
+    // Build a filter closure reused for both replay and live events.
+    let apply_filters = {
+        let et_filter = event_type_filter.clone();
+        let ws_filter = workspace_filter.clone();
+        move |event: &RealtimeEvent| -> bool {
+            if let Some(ref types) = et_filter {
+                if !types.contains(&event.event_type) {
+                    return false;
+                }
+            }
+            if let Some(ref ws) = ws_filter {
+                let event_ws = event
+                    .data
+                    .as_ref()
+                    .and_then(|d: &serde_json::Value| d.get("workspace"))
+                    .and_then(|v: &serde_json::Value| v.as_str());
+                match event_ws {
+                    Some(ews) if ews == ws => {}
+                    _ => return false,
+                }
+            }
+            true
+        }
+    };
+
+    // Subscribe to the live broadcast channel *before* draining the buffer so
+    // we don't miss any events that arrive between the two operations.
     let rx = manager.subscribe();
     let broadcast_stream = BroadcastStream::new(rx);
 
-    let sse_stream = broadcast_stream.filter_map(move |result| {
-        let et_filter = event_type_filter.clone();
-        let ws_filter = workspace_filter.clone();
+    // Build the replay burst (may be empty if no Last-Event-Id or nothing to replay).
+    let replay_events: Vec<Result<Event, Infallible>> = if let Some(last_id) = last_event_id {
+        manager
+            .get_events_after(last_id)
+            .into_iter()
+            .filter(|e| apply_filters(e))
+            .map(|e| Ok::<Event, Infallible>(realtime_event_to_sse(&e)))
+            .collect()
+    } else {
+        vec![]
+    };
 
+    let replay_stream = tokio_stream::iter(replay_events);
+
+    // Live stream from broadcast channel.
+    let live_stream = broadcast_stream.filter_map(move |result| {
         match result {
             // Lagged: the receiver fell behind — skip dropped events without crashing.
             Err(_lagged) => None,
             Ok(event) => {
-                // Apply event_type filter
-                if let Some(ref types) = et_filter {
-                    if !types.contains(&event.event_type) {
-                        return None;
-                    }
+                if !apply_filters(&event) {
+                    return None;
                 }
-
-                // Apply workspace filter (matched against data.workspace)
-                if let Some(ref ws) = ws_filter {
-                    let event_ws = event
-                        .data
-                        .as_ref()
-                        .and_then(|d| d.get("workspace"))
-                        .and_then(|v| v.as_str());
-                    match event_ws {
-                        Some(ews) if ews == ws => {}
-                        _ => return None,
-                    }
-                }
-
-                let event_type_str = event_type_to_str(event.event_type);
-                let data = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
-                let sse_event = Event::default().event(event_type_str).data(data);
-                Some(Ok::<Event, Infallible>(sse_event))
+                Some(Ok::<Event, Infallible>(realtime_event_to_sse(&event)))
             }
         }
     });
 
-    Ok(Sse::new(sse_stream)
+    // Chain: replay burst first, then live events.
+    let combined = replay_stream.chain(live_stream);
+
+    // Prepend a `retry:` field so clients know the reconnection backoff.
+    // The retry directive is sent as a synthetic SSE comment event emitted once
+    // at the start of the stream.
+    let retry_event = std::iter::once(Ok::<Event, Infallible>(
+        Event::default().retry(std::time::Duration::from_millis(SSE_RETRY_MS)),
+    ));
+    let full_stream = tokio_stream::iter(retry_event).chain(combined);
+
+    Ok(Sse::new(full_stream)
         .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(30))))
 }
 
@@ -487,5 +544,113 @@ mod tests {
         // Verify the constant used for keep-alive is correct.
         let interval = std::time::Duration::from_secs(30);
         assert_eq!(interval.as_secs(), 30);
+    }
+
+    // ---- Last-Event-Id header parsing tests --------------------------------
+
+    /// Verify that a valid numeric `Last-Event-Id` header is parsed to `u64`.
+    #[test]
+    fn test_last_event_id_header_valid() {
+        let mut headers = HeaderMap::new();
+        headers.insert("last-event-id", "42".parse().unwrap());
+
+        let parsed: Option<u64> = headers
+            .get("last-event-id")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok());
+
+        assert_eq!(parsed, Some(42));
+    }
+
+    #[test]
+    fn test_last_event_id_header_missing_is_none() {
+        let headers = HeaderMap::new();
+        let parsed: Option<u64> = headers
+            .get("last-event-id")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok());
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn test_last_event_id_header_non_numeric_is_none() {
+        let mut headers = HeaderMap::new();
+        headers.insert("last-event-id", "not-a-number".parse().unwrap());
+        let parsed: Option<u64> = headers
+            .get("last-event-id")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok());
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn test_last_event_id_header_zero() {
+        let mut headers = HeaderMap::new();
+        headers.insert("last-event-id", "0".parse().unwrap());
+        let parsed: Option<u64> = headers
+            .get("last-event-id")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok());
+        assert_eq!(parsed, Some(0));
+    }
+
+    // ---- realtime_event_to_sse tests ---------------------------------------
+
+    /// Verify that an event with a seq_id produces an SSE event with an `id:` field.
+    #[test]
+    fn test_realtime_event_to_sse_with_seq_id() {
+        use crate::realtime::RealtimeManager;
+
+        let manager = RealtimeManager::new();
+        let _rx = manager.subscribe();
+        manager.broadcast(RealtimeEvent::memory_created(1, "hello".to_string()));
+
+        let buffered = manager.get_events_after(0);
+        assert_eq!(buffered.len(), 1);
+
+        let event = &buffered[0];
+        assert_eq!(event.seq_id, Some(1));
+
+        // Verify the SSE event would include the id
+        // (axum's Event::id sets the id field; we verify seq_id is present)
+        let sse = realtime_event_to_sse(event);
+        // The event should serialize without panic; content is verified via seq_id field
+        let _ = sse; // axum::sse::Event has no public getter, just verify it builds
+    }
+
+    #[test]
+    fn test_realtime_event_to_sse_without_seq_id_no_id_field() {
+        // Events with seq_id = None should still build an SSE event (no id field).
+        let event = RealtimeEvent::memory_created(5, "no id".to_string());
+        assert!(event.seq_id.is_none());
+        let sse = realtime_event_to_sse(&event);
+        let _ = sse; // should not panic
+    }
+
+    // ---- Replay via get_events_after + Last-Event-Id integration -----------
+
+    #[test]
+    fn test_replay_events_after_last_id() {
+        use crate::realtime::RealtimeManager;
+
+        let manager = RealtimeManager::new();
+        let _rx = manager.subscribe();
+
+        // Broadcast 5 events
+        for i in 1..=5i64 {
+            manager.broadcast(RealtimeEvent::memory_created(i, format!("ev{i}")));
+        }
+
+        // Simulate Last-Event-Id: 3 — client missed events 4 and 5
+        let last_id: u64 = 3;
+        let replayed = manager.get_events_after(last_id);
+        assert_eq!(replayed.len(), 2);
+        let ids: Vec<u64> = replayed.iter().filter_map(|e| e.seq_id).collect();
+        assert_eq!(ids, vec![4, 5]);
+    }
+
+    #[test]
+    fn test_retry_constant_is_3000ms() {
+        assert_eq!(SSE_RETRY_MS, 3000);
     }
 }

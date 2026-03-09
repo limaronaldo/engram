@@ -22,6 +22,10 @@ pub enum EventType {
 /// A real-time event
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RealtimeEvent {
+    /// Sequential event ID, stamped by `RealtimeManager::broadcast`.
+    /// `None` for events that have not yet been processed by the manager.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seq_id: Option<u64>,
     /// Event type
     #[serde(rename = "type")]
     pub event_type: EventType,
@@ -41,6 +45,7 @@ impl RealtimeEvent {
     /// Create a memory created event
     pub fn memory_created(id: MemoryId, preview: String) -> Self {
         Self {
+            seq_id: None,
             event_type: EventType::MemoryCreated,
             timestamp: Utc::now(),
             memory_id: Some(id),
@@ -53,6 +58,7 @@ impl RealtimeEvent {
     /// Create a memory updated event
     pub fn memory_updated(id: MemoryId, changes: Vec<String>) -> Self {
         Self {
+            seq_id: None,
             event_type: EventType::MemoryUpdated,
             timestamp: Utc::now(),
             memory_id: Some(id),
@@ -65,6 +71,7 @@ impl RealtimeEvent {
     /// Create a memory deleted event
     pub fn memory_deleted(id: MemoryId) -> Self {
         Self {
+            seq_id: None,
             event_type: EventType::MemoryDeleted,
             timestamp: Utc::now(),
             memory_id: Some(id),
@@ -77,6 +84,7 @@ impl RealtimeEvent {
     /// Create a sync completed event
     pub fn sync_completed(direction: &str, changes: i64) -> Self {
         Self {
+            seq_id: None,
             event_type: EventType::SyncCompleted,
             timestamp: Utc::now(),
             memory_id: None,
@@ -92,6 +100,7 @@ impl RealtimeEvent {
     /// Create a sync failed event
     pub fn sync_failed(error: &str) -> Self {
         Self {
+            seq_id: None,
             event_type: EventType::SyncFailed,
             timestamp: Utc::now(),
             memory_id: None,
