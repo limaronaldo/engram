@@ -612,7 +612,7 @@ impl StorageBackend for TursoBackend {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             let conn = self.conn.write().await;
 
             let now = Utc::now();
@@ -706,7 +706,7 @@ impl StorageBackend for TursoBackend {
             memories
                 .pop()
                 .ok_or_else(|| EngramError::NotFound(id))
-        })
+        }))
     }
 
     fn create_memories_batch(&self, inputs: Vec<CreateMemoryInput>) -> Result<BatchCreateResult> {
@@ -732,7 +732,7 @@ impl StorageBackend for TursoBackend {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             let sql = format!(
                 "SELECT {} FROM memories WHERE id = ? AND valid_to IS NULL",
                 MEMORY_COLUMNS
@@ -742,7 +742,7 @@ impl StorageBackend for TursoBackend {
                 .await?;
 
             Ok(memories.into_iter().next())
-        })
+        }))
     }
 
     fn delete_memories_batch(&self, ids: Vec<MemoryId>) -> Result<BatchDeleteResult> {
@@ -769,7 +769,7 @@ impl StorageBackend for TursoBackend {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             let conn = self.conn.write().await;
             let now = Utc::now().to_rfc3339();
 
@@ -915,14 +915,14 @@ impl StorageBackend for TursoBackend {
                 .query_memories(&sql, vec![libsql::Value::Integer(id)])
                 .await?;
             memories.pop().ok_or_else(|| EngramError::NotFound(id))
-        })
+        }))
     }
 
     fn delete_memory(&self, id: MemoryId) -> Result<()> {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             let conn = self.conn.write().await;
             let now = chrono::Utc::now().to_rfc3339();
 
@@ -940,14 +940,14 @@ impl StorageBackend for TursoBackend {
             }
 
             Ok(())
-        })
+        }))
     }
 
     fn list_memories(&self, options: ListOptions) -> Result<Vec<Memory>> {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             let mut sql = format!(
                 "SELECT {} FROM memories WHERE valid_to IS NULL",
                 MEMORY_COLUMNS
@@ -1037,7 +1037,7 @@ impl StorageBackend for TursoBackend {
             }
 
             self.query_memories(&sql, params).await
-        })
+        }))
     }
 
     fn count_memories(&self, options: ListOptions) -> Result<i64> {
@@ -1052,7 +1052,7 @@ impl StorageBackend for TursoBackend {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             // Simple LIKE-based search (full hybrid search would need vector support)
             let mut sql = format!(
                 "SELECT {} FROM memories WHERE valid_to IS NULL AND content LIKE ?",
@@ -1123,7 +1123,7 @@ impl StorageBackend for TursoBackend {
                     },
                 })
                 .collect())
-        })
+        }))
     }
 
     fn create_crossref(
@@ -1136,7 +1136,7 @@ impl StorageBackend for TursoBackend {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             let conn = self.conn.write().await;
             let now = Utc::now();
             let now_str = now.to_rfc3339();
@@ -1178,14 +1178,14 @@ impl StorageBackend for TursoBackend {
                 pinned: false,
                 metadata: HashMap::new(),
             })
-        })
+        }))
     }
 
     fn get_crossrefs(&self, memory_id: MemoryId) -> Result<Vec<CrossReference>> {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             let conn = self.conn.read().await;
             let mut stmt = conn
                 .prepare(
@@ -1245,14 +1245,14 @@ impl StorageBackend for TursoBackend {
             }
 
             Ok(crossrefs)
-        })
+        }))
     }
 
     fn delete_crossref(&self, from_id: MemoryId, to_id: MemoryId) -> Result<()> {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             let conn = self.conn.write().await;
             let now = chrono::Utc::now().to_rfc3339();
 
@@ -1262,14 +1262,14 @@ impl StorageBackend for TursoBackend {
             ).await.map_err(|e| EngramError::Storage(e.to_string()))?;
 
             Ok(())
-        })
+        }))
     }
 
     fn list_tags(&self) -> Result<Vec<(String, i64)>> {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             let conn = self.conn.read().await;
             let mut stmt = conn
                 .prepare(
@@ -1301,7 +1301,7 @@ impl StorageBackend for TursoBackend {
             }
 
             Ok(tags)
-        })
+        }))
     }
 
     fn get_memories_by_tag(&self, tag: &str, limit: Option<usize>) -> Result<Vec<Memory>> {
@@ -1316,7 +1316,7 @@ impl StorageBackend for TursoBackend {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             let conn = self.conn.read().await;
             let mut stmt = conn.prepare(
                 "SELECT workspace, COUNT(*) FROM memories WHERE valid_to IS NULL GROUP BY workspace"
@@ -1340,14 +1340,14 @@ impl StorageBackend for TursoBackend {
             }
 
             Ok(workspaces)
-        })
+        }))
     }
 
     fn get_workspace_stats(&self, workspace: &str) -> Result<HashMap<String, i64>> {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             let conn = self.conn.read().await;
 
             let total: i64 = conn.query(
@@ -1379,14 +1379,14 @@ impl StorageBackend for TursoBackend {
             stats.insert("permanent_count".to_string(), permanent);
             stats.insert("daily_count".to_string(), daily);
             Ok(stats)
-        })
+        }))
     }
 
     fn move_to_workspace(&self, ids: Vec<MemoryId>, workspace: &str) -> Result<usize> {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             let conn = self.conn.write().await;
             let mut moved = 0usize;
 
@@ -1404,14 +1404,14 @@ impl StorageBackend for TursoBackend {
             }
 
             Ok(moved)
-        })
+        }))
     }
 
     fn get_stats(&self) -> Result<StorageStats> {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             let conn = self.conn.read().await;
 
             let memory_count: i64 = conn
@@ -1464,7 +1464,7 @@ impl StorageBackend for TursoBackend {
                 type_counts: HashMap::new(),
                 tier_counts: HashMap::new(),
             })
-        })
+        }))
     }
 
     fn health_check(&self) -> Result<HealthStatus> {
@@ -1473,10 +1473,10 @@ impl StorageBackend for TursoBackend {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        let result = rt.block_on(async {
+        let result = tokio::task::block_in_place(|| rt.block_on(async {
             let conn = self.conn.read().await;
             conn.query("SELECT 1", ()).await
-        });
+        }));
 
         let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
 
@@ -1503,13 +1503,13 @@ impl StorageBackend for TursoBackend {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             let conn = self.conn.write().await;
             conn.execute("VACUUM", ())
                 .await
                 .map_err(|e| EngramError::Storage(e.to_string()))?;
             Ok(())
-        })
+        }))
     }
 
     fn backend_name(&self) -> &'static str {
@@ -1520,7 +1520,7 @@ impl StorageBackend for TursoBackend {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             let conn = self.conn.read().await;
             let version: i32 = conn
                 .query("SELECT COALESCE(MAX(version), 0) FROM schema_version", ())
@@ -1533,7 +1533,7 @@ impl StorageBackend for TursoBackend {
                 .map(|r| r.get(0).unwrap_or(0))
                 .unwrap_or(0);
             Ok(version)
-        })
+        }))
     }
 }
 
@@ -1551,39 +1551,39 @@ impl TransactionalBackend for TursoBackend {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             let conn = self.conn.write().await;
             conn.execute(&format!("SAVEPOINT {}", name), ())
                 .await
                 .map_err(|e| EngramError::Storage(e.to_string()))?;
             Ok(())
-        })
+        }))
     }
 
     fn release_savepoint(&self, name: &str) -> Result<()> {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             let conn = self.conn.write().await;
             conn.execute(&format!("RELEASE SAVEPOINT {}", name), ())
                 .await
                 .map_err(|e| EngramError::Storage(e.to_string()))?;
             Ok(())
-        })
+        }))
     }
 
     fn rollback_to_savepoint(&self, name: &str) -> Result<()> {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
 
-        rt.block_on(async {
+        tokio::task::block_in_place(|| rt.block_on(async {
             let conn = self.conn.write().await;
             conn.execute(&format!("ROLLBACK TO SAVEPOINT {}", name), ())
                 .await
                 .map_err(|e| EngramError::Storage(e.to_string()))?;
             Ok(())
-        })
+        }))
     }
 }
 
@@ -1591,13 +1591,13 @@ impl CloudSyncBackend for TursoBackend {
     fn push(&self) -> Result<SyncResult> {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
-        rt.block_on(self.sync())
+        tokio::task::block_in_place(|| rt.block_on(self.sync()))
     }
 
     fn pull(&self) -> Result<SyncResult> {
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| EngramError::Storage("No tokio runtime available".to_string()))?;
-        rt.block_on(self.sync())
+        tokio::task::block_in_place(|| rt.block_on(self.sync()))
     }
 
     fn sync_delta(&self, _since_version: u64) -> Result<SyncDelta> {

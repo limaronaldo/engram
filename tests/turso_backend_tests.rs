@@ -18,14 +18,14 @@ async fn test_turso_in_memory() {
     assert_eq!(backend.backend_name(), "turso");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_turso_health_check() {
     let backend = TursoBackend::in_memory().await.unwrap();
     let health = backend.health_check().unwrap();
     assert!(health.healthy);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_turso_crud() {
     let backend = TursoBackend::in_memory().await.unwrap();
 
