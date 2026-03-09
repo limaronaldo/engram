@@ -29,6 +29,8 @@ pub mod entity_queries;
 pub mod filter;
 pub mod graph_queries;
 pub mod identity_links;
+pub mod memory_blocks;
+pub mod scoping;
 pub mod image_storage;
 mod migrations;
 pub mod queries;

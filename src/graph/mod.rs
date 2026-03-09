@@ -6,6 +6,9 @@
 //! - Graph statistics and metrics
 //! - Export to multiple formats (HTML, DOT, JSON)
 //! - Filtering and traversal utilities
+//! - Temporal knowledge graph with validity periods (RML-1235)
+
+pub mod temporal;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
