@@ -9,6 +9,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.13.0] - 2026-03-09
+
+### Added
+
+#### Phase L: Agent Portability & Knowledge Packaging
+- **Engram Snapshots (.egm)** — portable knowledge package format
+  - `SnapshotBuilder` with filters: workspace, tags, date range, importance, memory types
+  - `SnapshotLoader` with 4 strategies: Merge (skip duplicates), Replace (clear first), Isolate (new workspace), Dry Run
+  - ZIP archives containing: manifest.json, memories.json, entities.json, graph_edges.json, README.md
+  - AES-256-GCM encryption for encrypted snapshots
+  - Ed25519 signing for tamper detection
+  - Provenance tracking via `snapshot_origin` and `snapshot_loaded_at` columns
+  - MCP tools: `snapshot_create`, `snapshot_load`, `snapshot_inspect`
+  - CLI: `engram-cli snapshot create|load|inspect`
+- **Knowledge Attestation** — cryptographic proof of document ingestion
+  - Blockchain-style chained records (SHA-256 hashing, Ed25519 optional signing)
+  - Merkle tree proofs for selective verification
+  - Chain verification detecting any tampered records
+  - Export formats: JSON, CSV, Merkle proof
+  - MCP tools: `attestation_log`, `attestation_verify`, `attestation_chain_verify`, `attestation_list`
+  - CLI: `engram-cli attest log|verify|chain-verify|list`
+- Feature flag: `agent-portability` (included in `full`)
+- Schema v32: `snapshot_origin`/`snapshot_loaded_at` columns + `attestation_log` table
+- 38 new tests (15 snapshot + 23 attestation)
+
+### Fixed
+- Clippy warnings: `single_match` in compression/evolution handlers, `map_or` → `is_some_and` in SSE
+
+### Changed
+- 224+ MCP tools (217 + 7 new)
+- 780+ tests
+
+---
+
+## [0.12.0] - 2026-03-09
+
+### Added
+
+#### Multi-Agent Memory Sharing
+- **Scope-based access grants** — `scope_grants` table (schema v31) with agent-to-scope permission mapping (`read`, `write`, `admin`)
+- **Ancestor-aware permission checks** — `check_scope_access()` traverses the scope hierarchy; an org-level grant satisfies user-level checks
+- **Scope-filtered hybrid search** — `SearchOptions.scope_path` parameter filters BM25, semantic, and RRF results to the given scope and descendants
+- MCP tools: `memory_grant_access`, `memory_revoke_access`, `memory_list_grants`, `memory_check_access`
+- 14 new tests for scope grants
+
+#### Advanced SSE (Resumable Streams)
+- **Sequential event IDs** — `AtomicU64` counter stamps every SSE event with a monotonic `seq_id`
+- **Ring buffer replay** — 500-event in-memory buffer enables reconnecting clients to catch up on missed events
+- **`Last-Event-Id` support** — Standard HTTP header parsed on reconnect; missed events replayed as initial burst
+- **Retry directive** — `retry: 3000` tells clients to reconnect after 3 seconds
+- 18 new tests for SSE resumability
+
+#### engram-wasm Crate
+- **New `engram-wasm/` crate** — Pure-Rust algorithms compiled to WebAssembly via `wasm-bindgen`
+- **Modules**: BM25 scoring, TF-IDF vectorization + cosine similarity, graph traversal (BFS, shortest path, connected components), Reciprocal Rank Fusion, regex-based entity extraction
+- **JSON I/O** — All WASM exports accept/return JSON strings for easy JavaScript interop
+- 54 tests
+
+#### Cross-Host Federation
+- **Federation client** (`src/federation/client.rs`) — HTTP client that calls remote engram servers via JSON-RPC 2.0
+- **Federation manager** (`src/federation/manager.rs`) — Registry of remote peers with health checks, auto-reconnect, connection pooling
+- **Federated search** (`src/federation/search.rs`) — Fan-out search across local + remote peers with RRF merge and configurable timeout
+- **Federated share** — Push memories to remote peers via `memory_share` over HTTP
+- MCP tools: `federation_add_peer`, `federation_remove_peer`, `federation_list_peers`, `federation_search`, `federation_share`, `federation_sync_status`
+- Feature flag: `federation`
+- 12 new tests
+
+### Fixed
+- **Turso runtime nesting** — Wrapped all 22 `block_on` calls with `tokio::task::block_in_place`; tests use `multi_thread` flavor
+- **CI release workflow** — Added `workflow_dispatch` trigger, `RELEASE_VERSION` env var, `HOMEBREW_TAP_TOKEN` for cross-repo push
+- **Doctest import path** — Fixed `SynthesisStrategy` import in `synthesis.rs`
+
+### Changed
+- Schema v31: `scope_grants` table
+- 810+ tests (756 engram-core + 54 engram-wasm)
+
+---
+
 ## [0.11.0] - 2026-03-09
 
 ### Added — Cognitive Evolution & Platform Excellence (Phases E-K)

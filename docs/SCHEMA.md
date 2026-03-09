@@ -1,7 +1,7 @@
 # Engram Database Schema
 
 **Date:** March 9, 2026
-**Current Version:** v30
+**Current Version:** v31
 **Engine:** SQLite with WAL mode
 
 ---
@@ -39,6 +39,7 @@ Engram uses SQLite with WAL (Write-Ahead Logging) mode for its storage layer. Th
 - Agentic memory evolution (utility scoring, sentiment, reflections)
 - Advanced graph intelligence (conflicts, coactivation, triplets)
 - Autonomous memory agent (gardening, proactive acquisition)
+- Multi-agent scope-based access grants
 
 ### Design Principles
 
@@ -49,7 +50,7 @@ Engram uses SQLite with WAL (Write-Ahead Logging) mode for its storage layer. Th
 
 ---
 
-## Schema (v30)
+## Schema (v31)
 
 ### Entity Relationship Diagram
 
@@ -116,6 +117,9 @@ Engram uses SQLite with WAL (Write-Ahead Logging) mode for its storage layer. Th
  ┌────────────────────┐  ┌─────────────────────┐  ┌──────────────────┐
  │   sync_tasks       │  │  embedding_queue     │  │ schema_version   │
  └────────────────────┘  └─────────────────────┘  └──────────────────┘
+ ┌────────────────────┐
+ │   scope_grants     │  (agent access control, v31)
+ └────────────────────┘
 ```
 
 ---
@@ -1015,6 +1019,35 @@ CREATE TABLE query_log (
 );
 ```
 
+### Multi-Agent Access Control Tables (v31)
+
+#### scope_grants (v31)
+
+Scope-based access grants for multi-agent memory sharing. Each row grants a specific agent permission over a scope path.
+
+```sql
+CREATE TABLE scope_grants (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id TEXT NOT NULL,
+    scope_path TEXT NOT NULL,
+    permissions TEXT NOT NULL DEFAULT 'read',
+    granted_by TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(agent_id, scope_path)
+);
+```
+
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER | Auto-increment primary key |
+| agent_id | TEXT | Identifier of the agent being granted access |
+| scope_path | TEXT | Hierarchical scope path (e.g., `global/org1/user1`) |
+| permissions | TEXT | Comma-separated permissions: `read`, `write`, `admin` |
+| granted_by | TEXT | Agent or user that issued the grant (audit trail) |
+| created_at | TEXT | ISO8601 timestamp when grant was created |
+
+The `UNIQUE(agent_id, scope_path)` constraint ensures at most one grant row per agent per scope; updating permissions means replacing a single row.
+
 ---
 
 ## Migration History
@@ -1051,6 +1084,7 @@ CREATE TABLE query_log (
 | v28 | Phase F | Emotional memory | `sentiment_score`, `sentiment_label`, `reflection_depth` columns; `reflections` table |
 | v29 | Phase G | Advanced graph | `coactivation_edges`, `graph_conflicts`, `knowledge_triplets` tables |
 | v30 | Phase H | Autonomous agent | `garden_log`, `query_log` tables |
+| v31 | Phase L | Multi-agent access control | `scope_grants` table |
 
 ---
 

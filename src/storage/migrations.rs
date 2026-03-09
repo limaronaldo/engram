@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 31;
+pub const SCHEMA_VERSION: i32 = 32;
 
 /// Run all migrations
 pub fn run_migrations(conn: &Connection) -> Result<()> {
@@ -146,8 +146,12 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         migrate_v30(conn)?;
     }
 
-    if current_version < SCHEMA_VERSION {
+    if current_version < 31 {
         migrate_v31(conn)?;
+    }
+
+    if current_version < SCHEMA_VERSION {
+        migrate_v32(conn)?;
     }
 
     Ok(())
@@ -1651,6 +1655,46 @@ fn migrate_v31(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// v32: Agent portability support for snapshots and attestation
+fn migrate_v32(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v32: Creating snapshot provenance and attestation tables...");
+
+    conn.execute_batch(
+        r#"
+        -- Phase L: Agent Portability (v0.13.0)
+        -- Snapshot provenance tracking
+        ALTER TABLE memories ADD COLUMN snapshot_origin TEXT;
+        ALTER TABLE memories ADD COLUMN snapshot_loaded_at TEXT;
+
+        -- Knowledge attestation log
+        CREATE TABLE IF NOT EXISTS attestation_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_hash TEXT NOT NULL,
+            document_name TEXT NOT NULL,
+            document_size INTEGER NOT NULL,
+            ingested_at TEXT NOT NULL,
+            agent_id TEXT,
+            memory_ids TEXT NOT NULL,
+            previous_hash TEXT NOT NULL,
+            record_hash TEXT NOT NULL,
+            signature TEXT,
+            metadata TEXT DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_attestation_document_hash ON attestation_log(document_hash);
+        CREATE INDEX IF NOT EXISTS idx_attestation_agent_id ON attestation_log(agent_id);
+        CREATE INDEX IF NOT EXISTS idx_attestation_ingested_at ON attestation_log(ingested_at);
+
+        INSERT INTO schema_version (version) VALUES (32);
+        "#,
+    )?;
+
+    tracing::info!("Migration v32 complete: snapshot provenance and attestation tables created");
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1672,12 +1716,12 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query schema version");
-        assert_eq!(version, 31);
+        assert_eq!(version, 32);
     }
 
     #[test]
     fn test_schema_version_constant_is_19() {
-        assert_eq!(SCHEMA_VERSION, 31);
+        assert_eq!(SCHEMA_VERSION, 32);
     }
 
     #[test]
@@ -1822,7 +1866,7 @@ mod tests {
 
         // Run all migrations (they'll stop at the current version)
         // We simulate v17 state by running the full migration once,
-        // then verify the version is 18.
+        // then verify the version is 32.
         run_migrations(&conn).expect("run migrations from scratch");
 
         let version: i32 = conn
@@ -1832,7 +1876,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query schema version");
-        assert_eq!(version, 31, "should reach v31 after full migration");
+        assert_eq!(version, 32, "should reach v32 after full migration");
 
         // Verify both new tables exist
         let auto_links_exists: i32 = conn

@@ -198,9 +198,8 @@ pub fn memory_reflect(ctx: &HandlerContext, params: Value) -> Value {
         .with_connection(|conn| {
             let mut pairs: Vec<(i64, String)> = Vec::new();
             for &id in &ids {
-                match get_memory(conn, id) {
-                    Ok(m) => pairs.push((id, m.content)),
-                    Err(_) => {} // skip missing memories
+                if let Ok(m) = get_memory(conn, id) {
+                    pairs.push((id, m.content));
                 }
             }
 

@@ -25,6 +25,10 @@ pub mod sync;
 pub mod types;
 #[cfg(feature = "watcher")]
 pub mod watcher;
+#[cfg(feature = "agent-portability")]
+pub mod attestation;
+#[cfg(feature = "agent-portability")]
+pub mod snapshot;
 
 pub use error::{EngramError, Result};
 pub use storage::Storage;

@@ -95,13 +95,12 @@ pub fn memory_compress_for_context(ctx: &HandlerContext, params: Value) -> Value
     let result = ctx.storage.with_connection(|conn| {
         let mut inputs: Vec<MemoryInput> = Vec::new();
         for &id in &ids {
-            match get_memory(conn, id) {
-                Ok(m) => inputs.push(MemoryInput {
+            if let Ok(m) = get_memory(conn, id) {
+                inputs.push(MemoryInput {
                     id: m.id,
                     content: m.content,
                     importance: m.importance,
-                }),
-                Err(_) => {} // skip missing memories
+                });
             }
         }
 

@@ -23,8 +23,9 @@
 | I | Retrieval Excellence | Done | v0.11.0 | Multi-provider embeddings, MMR diversity, semantic cache, neural reranking, explainability, feedback |
 | J | Context Engineering | Done | v0.11.0 | Fact extraction, prompt construction, self-editing memory blocks |
 | K | Temporal Graph & Platform Maturity | Done | v0.11.0 | Temporal knowledge graph, hierarchical scoping, benchmark suite |
+| L | Multi-Agent Sharing & Platform | Done | v0.12.0 | Multi-agent memory sharing with scope-based access grants, advanced SSE with resumable streams, engram-wasm crate, cross-host federation |
 
-All 19 phases complete. Published as v0.11.0.
+All 20 phases complete. Published as v0.12.0.
 
 ---
 
@@ -221,17 +222,26 @@ Temporal knowledge graphs and hierarchical scoping. Feature flag: `temporal-grap
 - New binary: `engram-bench`
 - 10 MCP tools: `memory_temporal_create/invalidate/snapshot/contradictions/evolve`, `memory_scope_set/get/list/inherit/isolate`
 
+### Phase L: Multi-Agent Sharing & Platform (v0.12.0)
+
+Multi-agent memory sharing with access control, resumable SSE streams, browser-side WASM, and cross-host federation.
+
+- **Scope-Based Access Grants**: Fine-grained per-agent access control over scope paths with `read`/`write`/`admin` permissions, persisted in the `scope_grants` table
+- **Advanced SSE with Resumable Streams**: `Last-Event-Id` reconnect header support, in-memory ring buffer replay (last 1000 events), preventing event loss on transient disconnects
+- **engram-wasm Crate**: Browser-compilable crate exposing BM25, TF-IDF, graph traversal, RRF fusion, and entity extraction to JavaScript/TypeScript via wasm-bindgen
+- **Cross-Host Federation**: HTTP federation client, federated search across peer nodes, peer registry with health tracking, memory sharing between hosts
+- Schema v31: `scope_grants` table
+- 10 new MCP tools: `memory_grant_access`, `memory_revoke_access`, `memory_list_grants`, `memory_check_access`, `federation_add_peer`, `federation_remove_peer`, `federation_list_peers`, `federation_search`, `federation_share`, `federation_sync_status`
+
 ---
 
 ## What's Next
 
-All 19 phases complete. Future directions under consideration:
+All 20 phases complete. Future directions under consideration:
 
 - **OpenClaw integration**: Memory plugin for the 192K-star AI assistant platform
-- **Multi-agent memory sharing**: Cross-agent memory federation with shared workspaces
 - **Agent-to-agent messaging**: Event-driven communication via the agent registry
-- **WASM target**: Run Engram in the browser
-- **Advanced SSE**: Resumable streams with `Last-Event-Id`, event buffering
+- **Advanced WASM**: Full engram-wasm with storage persistence in IndexedDB
 
 ---
 
@@ -249,3 +259,4 @@ All 19 phases complete. Future directions under consideration:
 | v0.7.0 | 2026-03-09 | 0-11 (all) | 161+ |
 | v0.8.1 | 2026-03-09 | 0-11, Round 1 | 161+ |
 | v0.11.0 | 2026-03-09 | All (0-K) | 207+ |
+| v0.12.0 | 2026-03-09 | All (0-L) | 217+ |

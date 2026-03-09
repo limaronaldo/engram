@@ -100,7 +100,7 @@ impl RealtimeManager {
         self.buffer
             .read()
             .iter()
-            .filter(|e| e.seq_id.map_or(false, |id| id > last_seq_id))
+            .filter(|e| e.seq_id.is_some_and(|id| id > last_seq_id))
             .cloned()
             .collect()
     }
