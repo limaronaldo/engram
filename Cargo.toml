@@ -25,6 +25,10 @@ name = "engram-cli"
 path = "src/bin/cli.rs"
 
 [[bin]]
+name = "engram-bench"
+path = "src/bin/bench.rs"
+
+[[bin]]
 name = "engram-watcher"
 path = "src/bin/watcher.rs"
 required-features = ["watcher"]

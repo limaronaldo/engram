@@ -8,6 +8,7 @@
 #![allow(clippy::large_enum_variant)]
 
 pub mod auth;
+pub mod bench;
 pub mod embedding;
 pub mod error;
 pub mod graph;
