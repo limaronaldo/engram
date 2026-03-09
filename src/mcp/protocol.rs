@@ -81,6 +81,12 @@ pub trait McpHandler: Send + Sync {
     fn handle_request(&self, request: McpRequest) -> McpResponse;
 }
 
+impl<T: McpHandler> McpHandler for std::sync::Arc<T> {
+    fn handle_request(&self, request: McpRequest) -> McpResponse {
+        (**self).handle_request(request)
+    }
+}
+
 impl<H: McpHandler> McpServer<H> {
     /// Create a new MCP server
     pub fn new(handler: H) -> Self {
