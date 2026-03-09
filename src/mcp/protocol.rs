@@ -141,7 +141,14 @@ pub mod methods {
     pub const CALL_TOOL: &str = "tools/call";
     pub const LIST_RESOURCES: &str = "resources/list";
     pub const READ_RESOURCE: &str = "resources/read";
+    pub const LIST_PROMPTS: &str = "prompts/list";
+    pub const GET_PROMPT: &str = "prompts/get";
 }
+
+/// Current MCP protocol version supported by this server
+pub const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
+/// Legacy MCP protocol version for backward compatibility
+pub const MCP_PROTOCOL_VERSION_LEGACY: &str = "2024-11-05";
 
 /// MCP tool definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,6 +157,23 @@ pub struct ToolDefinition {
     pub description: String,
     #[serde(rename = "inputSchema")]
     pub input_schema: Value,
+}
+
+/// Tool annotations (added in MCP 2025-11-25)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolAnnotations {
+    /// Human-readable title for the tool
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Whether the tool is read-only (does not modify state)
+    #[serde(rename = "readOnly", skip_serializing_if = "Option::is_none")]
+    pub read_only: Option<bool>,
+    /// Whether the tool is destructive (permanently deletes data)
+    #[serde(rename = "destructive", skip_serializing_if = "Option::is_none")]
+    pub destructive: Option<bool>,
+    /// Whether the tool is idempotent (safe to retry)
+    #[serde(rename = "idempotent", skip_serializing_if = "Option::is_none")]
+    pub idempotent: Option<bool>,
 }
 
 /// MCP initialize result
@@ -165,8 +189,12 @@ pub struct InitializeResult {
 /// Server capabilities
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerCapabilities {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<ToolsCapability>,
-    pub resources: Option<ResourcesCapability>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resources: Option<ResourceCapabilities>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompts: Option<PromptCapabilities>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,9 +203,17 @@ pub struct ToolsCapability {
     pub list_changed: bool,
 }
 
+/// Resource capabilities (MCP 2025-11-25)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourcesCapability {
+pub struct ResourceCapabilities {
     pub subscribe: bool,
+    #[serde(rename = "listChanged")]
+    pub list_changed: bool,
+}
+
+/// Prompt capabilities (MCP 2025-11-25)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptCapabilities {
     #[serde(rename = "listChanged")]
     pub list_changed: bool,
 }
@@ -192,15 +228,16 @@ pub struct ServerInfo {
 impl Default for InitializeResult {
     fn default() -> Self {
         Self {
-            protocol_version: "2024-11-05".to_string(),
+            protocol_version: MCP_PROTOCOL_VERSION.to_string(),
             capabilities: ServerCapabilities {
                 tools: Some(ToolsCapability {
                     list_changed: false,
                 }),
-                resources: Some(ResourcesCapability {
+                resources: Some(ResourceCapabilities {
                     subscribe: false,
                     list_changed: false,
                 }),
+                prompts: Some(PromptCapabilities { list_changed: false }),
             },
             server_info: ServerInfo {
                 name: "engram".to_string(),
@@ -262,4 +299,63 @@ impl ToolCallResult {
             is_error: Some(true),
         }
     }
+}
+
+/// Resource definition (MCP 2025-11-25)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceDefinition {
+    pub uri: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+}
+
+/// Resource URI template definition (MCP 2025-11-25)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourceTemplate {
+    #[serde(rename = "uriTemplate")]
+    pub uri_template: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(rename = "mimeType", skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+}
+
+/// Prompt definition (MCP 2025-11-25)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptDefinition {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<Vec<PromptArgument>>,
+}
+
+/// Prompt argument definition (MCP 2025-11-25)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptArgument {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+}
+
+/// A message returned in a prompt response (MCP 2025-11-25)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptMessage {
+    /// "user" or "assistant"
+    pub role: String,
+    pub content: PromptContent,
+}
+
+/// Text content within a prompt message (MCP 2025-11-25)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PromptContent {
+    #[serde(rename = "type")]
+    pub content_type: String,
+    pub text: String,
 }
