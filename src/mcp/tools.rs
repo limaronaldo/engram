@@ -2342,6 +2342,116 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
         }"#,
         annotations: ToolAnnotations::mutating(),
     },
+
+    // ── Snapshot Tools (agent-portability) ────────────────────────────────────
+    #[cfg(feature = "agent-portability")]
+    ToolDef {
+        name: "snapshot_create",
+        description: "Create a portable .egm snapshot of memories filtered by workspace, tags, date range, or importance. Optionally encrypt with AES-256-GCM or sign with Ed25519.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "output_path": {"type": "string", "description": "File path for the .egm snapshot"},
+                "workspace": {"type": "string", "description": "Filter by workspace"},
+                "tags": {"type": "array", "items": {"type": "string"}, "description": "Filter by tags"},
+                "importance_min": {"type": "number", "description": "Minimum importance score"},
+                "memory_types": {"type": "array", "items": {"type": "string"}, "description": "Filter by memory types"},
+                "description": {"type": "string", "description": "Human-readable description"},
+                "creator": {"type": "string", "description": "Creator name"},
+                "encrypt_key": {"type": "string", "description": "Hex-encoded 32-byte AES key"},
+                "sign_key": {"type": "string", "description": "Hex-encoded 32-byte Ed25519 secret key"}
+            },
+            "required": ["output_path"]
+        }"#,
+        annotations: ToolAnnotations::mutating(),
+    },
+    #[cfg(feature = "agent-portability")]
+    ToolDef {
+        name: "snapshot_load",
+        description: "Load a .egm snapshot into the memory store. Strategies: merge (skip duplicates), replace (clear workspace first), isolate (new workspace), dry_run (preview only).",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to .egm file"},
+                "strategy": {"type": "string", "enum": ["merge", "replace", "isolate", "dry_run"], "description": "Load strategy"},
+                "target_workspace": {"type": "string", "description": "Target workspace (defaults to snapshot's workspace)"},
+                "decrypt_key": {"type": "string", "description": "Hex-encoded 32-byte AES key for encrypted snapshots"}
+            },
+            "required": ["path", "strategy"]
+        }"#,
+        annotations: ToolAnnotations::mutating(),
+    },
+    #[cfg(feature = "agent-portability")]
+    ToolDef {
+        name: "snapshot_inspect",
+        description: "Inspect a .egm snapshot without loading it. Returns manifest, file list, and size.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to .egm file"}
+            },
+            "required": ["path"]
+        }"#,
+        annotations: ToolAnnotations::read_only(),
+    },
+
+    // ── Attestation Tools (agent-portability) ──────────────────────────────────
+    #[cfg(feature = "agent-portability")]
+    ToolDef {
+        name: "attestation_log",
+        description: "Log a document ingestion with cryptographic attestation. Creates a chained record proving the document was processed.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "Document content to attest"},
+                "document_name": {"type": "string", "description": "Name of the document"},
+                "agent_id": {"type": "string", "description": "ID of the attesting agent"},
+                "memory_ids": {"type": "array", "items": {"type": "integer"}, "description": "IDs of memories created from this document"},
+                "sign_key": {"type": "string", "description": "Hex-encoded 32-byte Ed25519 secret key"}
+            },
+            "required": ["content", "document_name"]
+        }"#,
+        annotations: ToolAnnotations::mutating(),
+    },
+    #[cfg(feature = "agent-portability")]
+    ToolDef {
+        name: "attestation_verify",
+        description: "Verify whether a document has been attested (ingested and recorded).",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "content": {"type": "string", "description": "Document content to verify"}
+            },
+            "required": ["content"]
+        }"#,
+        annotations: ToolAnnotations::read_only(),
+    },
+    #[cfg(feature = "agent-portability")]
+    ToolDef {
+        name: "attestation_chain_verify",
+        description: "Verify the integrity of the entire attestation chain. Returns valid, broken (with location), or empty.",
+        schema: r#"{
+            "type": "object",
+            "properties": {}
+        }"#,
+        annotations: ToolAnnotations::read_only(),
+    },
+    #[cfg(feature = "agent-portability")]
+    ToolDef {
+        name: "attestation_list",
+        description: "List attestation records with optional filters. Supports JSON, CSV, and Merkle proof export formats.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Maximum records to return", "default": 50},
+                "offset": {"type": "integer", "description": "Number of records to skip", "default": 0},
+                "agent_id": {"type": "string", "description": "Filter by agent ID"},
+                "document_name": {"type": "string", "description": "Filter by document name"},
+                "export_format": {"type": "string", "enum": ["json", "csv", "merkle_proof"], "description": "Export format"}
+            }
+        }"#,
+        annotations: ToolAnnotations::read_only(),
+    },
 ];
 
 /// Get all tool definitions as ToolDefinition structs

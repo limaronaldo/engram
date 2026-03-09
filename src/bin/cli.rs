@@ -13,6 +13,12 @@ use engram::search::{hybrid_search, SearchConfig};
 use engram::storage::queries::*;
 use engram::storage::Storage;
 use engram::types::*;
+#[cfg(feature = "agent-portability")]
+use engram::attestation::{AttestationChain, AttestationFilter};
+#[cfg(feature = "agent-portability")]
+use engram::snapshot::{LoadStrategy, SnapshotBuilder, SnapshotLoader};
+#[cfg(feature = "agent-portability")]
+use std::str::FromStr as _;
 
 #[derive(Parser)]
 #[command(name = "engram")]
@@ -111,6 +117,83 @@ enum Commands {
     },
     /// Interactive mode
     Interactive,
+    /// Create, load, or inspect .egm snapshots
+    #[cfg(feature = "agent-portability")]
+    Snapshot {
+        #[command(subcommand)]
+        action: SnapshotAction,
+    },
+    /// Log and verify document attestations
+    #[cfg(feature = "agent-portability")]
+    Attest {
+        #[command(subcommand)]
+        action: AttestAction,
+    },
+}
+
+#[cfg(feature = "agent-portability")]
+#[derive(Subcommand)]
+enum SnapshotAction {
+    /// Create a snapshot
+    Create {
+        /// Output path for the .egm file
+        #[arg(short, long)]
+        output: String,
+        /// Workspace to snapshot
+        #[arg(short, long)]
+        workspace: Option<String>,
+        /// Description
+        #[arg(short, long)]
+        description: Option<String>,
+    },
+    /// Load a snapshot
+    Load {
+        /// Path to .egm file
+        path: String,
+        /// Load strategy: merge, replace, isolate, dry_run
+        #[arg(short, long, default_value = "merge")]
+        strategy: String,
+        /// Target workspace
+        #[arg(short = 'w', long)]
+        target_workspace: Option<String>,
+    },
+    /// Inspect a snapshot
+    Inspect {
+        /// Path to .egm file
+        path: String,
+    },
+}
+
+#[cfg(feature = "agent-portability")]
+#[derive(Subcommand)]
+enum AttestAction {
+    /// Log document attestation
+    Log {
+        /// Path to document file
+        path: String,
+        /// Document name
+        #[arg(short, long)]
+        name: Option<String>,
+        /// Agent ID
+        #[arg(short, long)]
+        agent_id: Option<String>,
+    },
+    /// Verify a document was attested
+    Verify {
+        /// Path to document file
+        path: String,
+    },
+    /// Verify the attestation chain
+    ChainVerify,
+    /// List attestation records
+    List {
+        /// Maximum records
+        #[arg(short, long, default_value = "50")]
+        limit: usize,
+        /// Export format: json, csv
+        #[arg(short, long)]
+        format: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -312,6 +395,172 @@ fn main() -> Result<()> {
                 );
             }
         }
+
+        #[cfg(feature = "agent-portability")]
+        Commands::Snapshot { action } => match action {
+            SnapshotAction::Create {
+                output,
+                workspace,
+                description,
+            } => {
+                let mut builder = SnapshotBuilder::new(storage.clone());
+                if let Some(ws) = workspace {
+                    builder = builder.workspace(&ws);
+                }
+                if let Some(desc) = description {
+                    builder = builder.description(&desc);
+                }
+                let path = std::path::Path::new(&output);
+                match builder.build(path) {
+                    Ok(manifest) => {
+                        println!(
+                            "Snapshot created: {} ({} memories)",
+                            output, manifest.memory_count
+                        );
+                        println!("{}", serde_json::to_string_pretty(&manifest)?);
+                    }
+                    Err(e) => {
+                        eprintln!("Error creating snapshot: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            SnapshotAction::Load {
+                path,
+                strategy,
+                target_workspace,
+            } => {
+                let load_strategy = match LoadStrategy::from_str(&strategy) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("Invalid strategy '{}': {}", strategy, e);
+                        std::process::exit(1);
+                    }
+                };
+                let p = std::path::Path::new(&path);
+                match SnapshotLoader::load(
+                    &storage,
+                    p,
+                    load_strategy,
+                    target_workspace.as_deref(),
+                    None,
+                ) {
+                    Ok(result) => {
+                        println!(
+                            "Loaded {} memories, {} skipped",
+                            result.memories_loaded, result.memories_skipped
+                        );
+                        println!("{}", serde_json::to_string_pretty(&result)?);
+                    }
+                    Err(e) => {
+                        eprintln!("Error loading snapshot: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            SnapshotAction::Inspect { path } => {
+                let p = std::path::Path::new(&path);
+                match SnapshotLoader::inspect(p) {
+                    Ok(info) => {
+                        println!("Snapshot: {}", path);
+                        println!("  File size: {} bytes", info.file_size_bytes);
+                        println!("  Memories:  {}", info.manifest.memory_count);
+                        println!("  Entities:  {}", info.manifest.entity_count);
+                        println!("  Edges:     {}", info.manifest.edge_count);
+                        println!("  Created:   {}", info.manifest.created_at.to_rfc3339());
+                        if let Some(desc) = &info.manifest.description {
+                            println!("  Desc:      {}", desc);
+                        }
+                        println!("  Encrypted: {}", info.manifest.encrypted);
+                        println!("  Signed:    {}", info.manifest.signed);
+                    }
+                    Err(e) => {
+                        eprintln!("Error inspecting snapshot: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+        },
+
+        #[cfg(feature = "agent-portability")]
+        Commands::Attest { action } => match action {
+            AttestAction::Log {
+                path,
+                name,
+                agent_id,
+            } => {
+                let content = std::fs::read(&path)?;
+                let doc_name = name.unwrap_or_else(|| path.clone());
+                let chain = AttestationChain::new(storage.clone());
+                match chain.log_document(&content, &doc_name, agent_id.as_deref(), &[], None) {
+                    Ok(record) => {
+                        println!("Attested: {}", doc_name);
+                        println!("{}", serde_json::to_string_pretty(&record)?);
+                    }
+                    Err(e) => {
+                        eprintln!("Error logging attestation: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            AttestAction::Verify { path } => {
+                let content = std::fs::read(&path)?;
+                let chain = AttestationChain::new(storage.clone());
+                match chain.verify_document(&content) {
+                    Ok(Some(record)) => {
+                        println!("Attested: YES");
+                        println!("{}", serde_json::to_string_pretty(&record)?);
+                    }
+                    Ok(None) => {
+                        println!("Attested: NO — document not found in attestation chain");
+                    }
+                    Err(e) => {
+                        eprintln!("Error verifying attestation: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            AttestAction::ChainVerify => {
+                let chain = AttestationChain::new(storage.clone());
+                match chain.verify_chain() {
+                    Ok(status) => {
+                        println!("{}", serde_json::to_string_pretty(&status)?);
+                    }
+                    Err(e) => {
+                        eprintln!("Error verifying chain: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            AttestAction::List { limit, format } => {
+                let filter = AttestationFilter {
+                    limit: Some(limit),
+                    offset: Some(0),
+                    agent_id: None,
+                    document_name: None,
+                };
+                let chain = AttestationChain::new(storage.clone());
+                match chain.list(&filter) {
+                    Ok(records) => {
+                        if let Some("csv") = format.as_deref() {
+                            match engram::attestation::export_csv(&records) {
+                                Ok(csv) => println!("{}", csv),
+                                Err(e) => {
+                                    eprintln!("Export error: {}", e);
+                                    std::process::exit(1);
+                                }
+                            }
+                        } else {
+                            println!("{}", serde_json::to_string_pretty(&records)?);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error listing attestations: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+        },
 
         Commands::Interactive => {
             println!("Engram Interactive Mode");
