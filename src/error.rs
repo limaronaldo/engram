@@ -42,11 +42,11 @@ pub enum EngramError {
     Io(#[from] std::io::Error),
 
     #[error("HTTP request error: {0}")]
-    #[cfg(feature = "openai")]
+    #[cfg(any(feature = "openai", feature = "multimodal"))]
     Http(#[from] reqwest::Error),
 
     #[error("HTTP request error: {0}")]
-    #[cfg(not(feature = "openai"))]
+    #[cfg(not(any(feature = "openai", feature = "multimodal")))]
     Http(String),
 
     #[error("Configuration error: {0}")]
