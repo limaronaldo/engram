@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 30;
+pub const SCHEMA_VERSION: i32 = 31;
 
 /// Run all migrations
 pub fn run_migrations(conn: &Connection) -> Result<()> {
@@ -142,8 +142,12 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         migrate_v29(conn)?;
     }
 
-    if current_version < SCHEMA_VERSION {
+    if current_version < 30 {
         migrate_v30(conn)?;
+    }
+
+    if current_version < SCHEMA_VERSION {
+        migrate_v31(conn)?;
     }
 
     Ok(())
@@ -1619,6 +1623,34 @@ fn migrate_v30(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// v31: Scope grants table for multi-agent memory sharing access control
+fn migrate_v31(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v31: Creating scope_grants table...");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS scope_grants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id TEXT NOT NULL,
+            scope_path TEXT NOT NULL,
+            permissions TEXT NOT NULL DEFAULT 'read',
+            granted_by TEXT,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            UNIQUE(agent_id, scope_path)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_scope_grants_agent ON scope_grants(agent_id);
+        CREATE INDEX IF NOT EXISTS idx_scope_grants_scope ON scope_grants(scope_path);
+
+        INSERT INTO schema_version (version) VALUES (31);
+        "#,
+    )?;
+
+    tracing::info!("Migration v31 complete: scope_grants table created");
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1640,12 +1672,12 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query schema version");
-        assert_eq!(version, 30);
+        assert_eq!(version, 31);
     }
 
     #[test]
     fn test_schema_version_constant_is_19() {
-        assert_eq!(SCHEMA_VERSION, 30);
+        assert_eq!(SCHEMA_VERSION, 31);
     }
 
     #[test]
@@ -1800,7 +1832,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query schema version");
-        assert_eq!(version, 30, "should reach v30 after full migration");
+        assert_eq!(version, 31, "should reach v31 after full migration");
 
         // Verify both new tables exist
         let auto_links_exists: i32 = conn

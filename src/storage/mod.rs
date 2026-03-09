@@ -33,6 +33,7 @@ pub mod image_storage;
 pub mod memory_blocks;
 mod migrations;
 pub mod queries;
+pub mod scope_grants;
 pub mod scoping;
 pub mod sqlite_backend;
 pub mod temporal;
@@ -48,6 +49,10 @@ pub mod turso_backend;
 pub use agent_registry::{
     deregister_agent, get_agent, get_agents_in_namespace, heartbeat_agent, list_agents,
     register_agent, update_agent_capabilities, Agent, RegisterAgentInput,
+};
+pub use scope_grants::{
+    check_scope_access, grant_scope_access, list_grants_for_agent, revoke_scope_access,
+    ScopeGrant,
 };
 pub use audit::*;
 pub use auto_linker::{

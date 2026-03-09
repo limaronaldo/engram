@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use chrono::Utc;
 use rusqlite::Connection;
 
-use super::bm25::bm25_search_complete;
+use super::bm25::bm25_search_complete_with_scope_path;
 use super::{select_search_strategy, SearchConfig};
 use crate::embedding::{cosine_similarity, get_embedding};
 use crate::error::Result;
@@ -76,7 +76,7 @@ fn keyword_only_search(
     options: &SearchOptions,
     config: &SearchConfig,
 ) -> Result<Vec<SearchResult>> {
-    let bm25_results = bm25_search_complete(
+    let bm25_results = bm25_search_complete_with_scope_path(
         conn,
         query,
         limit * 2,
@@ -88,6 +88,7 @@ fn keyword_only_search(
         options.workspace.as_deref(),
         options.workspaces.as_deref(),
         options.tier.as_ref(),
+        options.scope_path.as_deref(),
     )?;
 
     let mut results: Vec<SearchResult> = bm25_results
@@ -224,6 +225,14 @@ fn semantic_only_search(
         sql.push_str(&format!(" AND m.tier = '{}'", tier.as_str()));
     }
 
+    // Add scope_path prefix filter for hierarchical scoping
+    if let Some(ref sp) = options.scope_path {
+        let escaped = sp.replace('%', "\\%").replace('_', "\\_");
+        sql.push_str(" AND (m.scope_path = ? OR m.scope_path LIKE ? ESCAPE '\\')");
+        params.push(Box::new(sp.clone()));
+        params.push(Box::new(format!("{}/", escaped) + "%"));
+    }
+
     let mut stmt = conn.prepare(&sql)?;
 
     let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
@@ -282,7 +291,7 @@ fn rrf_hybrid_search(
     config: &SearchConfig,
 ) -> Result<Vec<SearchResult>> {
     // Get keyword results (with all filters applied)
-    let keyword_results = bm25_search_complete(
+    let keyword_results = bm25_search_complete_with_scope_path(
         conn,
         query,
         limit * 2,
@@ -294,6 +303,7 @@ fn rrf_hybrid_search(
         options.workspace.as_deref(),
         options.workspaces.as_deref(),
         options.tier.as_ref(),
+        options.scope_path.as_deref(),
     )?;
 
     // Get semantic results (without boost - we'll apply it to the final RRF score)
@@ -307,6 +317,7 @@ fn rrf_hybrid_search(
         workspace: options.workspace.clone(),
         workspaces: options.workspaces.clone(),
         tier: options.tier,
+        scope_path: options.scope_path.clone(),
         ..Default::default()
     };
     // Create a config without project boost for sub-search (we'll apply boost to final RRF)

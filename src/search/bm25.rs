@@ -91,6 +91,41 @@ pub fn bm25_search_complete(
     workspaces: Option<&[String]>,
     tier: Option<&crate::types::MemoryTier>,
 ) -> Result<Vec<Bm25Result>> {
+    bm25_search_complete_with_scope_path(
+        conn,
+        query,
+        limit,
+        explain,
+        scope,
+        filter,
+        include_transcripts,
+        include_archived,
+        workspace,
+        workspaces,
+        tier,
+        None,
+    )
+}
+
+/// Perform BM25 search with all options including workspace, tier, and scope_path prefix filter.
+///
+/// `scope_path` enables hierarchical filtering: passing `"global/org:acme"` will match memories
+/// at `"global/org:acme"` **and** any descendant scope like `"global/org:acme/user:alice"`.
+#[allow(clippy::too_many_arguments)]
+pub fn bm25_search_complete_with_scope_path(
+    conn: &Connection,
+    query: &str,
+    limit: i64,
+    explain: bool,
+    scope: Option<&MemoryScope>,
+    filter: Option<&serde_json::Value>,
+    include_transcripts: bool,
+    include_archived: bool,
+    workspace: Option<&str>,
+    workspaces: Option<&[String]>,
+    tier: Option<&crate::types::MemoryTier>,
+    scope_path: Option<&str>,
+) -> Result<Vec<Bm25Result>> {
     // Escape special FTS5 characters
     let escaped_query = escape_fts5_query(query);
     let now = Utc::now().to_rfc3339();
@@ -168,6 +203,16 @@ pub fn bm25_search_complete(
     // Add tier filter
     if let Some(t) = tier {
         sql.push_str(&format!(" AND m.tier = '{}'", t.as_str()));
+    }
+
+    // Add scope_path prefix filter for hierarchical scoping.
+    // Matches the exact path OR any descendant (e.g. "global/org:acme" matches
+    // "global/org:acme/user:alice" via LIKE 'global/org:acme/%').
+    if let Some(sp) = scope_path {
+        let escaped = sp.replace('%', "\\%").replace('_', "\\_");
+        sql.push_str(" AND (m.scope_path = ? OR m.scope_path LIKE ? ESCAPE '\\')");
+        params.push(Box::new(sp.to_string()));
+        params.push(Box::new(format!("{}/", escaped) + "%"));
     }
 
     sql.push_str(" ORDER BY bm25(memories_fts) LIMIT ?");

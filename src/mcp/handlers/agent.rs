@@ -177,6 +177,116 @@ pub fn agent_capabilities(ctx: &HandlerContext, params: Value) -> Value {
         .unwrap_or_else(|e| json!({"error": e.to_string()}))
 }
 
+/// Grant an agent access to a scope path.
+pub fn memory_grant_access(ctx: &HandlerContext, params: Value) -> Value {
+    use crate::storage::scope_grants::grant_scope_access;
+
+    let agent_id = match params.get("agent_id").and_then(|v| v.as_str()) {
+        Some(id) => id.to_string(),
+        None => return json!({"error": "agent_id is required"}),
+    };
+
+    let scope_path = match params.get("scope_path").and_then(|v| v.as_str()) {
+        Some(p) => p.to_string(),
+        None => return json!({"error": "scope_path is required"}),
+    };
+
+    let permissions = params
+        .get("permissions")
+        .and_then(|v| v.as_str())
+        .unwrap_or("read")
+        .to_string();
+
+    let granted_by = params
+        .get("granted_by")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    ctx.storage
+        .with_connection(|conn| {
+            let grant = grant_scope_access(
+                conn,
+                &agent_id,
+                &scope_path,
+                &permissions,
+                granted_by.as_deref(),
+            )?;
+            Ok(json!(grant))
+        })
+        .unwrap_or_else(|e| json!({"error": e.to_string()}))
+}
+
+/// Revoke an agent's access to a scope path.
+pub fn memory_revoke_access(ctx: &HandlerContext, params: Value) -> Value {
+    use crate::storage::scope_grants::revoke_scope_access;
+
+    let agent_id = match params.get("agent_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => return json!({"error": "agent_id is required"}),
+    };
+
+    let scope_path = match params.get("scope_path").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return json!({"error": "scope_path is required"}),
+    };
+
+    ctx.storage
+        .with_connection(|conn| {
+            let revoked = revoke_scope_access(conn, agent_id, scope_path)?;
+            Ok(json!({"success": revoked, "agent_id": agent_id, "scope_path": scope_path}))
+        })
+        .unwrap_or_else(|e| json!({"error": e.to_string()}))
+}
+
+/// List all scope grants for a given agent.
+pub fn memory_list_grants(ctx: &HandlerContext, params: Value) -> Value {
+    use crate::storage::scope_grants::list_grants_for_agent;
+
+    let agent_id = match params.get("agent_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => return json!({"error": "agent_id is required"}),
+    };
+
+    ctx.storage
+        .with_connection(|conn| {
+            let grants = list_grants_for_agent(conn, agent_id)?;
+            Ok(json!({"grants": grants, "count": grants.len(), "agent_id": agent_id}))
+        })
+        .unwrap_or_else(|e| json!({"error": e.to_string()}))
+}
+
+/// Check whether an agent has access to a scope path.
+pub fn memory_check_access(ctx: &HandlerContext, params: Value) -> Value {
+    use crate::storage::scope_grants::check_scope_access;
+
+    let agent_id = match params.get("agent_id").and_then(|v| v.as_str()) {
+        Some(id) => id,
+        None => return json!({"error": "agent_id is required"}),
+    };
+
+    let scope_path = match params.get("scope_path").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return json!({"error": "scope_path is required"}),
+    };
+
+    let permissions = params
+        .get("permissions")
+        .and_then(|v| v.as_str())
+        .unwrap_or("read");
+
+    ctx.storage
+        .with_connection(|conn| {
+            let has_access = check_scope_access(conn, agent_id, scope_path, permissions)?;
+            Ok(json!({
+                "has_access": has_access,
+                "agent_id": agent_id,
+                "scope_path": scope_path,
+                "permissions": permissions
+            }))
+        })
+        .unwrap_or_else(|e| json!({"error": e.to_string()}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

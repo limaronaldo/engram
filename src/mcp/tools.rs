@@ -1719,6 +1719,61 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
         }"#,
         annotations: ToolAnnotations::mutating(),
     },
+    // Scope-based access grants for multi-agent memory sharing
+    ToolDef {
+        name: "memory_grant_access",
+        description: "Grant an agent access to a scope path. Supports read, write, and admin permissions. Access also applies to all descendant scopes.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "Agent ID to grant access to"},
+                "scope_path": {"type": "string", "description": "Scope path to grant access to (e.g. 'global/org:acme')"},
+                "permissions": {"type": "string", "enum": ["read", "write", "admin"], "default": "read", "description": "Permission level"},
+                "granted_by": {"type": "string", "description": "Optional: ID of the granting agent"}
+            },
+            "required": ["agent_id", "scope_path"]
+        }"#,
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_revoke_access",
+        description: "Revoke an agent's access to a specific scope path.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "Agent ID to revoke access from"},
+                "scope_path": {"type": "string", "description": "Scope path to revoke access from"}
+            },
+            "required": ["agent_id", "scope_path"]
+        }"#,
+        annotations: ToolAnnotations::destructive(),
+    },
+    ToolDef {
+        name: "memory_list_grants",
+        description: "List all scope access grants for a given agent.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "Agent ID to list grants for"}
+            },
+            "required": ["agent_id"]
+        }"#,
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_check_access",
+        description: "Check whether an agent has a required permission level on a scope path (including ancestor grants).",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "agent_id": {"type": "string", "description": "Agent ID to check"},
+                "scope_path": {"type": "string", "description": "Scope path to check access for"},
+                "permissions": {"type": "string", "enum": ["read", "write", "admin"], "default": "read", "description": "Required permission level"}
+            },
+            "required": ["agent_id", "scope_path"]
+        }"#,
+        annotations: ToolAnnotations::read_only(),
+    },
     // Search Variants
     ToolDef {
         name: "memory_search_by_identity",

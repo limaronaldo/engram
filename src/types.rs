@@ -921,6 +921,12 @@ pub struct SearchOptions {
     /// Include archived memories in search results (default: false)
     #[serde(default)]
     pub include_archived: bool,
+    /// Filter by hierarchical scope path (prefix search).
+    ///
+    /// When set, only memories whose `scope_path` starts with (or equals) this value
+    /// are returned. For example, `"global/org:acme"` will match memories at
+    /// `"global/org:acme"`, `"global/org:acme/user:alice"`, etc.
+    pub scope_path: Option<String>,
 }
 
 /// Sync status information

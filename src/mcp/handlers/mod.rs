@@ -262,6 +262,12 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         "agent_get" => agent::agent_get(ctx, params),
         "agent_capabilities" => agent::agent_capabilities(ctx, params),
 
+        // ── Scope-based access grants ───────────────────────────────────────
+        "memory_grant_access" => agent::memory_grant_access(ctx, params),
+        "memory_revoke_access" => agent::memory_revoke_access(ctx, params),
+        "memory_list_grants" => agent::memory_list_grants(ctx, params),
+        "memory_check_access" => agent::memory_check_access(ctx, params),
+
         // ── Emergent Graph (feature-gated) ──────────────────────────────────
         #[cfg(feature = "emergent-graph")]
         "memory_auto_link" => emergent_graph::memory_auto_link(ctx, params),
