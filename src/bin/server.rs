@@ -500,12 +500,10 @@ fn main() -> Result<()> {
     };
     let embedder = create_embedder(&embedding_config)?;
 
-    // Create real-time manager if WebSocket port is specified
-    let realtime_manager = if args.ws_port > 0 {
-        Some(RealtimeManager::new())
-    } else {
-        None
-    };
+    // Create real-time manager.
+    // Always created so both the WebSocket server (when ws_port > 0) and
+    // the HTTP SSE endpoint (GET /v1/events) can share the same broadcast channel.
+    let realtime_manager = Some(RealtimeManager::new());
 
     // Create handler and server
     let mut handler = EngramHandler::new(storage.clone(), embedder);
@@ -589,19 +587,23 @@ fn main() -> Result<()> {
         });
     }
 
-    // Start WebSocket server in background if port is specified
-    if let Some(manager) = realtime_manager {
-        let ws_port = args.ws_port;
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-            rt.block_on(async {
-                let ws_server = RealtimeServer::new(manager, ws_port);
-                tracing::info!("WebSocket server starting on port {}...", ws_port);
-                if let Err(e) = ws_server.start().await {
-                    tracing::error!("WebSocket server error: {}", e);
-                }
+    // Start WebSocket server in background if ws_port > 0.
+    // Clone the manager so it can also be shared with the HTTP transport SSE endpoint.
+    if args.ws_port > 0 {
+        if let Some(ref manager) = realtime_manager {
+            let ws_manager = manager.clone();
+            let ws_port = args.ws_port;
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+                rt.block_on(async {
+                    let ws_server = RealtimeServer::new(ws_manager, ws_port);
+                    tracing::info!("WebSocket server starting on port {}...", ws_port);
+                    if let Err(e) = ws_server.start().await {
+                        tracing::error!("WebSocket server error: {}", e);
+                    }
+                });
             });
-        });
+        }
     }
 
     tracing::info!("Engram MCP server starting...");
@@ -614,22 +616,28 @@ fn main() -> Result<()> {
             let rt = tokio::runtime::Runtime::new()
                 .map_err(|e| engram::error::EngramError::Internal(e.to_string()))?;
             rt.block_on(async {
-                http_transport::serve_http(handler, args.http_port, args.http_api_key)
-                    .await
-                    .map_err(|e| engram::error::EngramError::Internal(e.to_string()))
+                http_transport::serve_http(
+                    handler,
+                    args.http_port,
+                    args.http_api_key,
+                    realtime_manager,
+                )
+                .await
+                .map_err(|e| engram::error::EngramError::Internal(e.to_string()))
             })?;
         }
         TransportMode::Both => {
             let http_handler = handler.clone();
             let http_port = args.http_port;
             let http_api_key = args.http_api_key.clone();
+            let http_realtime = realtime_manager.clone();
 
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new()
                     .expect("Failed to create HTTP transport runtime");
                 rt.block_on(async {
                     if let Err(e) =
-                        http_transport::serve_http(http_handler, http_port, http_api_key).await
+                        http_transport::serve_http(http_handler, http_port, http_api_key, http_realtime).await
                     {
                         tracing::error!("HTTP transport error: {}", e);
                     }

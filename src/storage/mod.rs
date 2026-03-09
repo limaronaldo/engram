@@ -17,6 +17,7 @@
 //! - `TransactionalBackend` - For backends that support ACID transactions
 //! - `CloudSyncBackend` - For backends with cloud synchronization
 
+pub mod agent_registry;
 mod audit;
 pub mod backend;
 mod confidence;
@@ -39,6 +40,10 @@ pub mod meilisearch_indexer;
 #[cfg(feature = "turso")]
 pub mod turso_backend;
 
+pub use agent_registry::{
+    deregister_agent, get_agent, get_agents_in_namespace, heartbeat_agent, list_agents,
+    register_agent, update_agent_capabilities, Agent, RegisterAgentInput,
+};
 pub use audit::*;
 pub use backend::{
     BatchCreateResult as BackendBatchCreateResult, BatchDeleteResult as BackendBatchDeleteResult,

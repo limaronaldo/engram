@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 16;
+pub const SCHEMA_VERSION: i32 = 17;
 
 /// Run all migrations
 pub fn run_migrations(conn: &Connection) -> Result<()> {
@@ -86,8 +86,12 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         migrate_v15(conn)?;
     }
 
-    if current_version < SCHEMA_VERSION {
+    if current_version < 16 {
         migrate_v16(conn)?;
+    }
+
+    if current_version < SCHEMA_VERSION {
+        migrate_v17(conn)?;
     }
 
     Ok(())
@@ -1110,6 +1114,39 @@ fn migrate_v16(conn: &Connection) -> Result<()> {
     conn.execute("INSERT INTO schema_version (version) VALUES (16)", [])?;
 
     tracing::info!("Migration v16 complete: retention policies table added");
+
+    Ok(())
+}
+
+/// Schema v17: Agent registry
+///
+/// Adds the `agents` table for tracking registered AI agents with their
+/// capabilities, namespaces, heartbeat status, and lifecycle state.
+fn migrate_v17(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v17: Adding agent registry table...");
+
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS agents (
+            agent_id TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            capabilities TEXT NOT NULL DEFAULT '[]',
+            namespaces TEXT NOT NULL DEFAULT '["default"]',
+            last_heartbeat TEXT,
+            status TEXT NOT NULL DEFAULT 'active',
+            metadata TEXT NOT NULL DEFAULT '{}',
+            registered_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_agents_status ON agents(status);
+        CREATE INDEX IF NOT EXISTS idx_agents_heartbeat ON agents(last_heartbeat);
+        "#,
+    )?;
+
+    conn.execute("INSERT INTO schema_version (version) VALUES (17)", [])?;
+
+    tracing::info!("Migration v17 complete: agent registry table added");
 
     Ok(())
 }

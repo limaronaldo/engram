@@ -123,6 +123,9 @@ pdf-extract = { version = "0.7", optional = true }
 # Async channels for embedding queue
 async-channel = "2.1"
 futures = "0.3"
+
+# Stream utilities (SSE event streaming)
+tokio-stream = { version = "0.1", features = ["sync"] }
 meilisearch-sdk = { version = "0.32.0", optional = true }
 
 [dev-dependencies]
@@ -151,6 +154,10 @@ harness = false
 
 [[bench]]
 name = "traversal"
+harness = false
+
+[[bench]]
+name = "mcp_dispatch"
 harness = false
 
 [profile.release]

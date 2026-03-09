@@ -2,8 +2,8 @@
 //!
 //! Provides push notifications for memory changes to connected clients.
 
-mod events;
+pub(crate) mod events;
 mod server;
 
-pub use events::{EventType, RealtimeEvent};
+pub use events::{EventType, RealtimeEvent, SubscriptionFilter};
 pub use server::{RealtimeManager, RealtimeServer};
