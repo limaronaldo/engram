@@ -108,7 +108,7 @@ pub struct CrossEncoderReranker {
     config: CrossEncoderConfig,
     /// ONNX inference session.  `None` when running under `cfg(test)` or
     /// when the model file was not found.
-    session: Option<ort::Session>,
+    session: Option<ort::session::Session>,
 }
 
 impl CrossEncoderReranker {
@@ -125,8 +125,8 @@ impl CrossEncoderReranker {
     }
 
     /// Try to load the ONNX session; propagate errors with context.
-    fn load_session(config: &CrossEncoderConfig) -> Result<ort::Session> {
-        ort::Session::builder()
+    fn load_session(config: &CrossEncoderConfig) -> Result<ort::session::Session> {
+        ort::session::Session::builder()
             .map_err(|e| {
                 EngramError::Config(format!("Failed to create ONNX session builder: {e}"))
             })?

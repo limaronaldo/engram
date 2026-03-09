@@ -40,8 +40,11 @@ mod inner {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
-    use ndarray::{Array2, Axis};
-    use ort::{inputs, Session};
+    use std::sync::Mutex;
+
+    use ndarray::Array2;
+    use ort::session::Session;
+    use ort::value::Tensor;
 
     use crate::embedding::Embedder;
     use crate::error::{EngramError, Result};
@@ -84,7 +87,7 @@ mod inner {
     /// matching the behaviour of `sentence-transformers` models.
     pub struct OnnxEmbedder {
         config: OnnxConfig,
-        session: Session,
+        session: Mutex<Session>,
         /// Simple word-to-index vocabulary built from a whitespace split
         vocab: HashMap<String, i64>,
     }
@@ -117,7 +120,7 @@ mod inner {
 
             Ok(Self {
                 config,
-                session,
+                session: Mutex::new(session),
                 vocab,
             })
         }
@@ -261,42 +264,56 @@ mod inner {
         fn run_inference(&self, input_ids: &[i64], attention_mask: &[i64]) -> Result<Vec<f32>> {
             let seq_len = input_ids.len();
 
-            // Build 2-D tensors with batch size 1: shape [1, seq_len]
-            let ids_array = ndarray::Array::from_shape_vec((1, seq_len), input_ids.to_vec())
+            // Build ONNX Tensor values with shape [1, seq_len]
+            let ids_tensor = Tensor::from_array(([1, seq_len], input_ids.to_vec()))
                 .map_err(|e| {
-                    EngramError::Embedding(format!("Failed to build input_ids array: {e}"))
+                    EngramError::Embedding(format!("Failed to build input_ids tensor: {e}"))
                 })?;
 
-            let mask_array = ndarray::Array::from_shape_vec((1, seq_len), attention_mask.to_vec())
+            let mask_tensor = Tensor::from_array(([1, seq_len], attention_mask.to_vec()))
                 .map_err(|e| {
-                    EngramError::Embedding(format!("Failed to build attention_mask array: {e}"))
+                    EngramError::Embedding(format!("Failed to build attention_mask tensor: {e}"))
                 })?;
 
             // token_type_ids: all zeros (single-sentence input)
-            let type_ids_array = ndarray::Array::<i64, _>::zeros((1, seq_len));
+            let type_ids_tensor = Tensor::from_array(([1, seq_len], vec![0i64; seq_len]))
+                .map_err(|e| {
+                    EngramError::Embedding(format!("Failed to build token_type_ids tensor: {e}"))
+                })?;
 
-            let outputs = self
-                .session
-                .run(inputs![
-                    "input_ids" => ids_array.view(),
-                    "attention_mask" => mask_array.view(),
-                    "token_type_ids" => type_ids_array.view()
-                ]?)
+            let mut session = self.session.lock().map_err(|e| {
+                EngramError::Embedding(format!("Failed to lock ONNX session: {e}"))
+            })?;
+
+            let outputs = session
+                .run(ort::inputs![
+                    "input_ids" => ids_tensor,
+                    "attention_mask" => mask_tensor,
+                    "token_type_ids" => type_ids_tensor
+                ])
                 .map_err(|e| EngramError::Embedding(format!("ONNX inference error: {e}")))?;
 
             // The first output is typically the last hidden state:
             // shape [batch_size, seq_len, hidden_size]
-            let output_tensor = outputs[0].try_extract_tensor::<f32>().map_err(|e| {
+            let (shape, data) = outputs[0].try_extract_tensor::<f32>().map_err(|e| {
                 EngramError::Embedding(format!("Failed to extract ONNX output tensor: {e}"))
             })?;
 
+            if shape.len() != 3 || shape[0] != 1 {
+                return Err(EngramError::Embedding(format!(
+                    "Expected 3D output tensor [1, seq_len, hidden_size], got shape {:?}",
+                    &*shape
+                )));
+            }
+            let hidden_size = shape[2] as usize;
+            let actual_seq_len = shape[1] as usize;
+
             // Squeeze batch dimension → [seq_len, hidden_size]
-            let token_embeddings: Array2<f32> = output_tensor
-                .view()
-                .into_dimensionality::<ndarray::Ix3>()
-                .map_err(|e| EngramError::Embedding(format!("Unexpected output tensor rank: {e}")))?
-                .index_axis(Axis(0), 0)
-                .to_owned();
+            let token_embeddings = Array2::from_shape_vec(
+                (actual_seq_len, hidden_size),
+                data.to_vec(),
+            )
+            .map_err(|e| EngramError::Embedding(format!("Failed to reshape output: {e}")))?;
 
             // Validate hidden size matches configured dimensions
             if token_embeddings.ncols() != self.config.dimensions {
