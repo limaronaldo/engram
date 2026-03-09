@@ -1,0 +1,19 @@
+[package]
+name = "engram-wasm"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Engram algorithms compiled to WebAssembly — pure-Rust, no I/O dependencies"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+once_cell = "1"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
