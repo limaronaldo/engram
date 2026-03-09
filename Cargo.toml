@@ -51,8 +51,11 @@ meilisearch = ["dep:meilisearch-sdk"]
 # File/browser/app watcher daemon
 watcher = ["dep:toml"]
 
+# Emergent graph: auto-links (semantic/temporal/co-occurrence) and community detection clusters
+emergent-graph = []
+
 # All features
-full = ["cloud", "openai", "pdf", "langfuse", "turso", "meilisearch", "watcher", "multimodal"]
+full = ["cloud", "openai", "pdf", "langfuse", "turso", "meilisearch", "watcher", "multimodal", "emergent-graph"]
 
 [dependencies]
 # Async runtime
