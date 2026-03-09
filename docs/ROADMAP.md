@@ -127,17 +127,27 @@ Modernize to MCP 2025-11-25 spec with improved tooling and server architecture.
 - **Streamable HTTP Transport**: Axum-based HTTP server with `--transport http|stdio|both` CLI flag, bearer token auth, CORS
 - **Server Modularization**: Refactored 6200-line server.rs into 11 focused domain handler modules for maintainability
 
+### Phase 11: Reactive Infrastructure (v0.7.0)
+
+Real-time event delivery, multi-agent federation foundation, and performance benchmarking.
+
+- **SSE Event Streaming**: `GET /v1/events` for real-time push notifications (memory CRUD, sync events)
+- **Agent Registry**: Schema v17 with `agents` table — register, heartbeat, namespace isolation, capability tracking
+- **Agent MCP Tools**: 6 new tools for agent lifecycle management (`agent_register/deregister/heartbeat/list/get/capabilities`)
+- **MCP Dispatch Benchmark**: Criterion suite covering 5 tool dispatch paths (create, search, list, stats, error)
+- **Benchmark Baseline Scripts**: `bench-baseline.sh` and `bench-compare.sh` for local performance tracking
+
 ---
 
 ## What's Next
 
-All 11 planned phases are complete. Future directions under consideration:
+All 12 planned phases are complete. Future directions under consideration:
 
 - **OpenClaw integration**: Memory plugin for the 192K-star AI assistant platform
-- **Multi-agent memory sharing**: Cross-agent memory federation
-- **Streaming ingestion**: Real-time memory creation from event streams
+- **Multi-agent memory sharing**: Cross-agent memory federation with shared workspaces
+- **Agent-to-agent messaging**: Event-driven communication via the agent registry
 - **WASM target**: Run Engram in the browser
-- **Benchmark suite**: Automated performance regression tracking (CI integration)
+- **Advanced SSE**: Resumable streams with `Last-Event-Id`, event buffering
 
 ---
 
@@ -152,3 +162,4 @@ All 11 planned phases are complete. Future directions under consideration:
 | v0.4.1 | 2026-02-13 | 0-6, 8-9 | 140+ |
 | v0.5.0 | 2026-02-13 | 0-9 (all) | 144+ |
 | v0.6.0 | 2026-03-09 | 0-10 (all) | 155+ |
+| v0.7.0 | 2026-03-09 | 0-11 (all) | 161+ |

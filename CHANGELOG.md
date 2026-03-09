@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.7.0] - 2026-03-09
+
+### Added
+
+- **SSE event streaming** — `GET /v1/events` endpoint for real-time push notifications via Server-Sent Events
+  - Subscribe to memory create/update/delete events over HTTP
+  - Filter by `event_types` and `workspace` query parameters
+  - Bearer token authentication, 30s keep-alive
+  - Supports `Last-Event-Id` resume (future)
+  - 17 unit tests
+- **Agent registry** — Multi-agent federation foundation with namespace isolation
+  - Schema v17: `agents` table with capabilities, namespaces, heartbeat, lifecycle status
+  - 7 storage queries: register (upsert), deregister (soft delete), heartbeat, get, list, update capabilities, get by namespace
+  - 6 MCP tools: `agent_register`, `agent_deregister`, `agent_heartbeat`, `agent_list`, `agent_get`, `agent_capabilities`
+  - Namespace-based isolation for multi-tenant agent environments
+  - 18 unit tests + 9 integration tests
+- **MCP dispatch benchmark** — Criterion benchmark suite measuring dispatch latency for 5 representative tool paths
+- **Benchmark baseline scripts** — `scripts/bench-baseline.sh` and `scripts/bench-compare.sh` for managing Criterion baselines
+
+### Changed
+
+- Schema: v16 → v17 (additive: `agents` table with indexes)
+- `serve_http()` now accepts `Option<RealtimeManager>` for SSE support
+- `RealtimeManager` always created in server (not gated on WebSocket port)
+- MCP tools: 155+ → 161+ (6 new agent registry tools)
+
+---
+
 ## [0.6.0] - 2026-03-09
 
 ### Added
