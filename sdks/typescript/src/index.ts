@@ -327,6 +327,47 @@ export class EngramClient {
     });
   }
 
+  // -- Daily (ephemeral) memories --
+
+  async createDaily(
+    content: string,
+    options?: {
+      tags?: string[];
+      workspace?: string;
+      ttlSeconds?: number;
+      metadata?: Record<string, unknown>;
+    }
+  ): Promise<unknown> {
+    const params: Record<string, unknown> = {
+      content,
+      ttl_seconds: options?.ttlSeconds ?? 86400,
+    };
+    if (options?.tags) params.tags = options.tags;
+    if (options?.workspace) params.workspace = options.workspace;
+    if (options?.metadata) params.metadata = options.metadata;
+    return this.mcpCall("memory_create_daily", params);
+  }
+
+  // -- Identity --
+
+  async createIdentity(
+    canonicalId: string,
+    displayName: string,
+    options?: { aliases?: string[]; metadata?: Record<string, unknown> }
+  ): Promise<unknown> {
+    const params: Record<string, unknown> = {
+      canonical_id: canonicalId,
+      display_name: displayName,
+    };
+    if (options?.aliases) params.aliases = options.aliases;
+    if (options?.metadata) params.metadata = options.metadata;
+    return this.mcpCall("identity_create", params);
+  }
+
+  async resolveIdentity(alias: string): Promise<unknown> {
+    return this.mcpCall("identity_resolve", { alias });
+  }
+
   // -- Stats --
 
   async stats(): Promise<unknown> {
