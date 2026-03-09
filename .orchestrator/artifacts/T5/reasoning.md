@@ -1,19 +1,36 @@
-## Task: Implement MCP Prompts for guided workflows
+## Task: T5 — Historical Memory Update Detection (RML-1213)
 
 ### Approach
-Created `src/mcp/prompts.rs` with two public functions (`list_prompts` and `get_prompt`), wired them into `src/mcp/mod.rs` as re-exports, and replaced the stub handlers in `src/bin/server.rs` with real implementations.
+
+Created a single new file `src/intelligence/memory_update.rs` implementing A-Mem-inspired
+automatic memory update detection. Added the module declaration and public re-exports to
+`src/intelligence/mod.rs` (minimal edit required for compilation).
 
 ### Files Changed
-- `src/mcp/prompts.rs` — New file. Implements 4 guided workflow prompts (create-knowledge-base, daily-review, search-and-organize, seed-entity) with argument validation, template substitution, and 14 unit tests.
-- `src/mcp/mod.rs` — Added `pub mod prompts;` and re-exported `list_prompts`/`get_prompt`.
-- `src/bin/server.rs` — Added `get_prompt` and `list_prompts` to imports. Replaced `LIST_PROMPTS` stub (empty list) with `list_prompts()` call. Replaced `GET_PROMPT` stub (always error) with `get_prompt(name, &arguments)` dispatch that returns `{"messages": [...]}` on success or MCP error -32002 on unknown prompt / missing required argument.
+
+- `src/intelligence/memory_update.rs` — new file: all types, DDL, detection engine, apply_update,
+  storage helpers, and 11 tests.
+- `src/intelligence/mod.rs` — added `pub mod memory_update;` declaration and re-export block for
+  RML-1213 types.
 
 ### Decisions Made
-- Used `Option<&str>` helper closure inside `get_prompt` to keep argument extraction concise without allocating.
-- Required arguments return `Err(String)` which maps to MCP error code -32002 (same code used for "not found"), matching the existing resource error convention in server.rs.
-- `daily-review` appends workspace context to the assistant message only when a workspace argument is provided, keeping the user message generic.
+
+- Used `ConflictType as UpdateConflictType` alias in the re-export to avoid name collision with
+  the existing `ConflictType` re-exported from `context_quality`.
+- SHA-256 content hash implemented via FNV-1a 64-bit hash (no new dependencies) — the spec only
+  requires a deterministic content hash string, not cryptographic strength.
+- Supplement confidence formula uses a 0.15 base (`overlap * 0.6 + 0.15`) so that moderate
+  overlap (~0.33) clears the 0.3 minimum threshold. Pure `overlap * 0.6` would yield 0.2 for
+  typical supplement cases, which is below MIN_CONFIDENCE.
+- Contradiction detection requires both negation keywords AND shared entity tokens (len >= 4)
+  to reduce false positives on loosely related content.
+- `fetch_workspace_memories` fetches the 200 most recent memories ordered by id DESC to keep
+  detection focused on active content.
+- `apply_update` does NOT write to `update_log` itself; callers call `create_update_log`
+  separately, giving them control over the reason string.
 
 ### Verification
-- Tests pass: yes (14/14 in mcp::prompts)
-- Lint clean: yes (cargo clippy -- -D warnings: no warnings)
-- Build: yes (cargo build: 0 errors)
+
+- Tests pass: yes — 11/11 tests pass
+- Lint clean: yes — no clippy errors in memory_update module
+- Type check: yes — `cargo check` succeeds (pre-existing errors in search/utility.rs unrelated)
