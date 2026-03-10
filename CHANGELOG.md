@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.14.0] - 2026-03-09
+
+### Added
+
+#### Phase M: DuckDB CQRS Graph Architecture
+- **DuckDB OLAP Engine** — SQLite handles writes, DuckDB reads for analytical graph queries
+  - `TemporalGraph` struct attaches to SQLite read-only via DuckDB's SQLite scanner
+  - Graceful fallback: attempts SQL/PGQ (duckpgq) extension, works without it
+  - `refresh()` re-attaches to pick up new SQLite writes
+  - Feature-gated behind `duckdb-graph` flag (~50MB binary size impact)
+- **Temporal Time-Travel** — query the knowledge graph at any historical point
+  - `snapshot_at(scope, timestamp)` — edges valid at a specific moment
+  - `graph_diff(scope, t1, t2)` — added/removed/changed edges between timestamps
+  - `relationship_timeline(scope, from_id, to_id)` — full edit history of a relationship
+- **Multi-Hop Path-Finding** — discover hidden connections across the graph
+  - `find_connection(scope, start, end, max_hops)` — recursive CTE shortest path
+  - `find_neighbors(scope, node, depth)` — all reachable nodes within N hops
+  - Cycle prevention via path tracking
+- **Hierarchical Scope Isolation** — `scope_path` for multi-tenant graph queries
+  - Prefix-based matching (e.g., `global/mbras%` captures all sub-scopes)
+  - Added to both SQLite temporal ops and DuckDB queries
+  - `graph_entities` table for DuckDB property graph vertex mapping
+- **3 MCP Tools:** `memory_graph_path`, `memory_temporal_snapshot`, `memory_scope_snapshot`
+- **Schema v33:** `scope_path` column on `temporal_edges`, `graph_entities` table
+
+### Changed
+- Temporal edge operations now accept optional `scope_path` parameter (backward compatible)
+
+---
+
 ## [0.13.0] - 2026-03-09
 
 ### Added
