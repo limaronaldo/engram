@@ -364,6 +364,255 @@ pub fn memory_block_archive(ctx: &HandlerContext, params: Value) -> Value {
         .unwrap_or_else(|e| json!({"error": e.to_string()}))
 }
 
+// ── Injection prompt ──────────────────────────────────────────────────────────
+
+/// Build a ready-to-inject prompt string from memories relevant to a query.
+///
+/// Params:
+/// - `query` (string, required) — search query to retrieve relevant memories
+/// - `token_budget` (u64, optional, default: 2000) — maximum tokens for the output prompt
+/// - `workspace` (string, optional) — workspace to search in
+/// - `include_types` (array of string, optional) — filter by memory type (e.g. ["note","episodic"])
+pub fn memory_get_injection_prompt(ctx: &HandlerContext, params: Value) -> Value {
+    use crate::search::hybrid_search;
+    use crate::types::SearchOptions;
+
+    let query = match params.get("query").and_then(|v| v.as_str()) {
+        Some(q) => q.to_string(),
+        None => return json!({"error": "query is required"}),
+    };
+
+    let token_budget = params
+        .get("token_budget")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(2000) as usize;
+
+    let include_types: Vec<String> = params
+        .get("include_types")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let search_opts = SearchOptions {
+        workspace: params
+            .get("workspace")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        limit: Some(20),
+        ..Default::default()
+    };
+
+    let query_embedding = ctx.embedder.embed(&query).ok();
+    let embedding_ref = query_embedding.as_deref();
+
+    let search_result = ctx.storage.with_connection(|conn| {
+        hybrid_search(
+            conn,
+            &query,
+            embedding_ref,
+            &search_opts,
+            &ctx.search_config,
+        )
+    });
+
+    let memories = match search_result {
+        Ok(results) => results,
+        Err(e) => return json!({"error": e.to_string()}),
+    };
+
+    // Filter by memory type if include_types is specified.
+    let memories: Vec<_> = if include_types.is_empty() {
+        memories
+    } else {
+        memories
+            .into_iter()
+            .filter(|r| include_types.contains(&r.memory.memory_type.as_str().to_string()))
+            .collect()
+    };
+
+    if memories.is_empty() {
+        return json!({
+            "prompt": "# Relevant Context\n\n*(No memories found)*",
+            "memory_count": 0,
+            "tokens_used": 0
+        });
+    }
+
+    // Build per-memory markdown blocks.
+    let blocks: Vec<String> = memories
+        .iter()
+        .map(|r| {
+            let m = &r.memory;
+            let tags_str = m.tags.join(", ");
+            format!(
+                "## [{}] Memory #{}\nCreated: {} | Tags: {}\n\n{}\n\n---",
+                m.memory_type.as_str(),
+                m.id,
+                m.created_at.to_rfc3339(),
+                tags_str,
+                m.content
+            )
+        })
+        .collect();
+
+    // Estimate tokens for the full prompt.
+    let header = "# Relevant Context\n\n";
+    let joined = blocks.join("\n\n");
+    let full_prompt = format!("{}{}", header, joined);
+    let total_chars = full_prompt.len();
+    let estimated_tokens = total_chars / 4;
+
+    if estimated_tokens <= token_budget {
+        return json!({
+            "prompt": full_prompt,
+            "memory_count": memories.len(),
+            "tokens_used": estimated_tokens
+        });
+    }
+
+    // Budget exceeded — proportionally truncate each memory's content.
+    // tokens_per_memory = token_budget / count  → chars_per_content = that * 4 - overhead_chars
+    let count = memories.len();
+    let budget_chars = token_budget * 4;
+    // Reserve chars for header + separators + per-block overhead (type, id, created_at, tags lines)
+    let header_chars = header.len();
+    let separator_chars = "\n\n".len() * (count.saturating_sub(1));
+    let overhead_per_block = 80usize; // conservative estimate for the header line of each block
+    let total_overhead = header_chars + separator_chars + overhead_per_block * count;
+    let available_content_chars = budget_chars.saturating_sub(total_overhead);
+    let chars_per_content = if count > 0 {
+        available_content_chars / count
+    } else {
+        0
+    };
+
+    let truncated_blocks: Vec<String> = memories
+        .iter()
+        .map(|r| {
+            let m = &r.memory;
+            let tags_str = m.tags.join(", ");
+            let content = if m.content.len() > chars_per_content && chars_per_content > 0 {
+                format!("{}…", &m.content[..chars_per_content])
+            } else {
+                m.content.clone()
+            };
+            format!(
+                "## [{}] Memory #{}\nCreated: {} | Tags: {}\n\n{}\n\n---",
+                m.memory_type.as_str(),
+                m.id,
+                m.created_at.to_rfc3339(),
+                tags_str,
+                content
+            )
+        })
+        .collect();
+
+    let final_prompt = format!("{}{}", header, truncated_blocks.join("\n\n"));
+    let tokens_used = final_prompt.len() / 4;
+
+    json!({
+        "prompt": final_prompt,
+        "memory_count": count,
+        "tokens_used": tokens_used
+    })
+}
+
+// ── Tool-use observation ───────────────────────────────────────────────────────
+
+/// Observe and record a tool invocation as an Episodic memory.
+///
+/// Params:
+/// - `tool_name` (string, required) — name of the tool that was called
+/// - `tool_input` (any JSON value, required) — the input passed to the tool
+/// - `tool_output` (string, required) — the output returned by the tool
+/// - `session_id` (string, optional, default: "unknown") — session identifier for grouping
+/// - `compress` (bool, optional, default: true) — compact vs full JSON storage
+pub fn memory_observe_tool_use(ctx: &HandlerContext, params: Value) -> Value {
+    use crate::storage::queries::create_memory;
+    use crate::types::{CreateMemoryInput, MemoryType};
+
+    let tool_name = match params.get("tool_name").and_then(|v| v.as_str()) {
+        Some(n) => n.to_string(),
+        None => return json!({"error": "tool_name is required"}),
+    };
+
+    let tool_input = match params.get("tool_input") {
+        Some(v) => v.clone(),
+        None => return json!({"error": "tool_input is required"}),
+    };
+
+    let tool_output = match params.get("tool_output").and_then(|v| v.as_str()) {
+        Some(o) => o.to_string(),
+        None => return json!({"error": "tool_output is required"}),
+    };
+
+    let session_id = params
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let compress = params
+        .get("compress")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    let content = if compress {
+        let input_str = serde_json::to_string(&tool_input).unwrap_or_default();
+        let input_preview = if input_str.len() > 200 {
+            format!("{}…", &input_str[..200])
+        } else {
+            input_str
+        };
+        let output_preview = if tool_output.len() > 200 {
+            format!("{}…", &tool_output[..200])
+        } else {
+            tool_output.clone()
+        };
+        format!(
+            "[{}] input→{} output→{}",
+            tool_name, input_preview, output_preview
+        )
+    } else {
+        serde_json::to_string(&json!({
+            "tool_name": tool_name,
+            "input": tool_input,
+            "output": tool_output
+        }))
+        .unwrap_or_else(|_| format!("[{}] observation", tool_name))
+    };
+
+    let tags = vec![
+        "tool-observation".to_string(),
+        format!("session:{}", session_id),
+        tool_name.clone(),
+    ];
+
+    let input = CreateMemoryInput {
+        content,
+        memory_type: MemoryType::Episodic,
+        tags,
+        workspace: Some("default".to_string()),
+        ..Default::default()
+    };
+
+    let result = ctx
+        .storage
+        .with_transaction(|conn| create_memory(conn, &input));
+
+    match result {
+        Ok(memory) => json!({
+            "id": memory.id,
+            "compressed": compress
+        }),
+        Err(e) => json!({"error": e.to_string()}),
+    }
+}
+
 /// Get the edit history for a memory block.
 ///
 /// Params:
