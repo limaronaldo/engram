@@ -7,10 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [0.15.0] - 2026-03-10
+
 ### Added (Endless Mode — O(N) Context Management)
 - `memory_archive_tool_output`: Archives full tool outputs to memory, returns compressed ~500-token summary for active context. Transforms O(N²) context window scaling to O(N) by keeping summaries in working memory and full outputs in archive.
 - `memory_get_archived_output`: Retrieves full archived tool output by ID for on-demand recall.
-- `memory_get_working_memory`: Assembles all compressed tool observations for a session into a token-budgeted working memory block with archive references.
+- `memory_get_working_memory`: Assembles all compressed tool observations for a session into a token-budgeted working memory block with archive references. Token budget now enforced across both observations and archive refs (P2 fix).
+- `PostToolUse` Claude Code hook (`~/.claude/hooks/engram-endless-mode.sh`): automatic archiving after every Bash/Read/WebFetch/WebSearch tool use.
 
 ### Added (Claude-Mem Parity - Developer Experience)
 - `memory_get_injection_prompt`: Assembles relevant memories into a ready-to-inject system prompt block with configurable token budget and proportional truncation
@@ -18,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `memory_get_public`: Returns memory with `<private>...</private>` sections stripped, safe for multi-agent sharing
 - `memory_get`: Added `strip_private` parameter to optionally strip private content inline
 - `memory_observe_tool_use`: Stores tool call observations as episodic memories with automatic compression for session continuity
+
+### Fixed
+- UTF-8 safe truncation: replaced all raw byte-slice truncations (`&s[..N]`) with `safe_truncate()` that walks back to a valid char boundary — prevents panics on emoji, CJK, and accented input in `memory_observe_tool_use`, `memory_get_injection_prompt`, `memory_archive_tool_output`, and `memory_get_working_memory`
+- Token budget enforcement in `memory_get_working_memory`: archive refs are now counted against the budget before splitting the remainder across observations
+- Clippy: fixed `items_after_test_module`, `manual_char_comparison`, and unused import
+
+### Tests
+- 7 unit tests for `safe_truncate` covering ASCII, multibyte emoji (😀), CJK (日), exact boundary, zero, empty, and within-limit cases
+- 7 unit tests for `strip_private_content` covering all privacy filtering edge cases
 
 ---
 
