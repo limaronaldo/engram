@@ -698,7 +698,7 @@ pub fn memory_archive_tool_output(ctx: &HandlerContext, params: Value) -> Value 
 
         // Find last sentence boundary within the slice.
         let boundary = slice
-            .rfind(|c| c == '.' || c == '!' || c == '?' || c == '\n')
+            .rfind(['.', '!', '?', '\n'])
             .map(|pos| pos + 1)
             .unwrap_or(slice.len());
 
@@ -956,4 +956,59 @@ pub fn memory_block_history(ctx: &HandlerContext, params: Value) -> Value {
             Ok(json!({"name": name, "history": history, "count": history.len()}))
         })
         .unwrap_or_else(|e| json!({"error": e.to_string()}))
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::safe_truncate;
+
+    // safe_truncate tests
+    #[test]
+    fn test_safe_truncate_ascii() {
+        assert_eq!(safe_truncate("hello world", 5), "hello");
+    }
+
+    #[test]
+    fn test_safe_truncate_within_limit() {
+        assert_eq!(safe_truncate("hi", 100), "hi");
+    }
+
+    #[test]
+    fn test_safe_truncate_empty() {
+        assert_eq!(safe_truncate("", 10), "");
+    }
+
+    #[test]
+    fn test_safe_truncate_multibyte_emoji() {
+        // "😀" is 4 bytes (U+1F600). Truncating at byte 5 should back up to byte 4
+        // (the char boundary), not panic.
+        let s = "😀hello";
+        // 😀 = 4 bytes, 'h' starts at byte 4
+        // max_bytes=5 should land at the char boundary at byte 4 (before 'h')
+        let result = safe_truncate(s, 5);
+        assert!(s.is_char_boundary(result.len()), "result must end on char boundary");
+        assert!(!result.contains('\u{FFFD}'), "must not produce replacement chars");
+    }
+
+    #[test]
+    fn test_safe_truncate_multibyte_cjk() {
+        // "日" is 3 bytes. Truncating at byte 4 should back up to byte 3.
+        let s = "日本語";
+        let result = safe_truncate(s, 4);
+        assert!(s.is_char_boundary(result.len()));
+        // should contain exactly one CJK char ("日") or be empty
+        assert!(result == "日" || result.is_empty());
+    }
+
+    #[test]
+    fn test_safe_truncate_exact_boundary() {
+        // Exactly at a char boundary should not back up
+        let s = "abcdef";
+        assert_eq!(safe_truncate(s, 3), "abc");
+    }
+
+    #[test]
+    fn test_safe_truncate_zero() {
+        assert_eq!(safe_truncate("hello", 0), "");
+    }
 }

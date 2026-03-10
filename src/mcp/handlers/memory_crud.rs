@@ -947,52 +947,6 @@ pub fn create_todo(ctx: &HandlerContext, params: Value) -> Value {
 }
 // end of create_issue
 
-#[cfg(test)]
-mod privacy_tests {
-    use super::strip_private_content;
-
-    #[test]
-    fn test_no_private_tags() {
-        let input = "Hello, world!";
-        assert_eq!(strip_private_content(input), "Hello, world!");
-    }
-
-    #[test]
-    fn test_single_private_tag() {
-        let input = "Hello <private>secret</private> world";
-        assert_eq!(strip_private_content(input), "Hello  world");
-    }
-
-    #[test]
-    fn test_multiple_private_tags() {
-        let input = "a <private>1</private> b <private>2</private> c";
-        assert_eq!(strip_private_content(input), "a  b  c");
-    }
-
-    #[test]
-    fn test_multiline_private_content() {
-        let input = "start\n<private>\nline one\nline two\n</private>\nend";
-        assert_eq!(strip_private_content(input), "start\n\nend");
-    }
-
-    #[test]
-    fn test_empty_string() {
-        assert_eq!(strip_private_content(""), "");
-    }
-
-    #[test]
-    fn test_entirely_private() {
-        let input = "<private>everything is private</private>";
-        assert_eq!(strip_private_content(input), "");
-    }
-
-    #[test]
-    fn test_unclosed_tag() {
-        // Unclosed tag: everything from <private> onward is removed.
-        let input = "visible <private>dangling content";
-        assert_eq!(strip_private_content(input), "visible ");
-    }
-}
 pub fn create_issue(ctx: &HandlerContext, params: Value) -> Value {
     let title = params.get("title").and_then(|v| v.as_str()).unwrap_or("");
     let description = params
@@ -1051,4 +1005,44 @@ pub fn create_issue(ctx: &HandlerContext, params: Value) -> Value {
     };
 
     memory_create(ctx, serde_json::to_value(input).unwrap_or_default())
+}
+
+#[cfg(test)]
+mod privacy_tests {
+    use super::strip_private_content;
+
+    #[test]
+    fn test_no_private_tags() {
+        assert_eq!(strip_private_content("Hello, world!"), "Hello, world!");
+    }
+
+    #[test]
+    fn test_single_private_tag() {
+        assert_eq!(strip_private_content("Hello <private>secret</private> world"), "Hello  world");
+    }
+
+    #[test]
+    fn test_multiple_private_tags() {
+        assert_eq!(strip_private_content("a <private>1</private> b <private>2</private> c"), "a  b  c");
+    }
+
+    #[test]
+    fn test_multiline_private_content() {
+        assert_eq!(strip_private_content("start\n<private>\nline one\nline two\n</private>\nend"), "start\n\nend");
+    }
+
+    #[test]
+    fn test_empty_string() {
+        assert_eq!(strip_private_content(""), "");
+    }
+
+    #[test]
+    fn test_entirely_private() {
+        assert_eq!(strip_private_content("<private>everything is private</private>"), "");
+    }
+
+    #[test]
+    fn test_unclosed_tag() {
+        assert_eq!(strip_private_content("visible <private>dangling content"), "visible ");
+    }
 }

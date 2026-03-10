@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use serde_json::{json, Value};
+use serde_json::json;
 
 use engram::embedding::{create_embedder, EmbeddingCache};
 use engram::mcp::{get_tool_definitions, handlers};
