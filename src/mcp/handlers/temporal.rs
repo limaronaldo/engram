@@ -56,6 +56,11 @@ pub fn temporal_add_edge(ctx: &HandlerContext, params: Value) -> Value {
         .unwrap_or("")
         .to_string();
 
+    let scope_path = params
+        .get("scope_path")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
     ctx.storage
         .with_connection(|conn| {
             let edge = add_edge(
@@ -67,6 +72,7 @@ pub fn temporal_add_edge(ctx: &HandlerContext, params: Value) -> Value {
                 &valid_from,
                 confidence,
                 &source,
+                scope_path.as_deref(),
             )?;
             Ok(json!(edge))
         })
@@ -85,9 +91,14 @@ pub fn temporal_snapshot(ctx: &HandlerContext, params: Value) -> Value {
         None => return json!({"error": "timestamp is required"}),
     };
 
+    let scope_path = params
+        .get("scope_path")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
     ctx.storage
         .with_connection(|conn| {
-            let edges = snapshot_at(conn, &timestamp)?;
+            let edges = snapshot_at(conn, &timestamp, scope_path.as_deref())?;
             Ok(json!({"timestamp": timestamp, "edges": edges, "count": edges.len()}))
         })
         .unwrap_or_else(|e| json!({"error": e.to_string()}))
@@ -111,9 +122,14 @@ pub fn temporal_timeline(ctx: &HandlerContext, params: Value) -> Value {
         None => return json!({"error": "to_id is required"}),
     };
 
+    let scope_path = params
+        .get("scope_path")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
     ctx.storage
         .with_connection(|conn| {
-            let edges = relationship_timeline(conn, from_id, to_id)?;
+            let edges = relationship_timeline(conn, from_id, to_id, scope_path.as_deref())?;
             Ok(json!({
                 "from_id": from_id,
                 "to_id": to_id,
@@ -166,9 +182,14 @@ pub fn temporal_diff(ctx: &HandlerContext, params: Value) -> Value {
         None => return json!({"error": "t2 is required"}),
     };
 
+    let scope_path = params
+        .get("scope_path")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
     ctx.storage
         .with_connection(|conn| {
-            let graph_diff = diff(conn, &t1, &t2)?;
+            let graph_diff = diff(conn, &t1, &t2, scope_path.as_deref())?;
             Ok(json!({
                 "t1": t1,
                 "t2": t2,

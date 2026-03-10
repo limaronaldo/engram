@@ -18,6 +18,10 @@ use crate::error::{EngramError, Result};
 /// SQL that creates the `temporal_edges` table and its supporting indexes.
 ///
 /// Safe to run on an existing database — all statements use `IF NOT EXISTS`.
+///
+/// Note: the `scope_path` column was added in migration v33. This constant
+/// reflects the canonical schema; production databases gain the column via
+/// the migration runner.
 pub const CREATE_TEMPORAL_EDGES_TABLE: &str = r#"
 CREATE TABLE IF NOT EXISTS temporal_edges (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -29,11 +33,13 @@ CREATE TABLE IF NOT EXISTS temporal_edges (
     valid_to    TEXT,
     confidence  REAL    NOT NULL DEFAULT 1.0,
     source      TEXT    NOT NULL DEFAULT '',
-    created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    scope_path  TEXT    NOT NULL DEFAULT 'global'
 );
-CREATE INDEX IF NOT EXISTS idx_temporal_edges_from  ON temporal_edges(from_id);
-CREATE INDEX IF NOT EXISTS idx_temporal_edges_to    ON temporal_edges(to_id);
-CREATE INDEX IF NOT EXISTS idx_temporal_edges_valid ON temporal_edges(valid_from, valid_to);
+CREATE INDEX IF NOT EXISTS idx_temporal_edges_from       ON temporal_edges(from_id);
+CREATE INDEX IF NOT EXISTS idx_temporal_edges_to         ON temporal_edges(to_id);
+CREATE INDEX IF NOT EXISTS idx_temporal_edges_valid      ON temporal_edges(valid_from, valid_to);
+CREATE INDEX IF NOT EXISTS idx_temporal_edges_scope_path ON temporal_edges(scope_path);
 "#;
 
 // =============================================================================
@@ -63,6 +69,9 @@ pub struct TemporalEdge {
     pub source: String,
     /// Wall-clock creation time (RFC3339 UTC).
     pub created_at: String,
+    /// Hierarchical scope path (e.g. `"global"`, `"global/org:acme/user:alice"`).
+    /// Added in schema v33. Defaults to `"global"` for backward compatibility.
+    pub scope_path: String,
 }
 
 /// Summary of how the graph changed between two timestamps.
@@ -83,6 +92,10 @@ pub struct GraphDiff {
 // =============================================================================
 
 /// Build a `TemporalEdge` from a rusqlite row.
+///
+/// Expected column order:
+/// 0: id, 1: from_id, 2: to_id, 3: properties, 4: valid_from, 5: valid_to,
+/// 6: confidence, 7: source, 8: relation, 9: created_at, 10: scope_path
 fn row_to_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<TemporalEdge> {
     let props_str: String = row.get(3)?;
     let properties: Value =
@@ -99,6 +112,7 @@ fn row_to_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<TemporalEdge> {
         confidence: row.get(6)?,
         source: row.get(7)?,
         created_at: row.get(9)?,
+        scope_path: row.get(10)?,
     })
 }
 
@@ -109,8 +123,11 @@ fn row_to_edge(row: &rusqlite::Row<'_>) -> rusqlite::Result<TemporalEdge> {
 /// Add a new temporal edge.
 ///
 /// If an open edge (`valid_to IS NULL`) already exists for the same
-/// `(from_id, to_id, relation)` triple, it is automatically closed by setting
-/// its `valid_to` to the `valid_from` of the new edge before inserting.
+/// `(from_id, to_id, relation)` triple **within the same scope**, it is
+/// automatically closed by setting its `valid_to` to the `valid_from` of the
+/// new edge before inserting.
+///
+/// `scope_path` defaults to `"global"` when `None`.
 ///
 /// Returns the newly inserted edge with its generated `id` and `created_at`.
 pub fn add_edge(
@@ -122,27 +139,31 @@ pub fn add_edge(
     valid_from: &str,
     confidence: f32,
     source: &str,
+    scope_path: Option<&str>,
 ) -> Result<TemporalEdge> {
+    let scope = scope_path.unwrap_or("global");
     let props_str = serde_json::to_string(properties)?;
 
-    // Auto-invalidate any currently-open edges for the same triple.
+    // Auto-invalidate any currently-open edges for the same triple within
+    // the same scope.
     conn.execute(
         "UPDATE temporal_edges
          SET valid_to = ?1
-         WHERE from_id = ?2
-           AND to_id   = ?3
-           AND relation = ?4
+         WHERE from_id    = ?2
+           AND to_id      = ?3
+           AND relation   = ?4
+           AND scope_path = ?5
            AND valid_to IS NULL",
-        params![valid_from, from_id, to_id, relation],
+        params![valid_from, from_id, to_id, relation, scope],
     )
     .map_err(EngramError::Database)?;
 
     // Insert the new edge.
     conn.execute(
         "INSERT INTO temporal_edges
-             (from_id, to_id, relation, properties, valid_from, confidence, source)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![from_id, to_id, relation, props_str, valid_from, confidence, source],
+             (from_id, to_id, relation, properties, valid_from, confidence, source, scope_path)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![from_id, to_id, relation, props_str, valid_from, confidence, source, scope],
     )
     .map_err(EngramError::Database)?;
 
@@ -170,51 +191,117 @@ pub fn invalidate_edge(conn: &Connection, edge_id: i64, valid_to: &str) -> Resul
 ///
 /// An edge is valid at `t` when `valid_from <= t` AND (`valid_to IS NULL` OR
 /// `valid_to > t`).
-pub fn snapshot_at(conn: &Connection, timestamp: &str) -> Result<Vec<TemporalEdge>> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, from_id, to_id, properties, valid_from, valid_to,
-                    confidence, source, relation, created_at
-             FROM   temporal_edges
-             WHERE  valid_from <= ?1
-               AND  (valid_to IS NULL OR valid_to > ?1)
-             ORDER  BY from_id, to_id, relation",
-        )
-        .map_err(EngramError::Database)?;
+///
+/// When `scope_path` is `Some(prefix)`, only edges whose `scope_path` equals
+/// `prefix` or starts with `prefix/` are returned (hierarchical prefix
+/// matching). When `None`, edges from all scopes are returned (backward
+/// compatible).
+pub fn snapshot_at(
+    conn: &Connection,
+    timestamp: &str,
+    scope_path: Option<&str>,
+) -> Result<Vec<TemporalEdge>> {
+    match scope_path {
+        None => {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, from_id, to_id, properties, valid_from, valid_to,
+                            confidence, source, relation, created_at, scope_path
+                     FROM   temporal_edges
+                     WHERE  valid_from <= ?1
+                       AND  (valid_to IS NULL OR valid_to > ?1)
+                     ORDER  BY from_id, to_id, relation",
+                )
+                .map_err(EngramError::Database)?;
 
-    let edges = stmt
-        .query_map(params![timestamp], row_to_edge)
-        .map_err(EngramError::Database)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(EngramError::Database)?;
+            let edges = stmt
+                .query_map(params![timestamp], row_to_edge)
+                .map_err(EngramError::Database)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(EngramError::Database)?;
 
-    Ok(edges)
+            Ok(edges)
+        }
+        Some(scope) => {
+            let pattern = format!("{}/%", scope);
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, from_id, to_id, properties, valid_from, valid_to,
+                            confidence, source, relation, created_at, scope_path
+                     FROM   temporal_edges
+                     WHERE  valid_from <= ?1
+                       AND  (valid_to IS NULL OR valid_to > ?1)
+                       AND  (scope_path = ?2 OR scope_path LIKE ?3)
+                     ORDER  BY from_id, to_id, relation",
+                )
+                .map_err(EngramError::Database)?;
+
+            let edges = stmt
+                .query_map(params![timestamp, scope, pattern], row_to_edge)
+                .map_err(EngramError::Database)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(EngramError::Database)?;
+
+            Ok(edges)
+        }
+    }
 }
 
 /// Return the complete edit history for a `(from_id, to_id)` pair, ordered
 /// chronologically (`valid_from ASC`, then `created_at ASC`).
+///
+/// When `scope_path` is `Some(prefix)`, only edges whose `scope_path` equals
+/// `prefix` or starts with `prefix/` are returned. When `None`, all scopes
+/// are included (backward compatible).
 pub fn relationship_timeline(
     conn: &Connection,
     from_id: i64,
     to_id: i64,
+    scope_path: Option<&str>,
 ) -> Result<Vec<TemporalEdge>> {
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, from_id, to_id, properties, valid_from, valid_to,
-                    confidence, source, relation, created_at
-             FROM   temporal_edges
-             WHERE  from_id = ?1 AND to_id = ?2
-             ORDER  BY valid_from ASC, created_at ASC",
-        )
-        .map_err(EngramError::Database)?;
+    match scope_path {
+        None => {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, from_id, to_id, properties, valid_from, valid_to,
+                            confidence, source, relation, created_at, scope_path
+                     FROM   temporal_edges
+                     WHERE  from_id = ?1 AND to_id = ?2
+                     ORDER  BY valid_from ASC, created_at ASC",
+                )
+                .map_err(EngramError::Database)?;
 
-    let edges = stmt
-        .query_map(params![from_id, to_id], row_to_edge)
-        .map_err(EngramError::Database)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(EngramError::Database)?;
+            let edges = stmt
+                .query_map(params![from_id, to_id], row_to_edge)
+                .map_err(EngramError::Database)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(EngramError::Database)?;
 
-    Ok(edges)
+            Ok(edges)
+        }
+        Some(scope) => {
+            let pattern = format!("{}/%", scope);
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, from_id, to_id, properties, valid_from, valid_to,
+                            confidence, source, relation, created_at, scope_path
+                     FROM   temporal_edges
+                     WHERE  from_id    = ?1
+                       AND  to_id      = ?2
+                       AND  (scope_path = ?3 OR scope_path LIKE ?4)
+                     ORDER  BY valid_from ASC, created_at ASC",
+                )
+                .map_err(EngramError::Database)?;
+
+            let edges = stmt
+                .query_map(params![from_id, to_id, scope, pattern], row_to_edge)
+                .map_err(EngramError::Database)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(EngramError::Database)?;
+
+            Ok(edges)
+        }
+    }
 }
 
 /// Detect edges that share the same `(from_id, to_id, relation)` triple and
@@ -228,9 +315,9 @@ pub fn detect_contradictions(conn: &Connection) -> Result<Vec<(TemporalEdge, Tem
     let mut stmt = conn
         .prepare(
             "SELECT a.id, a.from_id, a.to_id, a.properties, a.valid_from, a.valid_to,
-                    a.confidence, a.source, a.relation, a.created_at,
+                    a.confidence, a.source, a.relation, a.created_at, a.scope_path,
                     b.id, b.from_id, b.to_id, b.properties, b.valid_from, b.valid_to,
-                    b.confidence, b.source, b.relation, b.created_at
+                    b.confidence, b.source, b.relation, b.created_at, b.scope_path
              FROM   temporal_edges a
              JOIN   temporal_edges b
                ON   a.from_id  = b.from_id
@@ -244,9 +331,10 @@ pub fn detect_contradictions(conn: &Connection) -> Result<Vec<(TemporalEdge, Tem
 
     let pairs = stmt
         .query_map([], |row| {
-            // First edge columns: 0..9
+            // First edge columns: 0..10
             let props_a: String = row.get(3)?;
-            let props_b: String = row.get(13)?;
+            // Second edge columns: 11..21
+            let props_b: String = row.get(14)?;
 
             let edge_a = TemporalEdge {
                 id: row.get(0)?,
@@ -260,20 +348,22 @@ pub fn detect_contradictions(conn: &Connection) -> Result<Vec<(TemporalEdge, Tem
                 source: row.get(7)?,
                 relation: row.get(8)?,
                 created_at: row.get(9)?,
+                scope_path: row.get(10)?,
             };
 
             let edge_b = TemporalEdge {
-                id: row.get(10)?,
-                from_id: row.get(11)?,
-                to_id: row.get(12)?,
+                id: row.get(11)?,
+                from_id: row.get(12)?,
+                to_id: row.get(13)?,
                 properties: serde_json::from_str(&props_b)
                     .unwrap_or(Value::Object(Default::default())),
-                valid_from: row.get(14)?,
-                valid_to: row.get(15)?,
-                confidence: row.get(16)?,
-                source: row.get(17)?,
-                relation: row.get(18)?,
-                created_at: row.get(19)?,
+                valid_from: row.get(15)?,
+                valid_to: row.get(16)?,
+                confidence: row.get(17)?,
+                source: row.get(18)?,
+                relation: row.get(19)?,
+                created_at: row.get(20)?,
+                scope_path: row.get(21)?,
             };
 
             Ok((edge_a, edge_b))
@@ -293,9 +383,18 @@ pub fn detect_contradictions(conn: &Connection) -> Result<Vec<(TemporalEdge, Tem
 /// - `changed` — triples present at both `t1` and `t2` but with a different
 ///   `id` (i.e. the edge was superseded), implying the properties
 ///   or confidence changed.
-pub fn diff(conn: &Connection, t1: &str, t2: &str) -> Result<GraphDiff> {
-    let snap1 = snapshot_at(conn, t1)?;
-    let snap2 = snapshot_at(conn, t2)?;
+///
+/// When `scope_path` is `Some(prefix)`, the diff is limited to edges within
+/// that scope hierarchy. When `None`, all scopes are compared (backward
+/// compatible).
+pub fn diff(
+    conn: &Connection,
+    t1: &str,
+    t2: &str,
+    scope_path: Option<&str>,
+) -> Result<GraphDiff> {
+    let snap1 = snapshot_at(conn, t1, scope_path)?;
+    let snap2 = snapshot_at(conn, t2, scope_path)?;
 
     // Key: (from_id, to_id, relation)
     type Key = (i64, i64, String);
@@ -345,7 +444,7 @@ fn get_edge_by_id(conn: &Connection, id: i64) -> Result<Option<TemporalEdge>> {
     let mut stmt = conn
         .prepare(
             "SELECT id, from_id, to_id, properties, valid_from, valid_to,
-                    confidence, source, relation, created_at
+                    confidence, source, relation, created_at, scope_path
              FROM   temporal_edges
              WHERE  id = ?1",
         )
@@ -395,6 +494,7 @@ mod tests {
             "2024-01-01T00:00:00Z",
             0.9,
             "test",
+            None,
         )
         .expect("add_edge");
 
@@ -404,6 +504,7 @@ mod tests {
         assert!(edge.valid_to.is_none());
         assert_eq!(edge.confidence, 0.9);
         assert_eq!(edge.source, "test");
+        assert_eq!(edge.scope_path, "global");
     }
 
     // -------------------------------------------------------------------------
@@ -422,6 +523,7 @@ mod tests {
             "2023-01-01T00:00:00Z",
             1.0,
             "hr",
+            None,
         )
         .expect("first edge");
 
@@ -437,6 +539,7 @@ mod tests {
             "2024-06-01T00:00:00Z",
             1.0,
             "hr",
+            None,
         )
         .expect("second edge");
 
@@ -469,6 +572,7 @@ mod tests {
             "2023-01-01T00:00:00Z",
             1.0,
             "",
+            None,
         )
         .unwrap();
         // Manually close it via a second edge (auto-invalidation).
@@ -481,16 +585,17 @@ mod tests {
             "2024-01-01T00:00:00Z",
             1.0,
             "",
+            None,
         )
         .unwrap();
 
         // Snapshot mid-2023 should return exactly 1 edge.
-        let snap = snapshot_at(&conn, "2023-07-01T00:00:00Z").expect("snapshot");
+        let snap = snapshot_at(&conn, "2023-07-01T00:00:00Z", None).expect("snapshot");
         assert_eq!(snap.len(), 1);
         assert_eq!(snap[0].valid_from, "2023-01-01T00:00:00Z");
 
         // Snapshot mid-2024 should return the second edge.
-        let snap2 = snapshot_at(&conn, "2024-07-01T00:00:00Z").expect("snapshot");
+        let snap2 = snapshot_at(&conn, "2024-07-01T00:00:00Z", None).expect("snapshot");
         assert_eq!(snap2.len(), 1);
         assert_eq!(snap2[0].valid_from, "2024-01-01T00:00:00Z");
     }
@@ -511,6 +616,7 @@ mod tests {
             "2020-01-01T00:00:00Z",
             1.0,
             "",
+            None,
         )
         .unwrap();
         add_edge(
@@ -522,6 +628,7 @@ mod tests {
             "2021-06-01T00:00:00Z",
             1.0,
             "",
+            None,
         )
         .unwrap();
         add_edge(
@@ -533,10 +640,11 @@ mod tests {
             "2022-09-01T00:00:00Z",
             1.0,
             "",
+            None,
         )
         .unwrap();
 
-        let timeline = relationship_timeline(&conn, 10, 20).expect("timeline");
+        let timeline = relationship_timeline(&conn, 10, 20, None).expect("timeline");
         assert_eq!(timeline.len(), 3);
 
         // Verify ascending order.
@@ -592,6 +700,7 @@ mod tests {
             "2022-01-01T00:00:00Z",
             1.0,
             "",
+            None,
         )
         .unwrap();
 
@@ -605,10 +714,11 @@ mod tests {
             "2024-01-01T00:00:00Z",
             1.0,
             "",
+            None,
         )
         .unwrap();
 
-        let d = diff(&conn, "2023-01-01T00:00:00Z", "2025-01-01T00:00:00Z").expect("diff");
+        let d = diff(&conn, "2023-01-01T00:00:00Z", "2025-01-01T00:00:00Z", None).expect("diff");
 
         // "knows" was present at both; "likes" was added.
         assert_eq!(d.added.len(), 1);
@@ -625,16 +735,16 @@ mod tests {
     fn test_empty_graph_operations() {
         let conn = setup_db();
 
-        let snap = snapshot_at(&conn, "2024-01-01T00:00:00Z").expect("snapshot");
+        let snap = snapshot_at(&conn, "2024-01-01T00:00:00Z", None).expect("snapshot");
         assert!(snap.is_empty());
 
-        let timeline = relationship_timeline(&conn, 99, 100).expect("timeline");
+        let timeline = relationship_timeline(&conn, 99, 100, None).expect("timeline");
         assert!(timeline.is_empty());
 
         let contradictions = detect_contradictions(&conn).expect("detect");
         assert!(contradictions.is_empty());
 
-        let d = diff(&conn, "2024-01-01T00:00:00Z", "2025-01-01T00:00:00Z").expect("diff");
+        let d = diff(&conn, "2024-01-01T00:00:00Z", "2025-01-01T00:00:00Z", None).expect("diff");
         assert!(d.added.is_empty());
         assert!(d.removed.is_empty());
         assert!(d.changed.is_empty());
@@ -664,6 +774,7 @@ mod tests {
             "2024-03-01T00:00:00Z",
             0.95,
             "payroll",
+            None,
         )
         .expect("add");
 
@@ -689,6 +800,7 @@ mod tests {
             "2024-01-01T00:00:00Z",
             1.0,
             "legal",
+            None,
         )
         .expect("add");
 
@@ -735,6 +847,7 @@ mod tests {
             "2022-01-01T00:00:00Z",
             1.0,
             "",
+            None,
         )
         .unwrap();
 
@@ -748,15 +861,244 @@ mod tests {
             "2023-06-01T00:00:00Z",
             1.0,
             "",
+            None,
         )
         .unwrap();
 
-        let d = diff(&conn, "2022-07-01T00:00:00Z", "2024-01-01T00:00:00Z").expect("diff");
+        let d =
+            diff(&conn, "2022-07-01T00:00:00Z", "2024-01-01T00:00:00Z", None).expect("diff");
 
         // The triple is present at both timestamps, but via a different edge id.
         assert_eq!(d.changed.len(), 1);
         let (old, new) = &d.changed[0];
         assert_eq!(old.properties["level"], "junior");
         assert_eq!(new.properties["level"], "senior");
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 12: Add edge with explicit scope, verify scope is stored
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_add_edge_with_scope() {
+        let conn = setup_db();
+
+        // Edge in the default (global) scope.
+        let global_edge = add_edge(
+            &conn,
+            1,
+            2,
+            "knows",
+            &json!({}),
+            "2024-01-01T00:00:00Z",
+            1.0,
+            "",
+            None,
+        )
+        .expect("global edge");
+        assert_eq!(global_edge.scope_path, "global");
+
+        // Edge in a tenant-specific scope.
+        let tenant_edge = add_edge(
+            &conn,
+            3,
+            4,
+            "manages",
+            &json!({}),
+            "2024-01-01T00:00:00Z",
+            1.0,
+            "",
+            Some("global/org:acme"),
+        )
+        .expect("tenant edge");
+        assert_eq!(tenant_edge.scope_path, "global/org:acme");
+
+        // Edge in a deeper scope.
+        let user_edge = add_edge(
+            &conn,
+            5,
+            6,
+            "reports_to",
+            &json!({}),
+            "2024-01-01T00:00:00Z",
+            1.0,
+            "",
+            Some("global/org:acme/user:alice"),
+        )
+        .expect("user edge");
+        assert_eq!(user_edge.scope_path, "global/org:acme/user:alice");
+
+        // Auto-invalidation is scope-aware: adding another edge for the same
+        // triple in a DIFFERENT scope must NOT close the first-scope edge.
+        let acme_edge_1 = add_edge(
+            &conn,
+            10,
+            20,
+            "partner",
+            &json!({}),
+            "2024-01-01T00:00:00Z",
+            1.0,
+            "",
+            Some("global/org:acme"),
+        )
+        .expect("acme edge 1");
+
+        let _acme_edge_2 = add_edge(
+            &conn,
+            10,
+            20,
+            "partner",
+            &json!({}),
+            "2024-01-01T00:00:00Z",
+            1.0,
+            "",
+            Some("global/org:beta"), // different scope — must not close acme_edge_1
+        )
+        .expect("beta edge");
+
+        let refetched = get_edge_by_id(&conn, acme_edge_1.id)
+            .expect("query")
+            .expect("still exists");
+        assert!(
+            refetched.valid_to.is_none(),
+            "edge in org:acme must not be closed by edge in org:beta"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 13: snapshot_at with scope_path filter
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_snapshot_at_with_scope_filter() {
+        let conn = setup_db();
+
+        // Add one edge in "global" scope and one in "global/org:acme".
+        add_edge(
+            &conn,
+            1,
+            2,
+            "rel",
+            &json!({}),
+            "2024-01-01T00:00:00Z",
+            1.0,
+            "",
+            None, // defaults to "global"
+        )
+        .unwrap();
+
+        add_edge(
+            &conn,
+            3,
+            4,
+            "rel",
+            &json!({}),
+            "2024-01-01T00:00:00Z",
+            1.0,
+            "",
+            Some("global/org:acme"),
+        )
+        .unwrap();
+
+        // No scope filter → both edges visible.
+        let all = snapshot_at(&conn, "2025-01-01T00:00:00Z", None).unwrap();
+        assert_eq!(all.len(), 2);
+
+        // Filter to "global" includes all descendants (hierarchical prefix matching).
+        // "global" matches exactly, and "global/org:acme" matches via LIKE 'global/%'.
+        let global_tree = snapshot_at(&conn, "2025-01-01T00:00:00Z", Some("global")).unwrap();
+        assert_eq!(global_tree.len(), 2, "global scope tree should include its child org:acme");
+
+        // Filter to "global/org:acme" → only the acme edge (no further children here).
+        let acme_only =
+            snapshot_at(&conn, "2025-01-01T00:00:00Z", Some("global/org:acme")).unwrap();
+        assert_eq!(acme_only.len(), 1);
+        assert_eq!(acme_only[0].from_id, 3);
+
+        // Demonstrate that "global" exact match can be queried by adding a non-child scope.
+        add_edge(
+            &conn,
+            7,
+            8,
+            "rel",
+            &json!({}),
+            "2024-01-01T00:00:00Z",
+            1.0,
+            "",
+            Some("global/org:beta"),
+        )
+        .unwrap();
+
+        // "global/org:acme" filter should still only return the one acme edge.
+        let acme_only2 =
+            snapshot_at(&conn, "2025-01-01T00:00:00Z", Some("global/org:acme")).unwrap();
+        assert_eq!(acme_only2.len(), 1);
+        assert_eq!(acme_only2[0].from_id, 3);
+    }
+
+    // -------------------------------------------------------------------------
+    // Test 14: scope prefix matching — hierarchy traversal
+    // -------------------------------------------------------------------------
+    #[test]
+    fn test_scope_prefix_matching() {
+        let conn = setup_db();
+
+        // Three edges at different scope depths.
+        add_edge(
+            &conn,
+            1,
+            2,
+            "a",
+            &json!({}),
+            "2024-01-01T00:00:00Z",
+            1.0,
+            "",
+            Some("global/mbras"),
+        )
+        .unwrap();
+
+        add_edge(
+            &conn,
+            3,
+            4,
+            "b",
+            &json!({}),
+            "2024-01-01T00:00:00Z",
+            1.0,
+            "",
+            Some("global/mbras/broker_alice"),
+        )
+        .unwrap();
+
+        add_edge(
+            &conn,
+            5,
+            6,
+            "c",
+            &json!({}),
+            "2024-01-01T00:00:00Z",
+            1.0,
+            "",
+            Some("global/other"),
+        )
+        .unwrap();
+
+        // Filtering on "global/mbras" should return:
+        //   - the exact "global/mbras" edge
+        //   - "global/mbras/broker_alice" (child)
+        // but NOT "global/other".
+        let mbras_snap =
+            snapshot_at(&conn, "2025-01-01T00:00:00Z", Some("global/mbras")).unwrap();
+        assert_eq!(
+            mbras_snap.len(),
+            2,
+            "expected 2 edges under global/mbras, got: {:?}",
+            mbras_snap
+                .iter()
+                .map(|e| &e.scope_path)
+                .collect::<Vec<_>>()
+        );
+
+        let scope_paths: Vec<&str> = mbras_snap.iter().map(|e| e.scope_path.as_str()).collect();
+        assert!(scope_paths.contains(&"global/mbras"));
+        assert!(scope_paths.contains(&"global/mbras/broker_alice"));
     }
 }
