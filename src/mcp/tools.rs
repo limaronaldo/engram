@@ -154,7 +154,8 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
         schema: r#"{
             "type": "object",
             "properties": {
-                "id": {"type": "integer", "description": "Memory ID"}
+                "id": {"type": "integer", "description": "Memory ID"},
+                "strip_private": {"type": "boolean", "description": "When true, removes all <private>...</private> tagged sections from the content before returning (default: false)"}
             },
             "required": ["id"]
         }"#,
@@ -2513,6 +2514,77 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             idempotent_hint: Some(true),
             open_world_hint: None,
         },
+    },
+
+    // ── Claude-Mem Parity (v0.14.0) ──────────────────────────────────────────
+    ToolDef {
+        name: "memory_get_public",
+        description: "Get a memory with all <private>...</private> tagged sections removed. Safe for sharing in multi-agent contexts.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer", "description": "Memory ID"}
+            },
+            "required": ["id"]
+        }"#,
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_search_compact",
+        description: "Token-efficient search returning only id, title (first line, max 80 chars), created_at, and tags. Use memory_expand to get full content for specific IDs.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query"},
+                "limit": {"type": "integer", "description": "Max results (default: 10)"},
+                "workspace": {"type": "string", "description": "Filter to workspace"}
+            },
+            "required": ["query"]
+        }"#,
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_expand",
+        description: "Fetch full memory content for specific IDs. Used after memory_search_compact to get full content only for memories you need.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "ids": {"type": "array", "items": {"type": "integer"}, "description": "Memory IDs to expand"}
+            },
+            "required": ["ids"]
+        }"#,
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_get_injection_prompt",
+        description: "Assembles the most relevant memories into a ready-to-inject system prompt block. Uses hybrid search to find relevant memories and formats them as markdown, respecting a token budget.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query to find relevant memories"},
+                "token_budget": {"type": "integer", "description": "Max tokens for output (default: 2000)"},
+                "workspace": {"type": "string", "description": "Filter to specific workspace"},
+                "include_types": {"type": "array", "items": {"type": "string"}, "description": "Filter by memory types"}
+            },
+            "required": ["query"]
+        }"#,
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_observe_tool_use",
+        description: "Store a tool observation as an episodic memory for session continuity. Automatically compresses large inputs/outputs.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "tool_name": {"type": "string", "description": "Name of the tool that was used"},
+                "tool_input": {"type": "object", "description": "Tool input parameters"},
+                "tool_output": {"type": "string", "description": "Tool output/result"},
+                "session_id": {"type": "string", "description": "Session identifier for grouping observations"},
+                "compress": {"type": "boolean", "description": "Compress to 200-char previews (default: true)"}
+            },
+            "required": ["tool_name", "tool_input", "tool_output"]
+        }"#,
+        annotations: ToolAnnotations::mutating(),
     },
 ];
 

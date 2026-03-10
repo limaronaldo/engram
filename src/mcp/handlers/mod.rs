@@ -308,6 +308,8 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         "memory_embedding_migrate" => retrieval::memory_embedding_migrate(ctx, params),
 
         // ── Context engineering / fact extraction ────────────────────────────
+        "memory_get_injection_prompt" => context::memory_get_injection_prompt(ctx, params),
+        "memory_observe_tool_use" => context::memory_observe_tool_use(ctx, params),
         "memory_extract_facts" => context::memory_extract_facts(ctx, params),
         "memory_list_facts" => context::memory_list_facts(ctx, params),
         "memory_fact_graph" => context::memory_fact_graph(ctx, params),

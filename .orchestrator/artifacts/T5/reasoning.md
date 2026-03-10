@@ -1,36 +1,26 @@
-## Task: T5 — Historical Memory Update Detection (RML-1213)
+## Task: T5 — Wire StripeService into AppState
 
 ### Approach
-
-Created a single new file `src/intelligence/memory_update.rs` implementing A-Mem-inspired
-automatic memory update detection. Added the module declaration and public re-exports to
-`src/intelligence/mod.rs` (minimal edit required for compilation).
+Added `StripeService` as an optional field on `AppState`. Initialized it
+conditionally during `AppState::new` by checking `config.stripe`. `StripeService`
+is `Clone` (confirmed by the derive and the existing `stripe_service_is_clone` unit test),
+so no `Arc` wrapper is needed.
 
 ### Files Changed
-
-- `src/intelligence/memory_update.rs` — new file: all types, DDL, detection engine, apply_update,
-  storage helpers, and 11 tests.
-- `src/intelligence/mod.rs` — added `pub mod memory_update;` declaration and re-export block for
-  RML-1213 types.
+- `engram-cloud/gateway/src/state.rs` — imported `StripeService` from
+  `crate::stripe_client`, added `pub stripe: Option<StripeService>` field,
+  added initialization block that calls `StripeService::new` when `config.stripe`
+  is `Some` and logs "Stripe billing service initialized" or "Stripe billing
+  not configured (STRIPE_SECRET_KEY not set)" when `None`.
 
 ### Decisions Made
-
-- Used `ConflictType as UpdateConflictType` alias in the re-export to avoid name collision with
-  the existing `ConflictType` re-exported from `context_quality`.
-- SHA-256 content hash implemented via FNV-1a 64-bit hash (no new dependencies) — the spec only
-  requires a deterministic content hash string, not cryptographic strength.
-- Supplement confidence formula uses a 0.15 base (`overlap * 0.6 + 0.15`) so that moderate
-  overlap (~0.33) clears the 0.3 minimum threshold. Pure `overlap * 0.6` would yield 0.2 for
-  typical supplement cases, which is below MIN_CONFIDENCE.
-- Contradiction detection requires both negation keywords AND shared entity tokens (len >= 4)
-  to reduce false positives on loosely related content.
-- `fetch_workspace_memories` fetches the 200 most recent memories ordered by id DESC to keep
-  detection focused on active content.
-- `apply_update` does NOT write to `update_log` itself; callers call `create_update_log`
-  separately, giving them control over the reason string.
+- No `Arc` wrapping: `StripeService` is `Clone` and `stripe::Client` is internally
+  arc-backed, so an extra indirection adds no value.
+- Placed the Stripe init block after the backup block, immediately before the
+  final `Ok(Self { ... })` to keep init ordering consistent with existing fields.
+- Mirrored the optional R2 pattern: conditional `if let Some(cfg) = &config.stripe`.
 
 ### Verification
-
-- Tests pass: yes — 11/11 tests pass
-- Lint clean: yes — no clippy errors in memory_update module
-- Type check: yes — `cargo check` succeeds (pre-existing errors in search/utility.rs unrelated)
+- Tests pass: `cargo check -p engram-gateway` passes cleanly.
+- Lint clean: yes (only pre-existing upstream sqlx-postgres future-incompat warning).
+- Type check: yes.

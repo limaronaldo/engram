@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Claude-Mem Parity - Developer Experience)
+- `memory_get_injection_prompt`: Assembles relevant memories into a ready-to-inject system prompt block with configurable token budget and proportional truncation
+- `memory_search_compact` + `memory_expand`: Two-phase token-efficient retrieval — search returns id+title+tags only, expand fetches full content on demand
+- `memory_get_public`: Returns memory with `<private>...</private>` sections stripped, safe for multi-agent sharing
+- `memory_get`: Added `strip_private` parameter to optionally strip private content inline
+- `memory_observe_tool_use`: Stores tool call observations as episodic memories with automatic compression for session continuity
+
 ---
 
 ## [0.14.0] - 2026-03-09

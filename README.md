@@ -301,11 +301,16 @@ If you built from source instead of installing via Homebrew, use the full path t
 |------|-------------|
 | `memory_create` | Store a new memory |
 | `memory_create_daily` | Create auto-expiring daily memory |
-| `memory_get` | Retrieve by ID |
+| `memory_get` | Retrieve by ID (supports `strip_private` param) |
+| `memory_get_public` | Retrieve with `<private>…</private>` sections stripped |
 | `memory_update` | Update content or metadata |
 | `memory_delete` | Remove a memory |
 | `memory_list` | List with filters |
 | `memory_search` | Hybrid search with typo tolerance |
+| `memory_search_compact` | Token-efficient search (id + title + tags only) |
+| `memory_expand` | Fetch full content for IDs from compact search |
+| `memory_get_injection_prompt` | Assemble relevant memories into a ready-to-inject prompt block |
+| `memory_observe_tool_use` | Store tool call observation as episodic memory |
 | `memory_related` | Find cross-references |
 | `memory_stats` | Usage statistics |
 
