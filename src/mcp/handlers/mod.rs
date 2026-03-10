@@ -310,6 +310,9 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         // ── Context engineering / fact extraction ────────────────────────────
         "memory_get_injection_prompt" => context::memory_get_injection_prompt(ctx, params),
         "memory_observe_tool_use" => context::memory_observe_tool_use(ctx, params),
+        "memory_archive_tool_output" => context::memory_archive_tool_output(ctx, params),
+        "memory_get_archived_output" => context::memory_get_archived_output(ctx, params),
+        "memory_get_working_memory" => context::memory_get_working_memory(ctx, params),
         "memory_extract_facts" => context::memory_extract_facts(ctx, params),
         "memory_list_facts" => context::memory_list_facts(ctx, params),
         "memory_fact_graph" => context::memory_fact_graph(ctx, params),

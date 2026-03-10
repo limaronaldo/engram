@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Endless Mode — O(N) Context Management)
+- `memory_archive_tool_output`: Archives full tool outputs to memory, returns compressed ~500-token summary for active context. Transforms O(N²) context window scaling to O(N) by keeping summaries in working memory and full outputs in archive.
+- `memory_get_archived_output`: Retrieves full archived tool output by ID for on-demand recall.
+- `memory_get_working_memory`: Assembles all compressed tool observations for a session into a token-budgeted working memory block with archive references.
+
 ### Added (Claude-Mem Parity - Developer Experience)
 - `memory_get_injection_prompt`: Assembles relevant memories into a ready-to-inject system prompt block with configurable token budget and proportional truncation
 - `memory_search_compact` + `memory_expand`: Two-phase token-efficient retrieval — search returns id+title+tags only, expand fetches full content on demand

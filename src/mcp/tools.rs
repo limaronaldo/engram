@@ -2586,6 +2586,49 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
         }"#,
         annotations: ToolAnnotations::mutating(),
     },
+    // ── Endless Mode (O(N) context management) ───────────────────────────────
+    ToolDef {
+        name: "memory_archive_tool_output",
+        description: "Archives a tool's full raw output to memory and returns a compressed summary (~500 tokens) for use in the active context. Transforms O(N²) context growth to O(N) by keeping only summaries in the working context while preserving full outputs for on-demand retrieval.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "tool_name": {"type": "string", "description": "Name of the tool whose output is being archived"},
+                "raw_output": {"type": "string", "description": "Full raw output to archive"},
+                "session_id": {"type": "string", "description": "Session identifier for grouping archived outputs (default: 'unknown')"},
+                "compress_summary": {"type": "boolean", "description": "Whether to generate a compressed summary (default: true)"},
+                "summary_tokens": {"type": "integer", "description": "Max tokens for the compressed summary (default: 500)"}
+            },
+            "required": ["tool_name", "raw_output"]
+        }"#,
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_get_archived_output",
+        description: "Retrieves the full raw output for an archived tool observation by its archive ID. Use when you need the complete output that was previously compressed for context efficiency.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "archive_id": {"type": "integer", "description": "Archive ID returned by memory_archive_tool_output"}
+            },
+            "required": ["archive_id"]
+        }"#,
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_get_working_memory",
+        description: "Assembles all compressed tool observations for a session into a token-budgeted working memory block. Includes archive references for retrieving full outputs on demand. This is the core of the Endless Mode context management system.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session identifier to retrieve observations for"},
+                "token_budget": {"type": "integer", "description": "Max tokens for the working memory block (default: 4000)"},
+                "include_tool_names": {"type": "array", "items": {"type": "string"}, "description": "Whitelist of tool names to include (default: all)"}
+            },
+            "required": ["session_id"]
+        }"#,
+        annotations: ToolAnnotations::read_only(),
+    },
 ];
 
 /// Get all tool definitions as ToolDefinition structs

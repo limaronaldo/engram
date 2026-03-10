@@ -311,6 +311,9 @@ If you built from source instead of installing via Homebrew, use the full path t
 | `memory_expand` | Fetch full content for IDs from compact search |
 | `memory_get_injection_prompt` | Assemble relevant memories into a ready-to-inject prompt block |
 | `memory_observe_tool_use` | Store tool call observation as episodic memory |
+| `memory_archive_tool_output` | Archive full tool output to memory, return compressed summary (~500 tokens) for active context (Endless Mode) |
+| `memory_get_archived_output` | Retrieve full archived tool output by ID on demand |
+| `memory_get_working_memory` | Assemble token-budgeted working memory block for a session with archive references (Endless Mode) |
 | `memory_related` | Find cross-references |
 | `memory_stats` | Usage statistics |
 
