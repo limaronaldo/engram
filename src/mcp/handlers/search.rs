@@ -368,3 +368,117 @@ pub fn memory_feedback_stats(ctx: &HandlerContext, params: Value) -> Value {
         })
         .unwrap_or_else(|e| json!({"error": e.to_string()}))
 }
+
+// ── Compact Search + Expand ──────────────────────────────────────────────────
+
+/// Return a compact summary of search results (id, title, created_at, tags).
+///
+/// Parameters:
+///   - `query` (String, required)
+///   - `limit` (u64, optional, default 10)
+///   - `workspace` (String, optional)
+///
+/// The `title` field is the first 80 chars of `content`, truncated at the first
+/// newline, with "..." appended if truncated.
+pub fn memory_search_compact(ctx: &HandlerContext, params: Value) -> Value {
+    let query = match params.get("query").and_then(|v| v.as_str()) {
+        Some(q) => q,
+        None => return json!({"error": "query is required"}),
+    };
+
+    let mut options: SearchOptions = serde_json::from_value(params.clone()).unwrap_or_default();
+
+    // Apply default limit of 10 when not supplied
+    if options.limit.is_none() {
+        let limit_from_param = params.get("limit").and_then(|v| v.as_i64());
+        options.limit = Some(limit_from_param.unwrap_or(10));
+    }
+
+    let query_embedding = ctx.embedder.embed(query).ok();
+    let embedding_ref = query_embedding.as_deref();
+
+    let mut search_config = ctx.search_config.clone();
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Ok(canonical) = cwd.canonicalize() {
+            search_config.project_context_path = Some(canonical.to_string_lossy().to_string());
+        }
+    }
+
+    ctx.storage
+        .with_connection(|conn| {
+            let results = hybrid_search(conn, query, embedding_ref, &options, &search_config)?;
+
+            let compact: Vec<Value> = results
+                .iter()
+                .map(|r| {
+                    let memory = &r.memory;
+                    // Build title: first 80 chars of content, truncated at first newline,
+                    // with "..." appended if the content was longer than the title shown.
+                    let first_line = memory.content.lines().next().unwrap_or("");
+                    let has_more_lines = memory.content.contains('\n');
+                    let title_str = if first_line.len() > 80 {
+                        format!("{}...", &first_line[..80])
+                    } else if has_more_lines {
+                        format!("{}...", first_line)
+                    } else {
+                        first_line.to_string()
+                    };
+                    json!({
+                        "id": memory.id,
+                        "title": title_str,
+                        "created_at": memory.created_at,
+                        "tags": memory.tags
+                    })
+                })
+                .collect();
+
+            Ok(json!({
+                "results": compact,
+                "count": compact.len()
+            }))
+        })
+        .unwrap_or_else(|e| json!({"error": e.to_string()}))
+}
+
+/// Fetch full Memory objects for a list of IDs.
+///
+/// Parameters:
+///   - `ids` (array of integers, required)
+///
+/// IDs that do not exist are silently skipped.
+/// Returns `{memories: [...], found: N, requested: N}`.
+pub fn memory_expand(ctx: &HandlerContext, params: Value) -> Value {
+    use crate::error::EngramError;
+    use crate::storage::queries::get_memory;
+
+    let ids: Vec<i64> = match params.get("ids").and_then(|v| v.as_array()) {
+        Some(arr) => arr
+            .iter()
+            .filter_map(|v| v.as_i64())
+            .collect(),
+        None => return json!({"error": "ids array is required"}),
+    };
+
+    let requested = ids.len();
+
+    ctx.storage
+        .with_connection(|conn| {
+            let mut memories: Vec<Value> = Vec::with_capacity(ids.len());
+            for id in &ids {
+                match get_memory(conn, *id) {
+                    Ok(memory) => memories.push(json!(memory)),
+                    Err(EngramError::NotFound(_)) => {
+                        // Skip silently
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            let found = memories.len();
+            Ok(json!({
+                "memories": memories,
+                "found": found,
+                "requested": requested
+            }))
+        })
+        .unwrap_or_else(|e| json!({"error": e.to_string()}))
+}

@@ -336,6 +336,10 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         "memory_feedback" => search::memory_feedback(ctx, params),
         "memory_feedback_stats" => search::memory_feedback_stats(ctx, params),
 
+        // ── Compact search + expand ──────────────────────────────────────────
+        "memory_search_compact" => search::memory_search_compact(ctx, params),
+        "memory_expand" => search::memory_expand(ctx, params),
+
         // ── Compression (semantic compression + context packing + consolidation) ─
         "memory_compress" => compression::memory_compress(ctx, params),
         "memory_decompress" => compression::memory_decompress(ctx, params),
