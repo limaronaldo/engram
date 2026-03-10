@@ -10,6 +10,21 @@ use serde_json::{json, Value};
 
 use super::HandlerContext;
 
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+/// Truncate `s` to at most `max_bytes` bytes, always landing on a valid UTF-8
+/// char boundary. Avoids panics on multibyte (emoji, CJK, accented) input.
+fn safe_truncate(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut boundary = max_bytes;
+    while boundary > 0 && !s.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    &s[..boundary]
+}
+
 // ── Fact extraction ───────────────────────────────────────────────────────────
 
 /// Extract SPO facts from a memory's content and persist them.
@@ -496,7 +511,7 @@ pub fn memory_get_injection_prompt(ctx: &HandlerContext, params: Value) -> Value
             let m = &r.memory;
             let tags_str = m.tags.join(", ");
             let content = if m.content.len() > chars_per_content && chars_per_content > 0 {
-                format!("{}…", &m.content[..chars_per_content])
+                format!("{}…", safe_truncate(&m.content, chars_per_content))
             } else {
                 m.content.clone()
             };
@@ -564,12 +579,12 @@ pub fn memory_observe_tool_use(ctx: &HandlerContext, params: Value) -> Value {
     let content = if compress {
         let input_str = serde_json::to_string(&tool_input).unwrap_or_default();
         let input_preview = if input_str.len() > 200 {
-            format!("{}…", &input_str[..200])
+            format!("{}…", safe_truncate(&input_str, 200))
         } else {
             input_str
         };
         let output_preview = if tool_output.len() > 200 {
-            format!("{}…", &tool_output[..200])
+            format!("{}…", safe_truncate(&tool_output, 200))
         } else {
             tool_output.clone()
         };
@@ -679,11 +694,7 @@ pub fn memory_archive_tool_output(ctx: &HandlerContext, params: Value) -> Value 
     // Step 2: Build summary.
     let summary = if compress_summary {
         let max_chars = summary_tokens * 4;
-        let slice = if raw_output.len() > max_chars {
-            &raw_output[..max_chars]
-        } else {
-            &raw_output[..]
-        };
+        let slice = safe_truncate(&raw_output, max_chars);
 
         // Find last sentence boundary within the slice.
         let boundary = slice
@@ -863,11 +874,26 @@ pub fn memory_get_working_memory(ctx: &HandlerContext, params: Value) -> Value {
         })
         .collect();
 
-    // Estimate available chars for observation content given the token budget.
-    // Rough layout: header + sections + per-observation headers + content + archive refs.
-    // Give the token budget to content (reserving ~500 tokens for structure).
-    let content_budget_chars = (token_budget.saturating_sub(500)) * 4;
+    // Pre-compute the archive-refs section so we can reserve its size before
+    // budgeting observation content (fixes P2: archive refs previously appended
+    // without any budget check, allowing overflow past token_budget).
+    let archive_section: String = archives
+        .iter()
+        .map(|m| {
+            let tn = extract_tool_name(&m.tags, "tool-archive");
+            format!(
+                "**Archive ref:** [{}] ID={} — call `memory_get_archived_output` with archive_id={} to retrieve full output\n",
+                tn, m.id, m.id
+            )
+        })
+        .collect();
+
+    // Reserve 500 tokens for structural markdown + archive section, then split
+    // the rest evenly across observations.
+    let archive_reserved = archive_section.len() / 4;
     let obs_count = observations.len();
+    let content_budget_chars =
+        (token_budget.saturating_sub(500 + archive_reserved)) * 4;
     let chars_per_obs = if obs_count > 0 {
         content_budget_chars / obs_count
     } else {
@@ -884,7 +910,7 @@ pub fn memory_get_working_memory(ctx: &HandlerContext, params: Value) -> Value {
     for (i, m) in observations.iter().enumerate() {
         let tool_name = extract_tool_name(&m.tags, "tool-observation");
         let content = if m.content.len() > chars_per_obs && chars_per_obs > 0 {
-            format!("{}…", &m.content[..chars_per_obs])
+            format!("{}…", safe_truncate(&m.content, chars_per_obs))
         } else {
             m.content.clone()
         };
@@ -896,13 +922,7 @@ pub fn memory_get_working_memory(ctx: &HandlerContext, params: Value) -> Value {
         ));
     }
 
-    for m in &archives {
-        let tool_name = extract_tool_name(&m.tags, "tool-archive");
-        md.push_str(&format!(
-            "**Archive ref:** [{}] ID={} — call `memory_get_archived_output` with archive_id={} to retrieve full output\n",
-            tool_name, m.id, m.id
-        ));
-    }
+    md.push_str(&archive_section);
 
     let tokens_estimate = md.len() / 4;
 
