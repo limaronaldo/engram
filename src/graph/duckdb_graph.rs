@@ -236,7 +236,7 @@ impl TemporalGraph {
     /// - `added`   — edges present in t2 but not t1 (matched by (from_id, to_id, relation))
     /// - `removed` — edges present in t1 but not t2
     /// - `changed` — edges present in both snapshots but with differing
-    ///               `confidence` or `valid_to`; tuple is (t1_edge, t2_edge)
+    ///   `confidence` or `valid_to`; tuple is (t1_edge, t2_edge)
     pub fn graph_diff(
         &self,
         scope: &str,
@@ -317,6 +317,169 @@ impl TemporalGraph {
 
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(EngramError::from)
+    }
+
+    // -----------------------------------------------------------------------
+    // Path-finding
+    // -----------------------------------------------------------------------
+
+    /// Find all shortest paths (up to `max_hops`) between two nodes in the
+    /// given scope using a recursive CTE.
+    ///
+    /// Only currently-valid edges (`valid_to IS NULL`) are traversed.
+    /// Cycle prevention is done by checking whether the destination node ID
+    /// already appears in the accumulated path string.
+    ///
+    /// Returns at most 10 paths ordered by hop-count ascending.  Returns an
+    /// empty `Vec` when no path exists.
+    pub fn find_connection(
+        &self,
+        scope: &str,
+        start_id: i64,
+        end_id: i64,
+        max_hops: u8,
+    ) -> Result<Vec<PathStep>> {
+        let scope_pattern = format!("{}%", scope);
+
+        let sql = "
+            WITH RECURSIVE paths AS (
+                SELECT
+                    from_id,
+                    to_id,
+                    relation,
+                    1                                                        AS depth,
+                    CAST(from_id AS VARCHAR) || ' -[' || relation || ']-> '
+                        || CAST(to_id AS VARCHAR)                           AS path
+                FROM engram.temporal_edges
+                WHERE from_id = $1
+                  AND scope_path LIKE $2
+                  AND valid_to IS NULL
+
+                UNION ALL
+
+                SELECT
+                    p.from_id,
+                    e.to_id,
+                    e.relation,
+                    p.depth + 1,
+                    p.path || ' -[' || e.relation || ']-> ' || CAST(e.to_id AS VARCHAR)
+                FROM paths p
+                JOIN engram.temporal_edges e ON p.to_id = e.from_id
+                WHERE p.depth < $3
+                  AND e.scope_path LIKE $4
+                  AND e.valid_to IS NULL
+                  AND POSITION(CAST(e.to_id AS VARCHAR) IN p.path) = 0
+            )
+            SELECT path, depth
+            FROM paths
+            WHERE to_id = $5
+            ORDER BY depth
+            LIMIT 10
+        ";
+
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = stmt.query_map(
+            params![start_id, scope_pattern, max_hops as i32, scope_pattern, end_id],
+            |row| {
+                Ok(PathStep {
+                    path: row.get(0)?,
+                    depth: row.get(1)?,
+                })
+            },
+        )?;
+
+        let mut steps = Vec::new();
+        for row in rows {
+            steps.push(
+                row.map_err(|e| EngramError::Storage(format!("DuckDB row error: {}", e)))?,
+            );
+        }
+
+        debug!(
+            "find_connection({} -> {}, max_hops={}): {} paths found",
+            start_id,
+            end_id,
+            max_hops,
+            steps.len()
+        );
+        Ok(steps)
+    }
+
+    /// Return all nodes reachable from `node_id` within `max_depth` hops in
+    /// the given scope.
+    ///
+    /// Useful for neighbourhood exploration ("what's connected to X?").
+    /// Like `find_connection`, only currently-valid edges are traversed and
+    /// cycles are prevented via path-string containment checks.
+    ///
+    /// Results are ordered by depth ascending (closest nodes first).
+    pub fn find_neighbors(
+        &self,
+        scope: &str,
+        node_id: i64,
+        max_depth: u8,
+    ) -> Result<Vec<PathStep>> {
+        let scope_pattern = format!("{}%", scope);
+
+        let sql = "
+            WITH RECURSIVE paths AS (
+                SELECT
+                    from_id,
+                    to_id,
+                    relation,
+                    1                                                        AS depth,
+                    CAST(from_id AS VARCHAR) || ' -[' || relation || ']-> '
+                        || CAST(to_id AS VARCHAR)                           AS path
+                FROM engram.temporal_edges
+                WHERE from_id = $1
+                  AND scope_path LIKE $2
+                  AND valid_to IS NULL
+
+                UNION ALL
+
+                SELECT
+                    p.from_id,
+                    e.to_id,
+                    e.relation,
+                    p.depth + 1,
+                    p.path || ' -[' || e.relation || ']-> ' || CAST(e.to_id AS VARCHAR)
+                FROM paths p
+                JOIN engram.temporal_edges e ON p.to_id = e.from_id
+                WHERE p.depth < $3
+                  AND e.scope_path LIKE $4
+                  AND e.valid_to IS NULL
+                  AND POSITION(CAST(e.to_id AS VARCHAR) IN p.path) = 0
+            )
+            SELECT path, depth
+            FROM paths
+            ORDER BY depth
+        ";
+
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = stmt.query_map(
+            params![node_id, scope_pattern, max_depth as i32, scope_pattern],
+            |row| {
+                Ok(PathStep {
+                    path: row.get(0)?,
+                    depth: row.get(1)?,
+                })
+            },
+        )?;
+
+        let mut steps = Vec::new();
+        for row in rows {
+            steps.push(
+                row.map_err(|e| EngramError::Storage(format!("DuckDB row error: {}", e)))?,
+            );
+        }
+
+        debug!(
+            "find_neighbors(node={}, max_depth={}): {} reachable nodes",
+            node_id,
+            max_depth,
+            steps.len()
+        );
+        Ok(steps)
     }
 }
 
@@ -585,6 +748,127 @@ mod tests {
                 edge.scope_path
             );
         }
+
+        let _ = std::fs::remove_file(path_str);
+    }
+
+    // -----------------------------------------------------------------------
+    // Path-finding tests
+    // -----------------------------------------------------------------------
+
+    /// Build the example graph used in path-finding tests.
+    ///
+    /// Graph (all edges open / valid_to IS NULL):
+    ///   1 (Alice) --[works_at]--> 2 (MBRAS) --[located_in]--> 3 (Sao Paulo)
+    ///   1 (Alice) --[knows]-----> 4 (Bob)   --[works_at]----> 5 (Competitor)
+    fn setup_pathfinding_db(path: &str) {
+        let conn = setup_sqlite(path);
+        let scope = "global";
+        let vf = "2024-01-01";
+        insert_edge(&conn, 1, 2, "works_at", vf, None, 1.0, scope);
+        insert_edge(&conn, 2, 3, "located_in", vf, None, 1.0, scope);
+        insert_edge(&conn, 1, 4, "knows", vf, None, 1.0, scope);
+        insert_edge(&conn, 4, 5, "works_at", vf, None, 1.0, scope);
+    }
+
+    #[test]
+    fn test_find_connection_direct() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("engram_test_pathfind_direct.sqlite");
+        let path_str = path.to_str().unwrap();
+        let _ = std::fs::remove_file(path_str);
+
+        setup_pathfinding_db(path_str);
+
+        let graph = TemporalGraph::new(path_str).expect("new");
+
+        // Alice (1) -> MBRAS (2) is a single-hop connection.
+        let paths = graph
+            .find_connection("global", 1, 2, 3)
+            .expect("find_connection direct");
+
+        assert!(!paths.is_empty(), "should find a direct path 1->2");
+        assert_eq!(paths[0].depth, 1, "direct connection has depth 1");
+        assert!(
+            paths[0].path.contains("-[works_at]->"),
+            "path should traverse works_at edge"
+        );
+
+        let _ = std::fs::remove_file(path_str);
+    }
+
+    #[test]
+    fn test_find_connection_two_hops() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("engram_test_pathfind_twohop.sqlite");
+        let path_str = path.to_str().unwrap();
+        let _ = std::fs::remove_file(path_str);
+
+        setup_pathfinding_db(path_str);
+
+        let graph = TemporalGraph::new(path_str).expect("new");
+
+        // Alice (1) -> MBRAS (2) -> Sao Paulo (3) — two hops.
+        let paths = graph
+            .find_connection("global", 1, 3, 5)
+            .expect("find_connection two hops");
+
+        assert!(!paths.is_empty(), "should find a 2-hop path 1->2->3");
+        let best = &paths[0];
+        assert_eq!(best.depth, 2, "two-hop path has depth 2");
+        assert!(
+            best.path.contains("-[works_at]->") && best.path.contains("-[located_in]->"),
+            "path should contain both edge labels"
+        );
+
+        let _ = std::fs::remove_file(path_str);
+    }
+
+    #[test]
+    fn test_find_connection_no_path() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("engram_test_pathfind_nopath.sqlite");
+        let path_str = path.to_str().unwrap();
+        let _ = std::fs::remove_file(path_str);
+
+        setup_pathfinding_db(path_str);
+
+        let graph = TemporalGraph::new(path_str).expect("new");
+
+        // Sao Paulo (3) is a sink — no outgoing edges — so 3->1 should return empty.
+        let paths = graph
+            .find_connection("global", 3, 1, 5)
+            .expect("find_connection no path");
+
+        assert!(paths.is_empty(), "no path from sink node 3 back to 1");
+
+        let _ = std::fs::remove_file(path_str);
+    }
+
+    #[test]
+    fn test_find_neighbors() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("engram_test_neighbors.sqlite");
+        let path_str = path.to_str().unwrap();
+        let _ = std::fs::remove_file(path_str);
+
+        setup_pathfinding_db(path_str);
+
+        let graph = TemporalGraph::new(path_str).expect("new");
+
+        // From Alice (1), within 2 hops, should reach:
+        //   depth 1: 2 (MBRAS), 4 (Bob)
+        //   depth 2: 3 (Sao Paulo), 5 (Competitor)
+        let neighbors = graph
+            .find_neighbors("global", 1, 2)
+            .expect("find_neighbors");
+
+        assert_eq!(neighbors.len(), 4, "4 nodes reachable within 2 hops from Alice");
+
+        let depth1: Vec<_> = neighbors.iter().filter(|n| n.depth == 1).collect();
+        let depth2: Vec<_> = neighbors.iter().filter(|n| n.depth == 2).collect();
+        assert_eq!(depth1.len(), 2, "2 direct neighbours");
+        assert_eq!(depth2.len(), 2, "2 two-hop neighbours");
 
         let _ = std::fs::remove_file(path_str);
     }
