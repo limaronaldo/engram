@@ -8,6 +8,33 @@ use crate::types::*;
 
 use super::HandlerContext;
 
+/// Removes `<private>...</private>` tagged sections from content.
+///
+/// Supports multiline content within tags. If a `<private>` tag is not closed,
+/// everything from the opening tag to the end of the string is removed.
+///
+/// # Examples
+/// ```
+/// // "Hello world" — private section stripped
+/// // Input:  "Hello <private>secret</private> world"
+/// // Output: "Hello  world"
+/// ```
+fn strip_private_content(content: &str) -> String {
+    let mut result = String::with_capacity(content.len());
+    let mut remaining = content;
+    while let Some(start) = remaining.find("<private>") {
+        result.push_str(&remaining[..start]);
+        if let Some(end_offset) = remaining[start..].find("</private>") {
+            remaining = &remaining[start + end_offset + "</private>".len()..];
+        } else {
+            // Unclosed tag — remove everything after <private>; stop processing.
+            return result;
+        }
+    }
+    result.push_str(remaining);
+    result
+}
+
 pub fn memory_create(ctx: &HandlerContext, params: Value) -> Value {
     use crate::storage::queries::find_similar_by_embedding;
 
@@ -304,9 +331,30 @@ pub fn context_seed(ctx: &HandlerContext, params: Value) -> Value {
 
 pub fn memory_get(ctx: &HandlerContext, params: Value) -> Value {
     let id = params.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+    let do_strip = params
+        .get("strip_private")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     ctx.storage
         .with_connection(|conn| {
-            let memory = get_memory(conn, id)?;
+            let mut memory = get_memory(conn, id)?;
+            if do_strip {
+                memory.content = strip_private_content(&memory.content);
+            }
+            Ok(json!(memory))
+        })
+        .unwrap_or_else(|e| json!({"error": e.to_string()}))
+}
+
+/// Variant of `memory_get` that always strips `<private>…</private>` sections.
+///
+/// Equivalent to calling `memory_get` with `strip_private: true`.
+pub fn memory_get_public(ctx: &HandlerContext, params: Value) -> Value {
+    let id = params.get("id").and_then(|v| v.as_i64()).unwrap_or(0);
+    ctx.storage
+        .with_connection(|conn| {
+            let mut memory = get_memory(conn, id)?;
+            memory.content = strip_private_content(&memory.content);
             Ok(json!(memory))
         })
         .unwrap_or_else(|e| json!({"error": e.to_string()}))
@@ -897,7 +945,54 @@ pub fn create_todo(ctx: &HandlerContext, params: Value) -> Value {
 
     memory_create(ctx, serde_json::to_value(input).unwrap_or_default())
 }
+// end of create_issue
 
+#[cfg(test)]
+mod privacy_tests {
+    use super::strip_private_content;
+
+    #[test]
+    fn test_no_private_tags() {
+        let input = "Hello, world!";
+        assert_eq!(strip_private_content(input), "Hello, world!");
+    }
+
+    #[test]
+    fn test_single_private_tag() {
+        let input = "Hello <private>secret</private> world";
+        assert_eq!(strip_private_content(input), "Hello  world");
+    }
+
+    #[test]
+    fn test_multiple_private_tags() {
+        let input = "a <private>1</private> b <private>2</private> c";
+        assert_eq!(strip_private_content(input), "a  b  c");
+    }
+
+    #[test]
+    fn test_multiline_private_content() {
+        let input = "start\n<private>\nline one\nline two\n</private>\nend";
+        assert_eq!(strip_private_content(input), "start\n\nend");
+    }
+
+    #[test]
+    fn test_empty_string() {
+        assert_eq!(strip_private_content(""), "");
+    }
+
+    #[test]
+    fn test_entirely_private() {
+        let input = "<private>everything is private</private>";
+        assert_eq!(strip_private_content(input), "");
+    }
+
+    #[test]
+    fn test_unclosed_tag() {
+        // Unclosed tag: everything from <private> onward is removed.
+        let input = "visible <private>dangling content";
+        assert_eq!(strip_private_content(input), "visible ");
+    }
+}
 pub fn create_issue(ctx: &HandlerContext, params: Value) -> Value {
     let title = params.get("title").and_then(|v| v.as_str()).unwrap_or("");
     let description = params

@@ -89,6 +89,7 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
             result
         }
         "memory_get" => memory_crud::memory_get(ctx, params),
+        "memory_get_public" => memory_crud::memory_get_public(ctx, params),
         "memory_update" => memory_crud::memory_update(ctx, params),
         "memory_delete" => memory_crud::memory_delete(ctx, params),
         "memory_list" => memory_crud::memory_list(ctx, params),
