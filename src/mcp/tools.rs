@@ -2452,6 +2452,68 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
         }"#,
         annotations: ToolAnnotations::read_only(),
     },
+
+    // ── DuckDB Graph Tools (duckdb-graph) ──────────────────────────────────────
+    #[cfg(feature = "duckdb-graph")]
+    ToolDef {
+        name: "memory_graph_path",
+        description: "Finds how two entities are connected in the knowledge graph via DuckDB OLAP engine. Discovers hidden relationships across multiple hops using recursive path-finding.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "scope": {"type": "string", "description": "Tenant scope prefix, e.g., 'global/org/user'"},
+                "source_id": {"type": "integer", "description": "Starting node ID"},
+                "target_id": {"type": "integer", "description": "Target node ID"},
+                "max_depth": {"type": "integer", "description": "Maximum hops to traverse (default: 4, max: 10)", "default": 4}
+            },
+            "required": ["scope", "source_id", "target_id"]
+        }"#,
+        annotations: ToolAnnotations {
+            read_only_hint: Some(true),
+            destructive_hint: None,
+            idempotent_hint: Some(true),
+            open_world_hint: None,
+        },
+    },
+    #[cfg(feature = "duckdb-graph")]
+    ToolDef {
+        name: "memory_temporal_snapshot",
+        description: "Retrieves the exact facts and relationships that were true at a specific historical point in time. Uses DuckDB OLAP engine for fast columnar scans over temporal edges.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "scope": {"type": "string", "description": "Tenant scope prefix"},
+                "timestamp": {"type": "string", "description": "ISO-8601 timestamp for the point-in-time query"}
+            },
+            "required": ["scope", "timestamp"]
+        }"#,
+        annotations: ToolAnnotations {
+            read_only_hint: Some(true),
+            destructive_hint: None,
+            idempotent_hint: Some(true),
+            open_world_hint: None,
+        },
+    },
+    #[cfg(feature = "duckdb-graph")]
+    ToolDef {
+        name: "memory_scope_snapshot",
+        description: "Compares the knowledge graph between two timestamps, showing what relationships were added, removed, or changed. Uses DuckDB OLAP engine for efficient temporal diff.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "scope": {"type": "string", "description": "Tenant scope prefix"},
+                "from_timestamp": {"type": "string", "description": "Start of comparison window (ISO-8601)"},
+                "to_timestamp": {"type": "string", "description": "End of comparison window (ISO-8601)"}
+            },
+            "required": ["scope", "from_timestamp", "to_timestamp"]
+        }"#,
+        annotations: ToolAnnotations {
+            read_only_hint: Some(true),
+            destructive_hint: None,
+            idempotent_hint: Some(true),
+            open_world_hint: None,
+        },
+    },
 ];
 
 /// Get all tool definitions as ToolDefinition structs

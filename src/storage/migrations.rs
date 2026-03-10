@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 32;
+pub const SCHEMA_VERSION: i32 = 33;
 
 /// Run all migrations
 pub fn run_migrations(conn: &Connection) -> Result<()> {
@@ -150,8 +150,12 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         migrate_v31(conn)?;
     }
 
-    if current_version < SCHEMA_VERSION {
+    if current_version < 32 {
         migrate_v32(conn)?;
+    }
+
+    if current_version < SCHEMA_VERSION {
+        migrate_v33(conn)?;
     }
 
     Ok(())
@@ -1695,6 +1699,37 @@ fn migrate_v32(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// v33: DuckDB CQRS Graph support with scope_path and graph_entities table
+fn migrate_v33(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v33: Adding scope_path to temporal_edges and creating graph_entities table...");
+
+    conn.execute_batch(
+        r#"
+        -- DuckDB CQRS Graph: scope_path for tenant isolation
+        ALTER TABLE temporal_edges ADD COLUMN scope_path TEXT NOT NULL DEFAULT 'global';
+        CREATE INDEX IF NOT EXISTS idx_temporal_edges_scope_path ON temporal_edges(scope_path);
+
+        -- Graph entities table for DuckDB property graph vertex table
+        CREATE TABLE IF NOT EXISTS graph_entities (
+            id TEXT PRIMARY KEY,
+            scope_path TEXT NOT NULL DEFAULT 'global',
+            name TEXT NOT NULL,
+            entity_type TEXT NOT NULL,
+            metadata TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        );
+        CREATE INDEX IF NOT EXISTS idx_graph_entities_scope ON graph_entities(scope_path);
+        CREATE INDEX IF NOT EXISTS idx_graph_entities_type ON graph_entities(entity_type);
+
+        INSERT INTO schema_version (version) VALUES (33);
+        "#,
+    )?;
+
+    tracing::info!("Migration v33 complete: scope_path and graph_entities table created");
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1716,12 +1751,12 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query schema version");
-        assert_eq!(version, 32);
+        assert_eq!(version, 33);
     }
 
     #[test]
     fn test_schema_version_constant_is_19() {
-        assert_eq!(SCHEMA_VERSION, 32);
+        assert_eq!(SCHEMA_VERSION, 33);
     }
 
     #[test]
@@ -1866,7 +1901,7 @@ mod tests {
 
         // Run all migrations (they'll stop at the current version)
         // We simulate v17 state by running the full migration once,
-        // then verify the version is 32.
+        // then verify the version is 33.
         run_migrations(&conn).expect("run migrations from scratch");
 
         let version: i32 = conn
@@ -1876,7 +1911,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query schema version");
-        assert_eq!(version, 32, "should reach v32 after full migration");
+        assert_eq!(version, 33, "should reach v33 after full migration");
 
         // Verify both new tables exist
         let auto_links_exists: i32 = conn

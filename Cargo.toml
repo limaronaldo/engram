@@ -91,6 +91,9 @@ context-engineering = []
 # Temporal knowledge graph support
 temporal-graph = []
 
+# DuckDB-backed distributed graph analysis (Phase M)
+duckdb-graph = ["dep:duckdb"]
+
 # Semantic compression: compress/decompress memory content, context-window packing
 compression = []
 
@@ -107,7 +110,7 @@ autonomous-agent = ["compression", "agentic-evolution", "advanced-graph"]
 agent-portability = ["dep:zip", "dep:ed25519-dalek", "dep:aes-gcm"]
 
 # All features
-full = ["cloud", "openai", "pdf", "langfuse", "turso", "meilisearch", "watcher", "multimodal", "emergent-graph", "ollama", "cohere", "voyage", "onnx-embed", "neural-rerank", "retrieval-excellence", "context-engineering", "temporal-graph", "compression", "agentic-evolution", "advanced-graph", "autonomous-agent", "agent-portability"]
+full = ["cloud", "openai", "pdf", "langfuse", "turso", "meilisearch", "watcher", "multimodal", "emergent-graph", "ollama", "cohere", "voyage", "onnx-embed", "neural-rerank", "retrieval-excellence", "context-engineering", "temporal-graph", "duckdb-graph", "compression", "agentic-evolution", "advanced-graph", "autonomous-agent", "agent-portability"]
 
 [dependencies]
 # Async runtime
@@ -208,6 +211,9 @@ notify = { version = "7", optional = true }
 
 # Watcher: temp-file copying for locked browser DBs
 tempfile = { version = "3.9", optional = true }
+
+# DuckDB for distributed graph analysis (Phase M)
+duckdb = { version = "1.4", features = ["bundled", "chrono"], optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
