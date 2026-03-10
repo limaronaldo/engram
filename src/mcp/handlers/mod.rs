@@ -39,6 +39,8 @@ pub mod multimodal;
 pub mod attestation;
 #[cfg(feature = "agent-portability")]
 pub mod snapshot;
+#[cfg(feature = "duckdb-graph")]
+pub mod duckdb_graph;
 
 /// Shared state passed to every tool handler.
 ///
@@ -378,6 +380,14 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         "snapshot_load" => snapshot::snapshot_load(ctx, params),
         #[cfg(feature = "agent-portability")]
         "snapshot_inspect" => snapshot::snapshot_inspect(ctx, params),
+
+        // ── DuckDB graph (feature-gated) ─────────────────────────────────────
+        #[cfg(feature = "duckdb-graph")]
+        "memory_graph_path" => duckdb_graph::handle_memory_graph_path(ctx, params),
+        #[cfg(feature = "duckdb-graph")]
+        "memory_temporal_snapshot" => duckdb_graph::handle_memory_temporal_snapshot(ctx, params),
+        #[cfg(feature = "duckdb-graph")]
+        "memory_scope_snapshot" => duckdb_graph::handle_memory_scope_snapshot(ctx, params),
 
         _ => json!({"error": format!("Unknown tool: {}", tool_name)}),
     }
