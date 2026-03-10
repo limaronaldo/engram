@@ -10,6 +10,8 @@
 
 pub mod coactivation;
 pub mod conflicts;
+#[cfg(feature = "duckdb-graph")]
+pub mod duckdb_graph;
 pub mod temporal;
 pub mod triplets;
 
