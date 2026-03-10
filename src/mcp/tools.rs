@@ -2623,7 +2623,8 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {
                 "session_id": {"type": "string", "description": "Session identifier to retrieve observations for"},
                 "token_budget": {"type": "integer", "description": "Max tokens for the working memory block (default: 4000)"},
-                "include_tool_names": {"type": "array", "items": {"type": "string"}, "description": "Whitelist of tool names to include (default: all)"}
+                "include_tool_names": {"type": "array", "items": {"type": "string"}, "description": "Whitelist of tool names to include (default: all)"},
+                "since_minutes": {"type": "integer", "description": "Only include observations from the last N minutes (default: all time)"}
             },
             "required": ["session_id"]
         }"#,

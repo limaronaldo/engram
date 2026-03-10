@@ -772,9 +772,11 @@ pub fn memory_get_archived_output(ctx: &HandlerContext, params: Value) -> Value 
 /// - `session_id` (string, required)
 /// - `token_budget` (usize, optional, default: 4000)
 /// - `include_tool_names` (array of string, optional) — whitelist of tool names to include
+/// - `since_minutes` (u64, optional) — only include observations from the last N minutes
 pub fn memory_get_working_memory(ctx: &HandlerContext, params: Value) -> Value {
     use crate::storage::queries::list_memories;
     use crate::types::{ListOptions, SortField, SortOrder};
+    use chrono::{Duration, Utc};
 
     let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
         Some(s) => s.to_string(),
@@ -795,6 +797,12 @@ pub fn memory_get_working_memory(ctx: &HandlerContext, params: Value) -> Value {
                 .collect()
         })
         .unwrap_or_default();
+
+    // Optional recency filter: only observations created within the last N minutes.
+    let since_cutoff = params
+        .get("since_minutes")
+        .and_then(|v| v.as_u64())
+        .map(|mins| Utc::now() - Duration::minutes(mins as i64));
 
     let session_tag = format!("session:{}", session_id);
 
@@ -835,10 +843,14 @@ pub fn memory_get_working_memory(ctx: &HandlerContext, params: Value) -> Value {
         Err(e) => return json!({"error": e.to_string()}),
     };
 
-    // Filter observations by session tag and optional tool name whitelist.
+    // Filter observations by session tag, optional tool name whitelist, and recency.
     let observations: Vec<_> = all_observations
         .into_iter()
-        .filter(|m| has_session_tag(&m.tags) && passes_tool_filter(&m.tags))
+        .filter(|m| {
+            has_session_tag(&m.tags)
+                && passes_tool_filter(&m.tags)
+                && since_cutoff.is_none_or(|cutoff| m.created_at >= cutoff)
+        })
         .collect();
 
     // Fetch archive entries from workspace "archive".
@@ -859,10 +871,14 @@ pub fn memory_get_working_memory(ctx: &HandlerContext, params: Value) -> Value {
         Err(e) => return json!({"error": e.to_string()}),
     };
 
-    // Filter archive entries by session tag and optional tool name whitelist.
+    // Filter archive entries by session tag, optional tool name whitelist, and recency.
     let archives: Vec<_> = all_archives
         .into_iter()
-        .filter(|m| has_session_tag(&m.tags) && passes_tool_filter(&m.tags))
+        .filter(|m| {
+            has_session_tag(&m.tags)
+                && passes_tool_filter(&m.tags)
+                && since_cutoff.is_none_or(|cutoff| m.created_at >= cutoff)
+        })
         .collect();
 
     // Build archive_refs for the return value.
