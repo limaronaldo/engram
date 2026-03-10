@@ -613,6 +613,308 @@ pub fn memory_observe_tool_use(ctx: &HandlerContext, params: Value) -> Value {
     }
 }
 
+// ── Endless Mode: tool output archival ───────────────────────────────────────
+
+/// Archive a tool's full raw output as an Episodic memory and return a compact
+/// summary, solving the O(N²) context window growth problem.
+///
+/// Params:
+/// - `tool_name` (string, required) — name of the tool whose output is being archived
+/// - `raw_output` (string, required) — full raw output string
+/// - `session_id` (string, optional, default: "unknown") — session identifier
+/// - `compress_summary` (bool, optional, default: true) — whether to generate a summary
+/// - `summary_tokens` (usize, optional, default: 500) — max tokens for the summary
+pub fn memory_archive_tool_output(ctx: &HandlerContext, params: Value) -> Value {
+    use crate::storage::queries::create_memory;
+    use crate::types::{CreateMemoryInput, MemoryType};
+
+    let tool_name = match params.get("tool_name").and_then(|v| v.as_str()) {
+        Some(n) => n.to_string(),
+        None => return json!({"error": "tool_name is required"}),
+    };
+
+    let raw_output = match params.get("raw_output").and_then(|v| v.as_str()) {
+        Some(o) => o.to_string(),
+        None => return json!({"error": "raw_output is required"}),
+    };
+
+    let session_id = params
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let compress_summary = params
+        .get("compress_summary")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+
+    let summary_tokens = params
+        .get("summary_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(500) as usize;
+
+    // Step 1: Store the full raw output as an Episodic memory in workspace "archive".
+    let tags = vec![
+        "tool-archive".to_string(),
+        format!("session:{}", session_id),
+        tool_name.clone(),
+    ];
+
+    let input = CreateMemoryInput {
+        content: raw_output.clone(),
+        memory_type: MemoryType::Episodic,
+        tags,
+        workspace: Some("archive".to_string()),
+        ..Default::default()
+    };
+
+    let archive_memory = match ctx.storage.with_transaction(|conn| create_memory(conn, &input)) {
+        Ok(m) => m,
+        Err(e) => return json!({"error": e.to_string()}),
+    };
+
+    let archive_id = archive_memory.id;
+
+    // Step 2: Build summary.
+    let summary = if compress_summary {
+        let max_chars = summary_tokens * 4;
+        let slice = if raw_output.len() > max_chars {
+            &raw_output[..max_chars]
+        } else {
+            &raw_output[..]
+        };
+
+        // Find last sentence boundary within the slice.
+        let boundary = slice
+            .rfind(|c| c == '.' || c == '!' || c == '?' || c == '\n')
+            .map(|pos| pos + 1)
+            .unwrap_or(slice.len());
+
+        let trimmed = slice[..boundary].trim_end();
+        format!("[{} summary] {}", tool_name, trimmed)
+    } else {
+        raw_output.clone()
+    };
+
+    // Step 3: Compute token estimates.
+    let raw_tokens_estimate = raw_output.len() / 4;
+    let summary_tokens_estimate = summary.len() / 4;
+    let compression_ratio = summary_tokens_estimate as f64
+        / (raw_tokens_estimate.max(1)) as f64;
+
+    json!({
+        "archive_id": archive_id,
+        "summary": summary,
+        "raw_tokens_estimate": raw_tokens_estimate,
+        "summary_tokens_estimate": summary_tokens_estimate,
+        "compression_ratio": compression_ratio
+    })
+}
+
+/// Retrieve the full raw output for a previously archived tool output.
+///
+/// Params:
+/// - `archive_id` (i64, required) — ID returned by `memory_archive_tool_output`
+pub fn memory_get_archived_output(ctx: &HandlerContext, params: Value) -> Value {
+    use crate::storage::queries::get_memory;
+
+    let archive_id = match params.get("archive_id").and_then(|v| v.as_i64()) {
+        Some(id) => id,
+        None => return json!({"error": "archive_id is required"}),
+    };
+
+    let memory = match ctx.storage.with_connection(|conn| {
+        match get_memory(conn, archive_id) {
+            Ok(m) => Ok(Some(m)),
+            Err(crate::error::EngramError::NotFound(_)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }) {
+        Ok(Some(m)) => m,
+        Ok(None) => return json!({"error": "Archive not found", "archive_id": archive_id}),
+        Err(e) => return json!({"error": e.to_string()}),
+    };
+
+    // Extract tool_name from tags: the first tag that isn't "tool-archive" or starts with "session:".
+    let tool_name = memory
+        .tags
+        .iter()
+        .find(|t| *t != "tool-archive" && !t.starts_with("session:"))
+        .cloned()
+        .unwrap_or_else(|| "unknown".to_string());
+
+    json!({
+        "archive_id": archive_id,
+        "tool_name": tool_name,
+        "content": memory.content,
+        "created_at": memory.created_at.to_rfc3339()
+    })
+}
+
+/// Assemble a structured working-memory markdown block for the current session.
+///
+/// Combines compact tool-observations with references to archived full outputs,
+/// keeping context growth O(1) per tool call instead of O(N).
+///
+/// Params:
+/// - `session_id` (string, required)
+/// - `token_budget` (usize, optional, default: 4000)
+/// - `include_tool_names` (array of string, optional) — whitelist of tool names to include
+pub fn memory_get_working_memory(ctx: &HandlerContext, params: Value) -> Value {
+    use crate::storage::queries::list_memories;
+    use crate::types::{ListOptions, SortField, SortOrder};
+
+    let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+        Some(s) => s.to_string(),
+        None => return json!({"error": "session_id is required"}),
+    };
+
+    let token_budget = params
+        .get("token_budget")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(4000) as usize;
+
+    let include_tool_names: Vec<String> = params
+        .get("include_tool_names")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let session_tag = format!("session:{}", session_id);
+
+    // Helper: check whether a memory's tags contain the session tag.
+    let has_session_tag = |tags: &[String]| tags.contains(&session_tag);
+
+    // Helper: extract the tool name from a memory's tags.
+    let extract_tool_name = |tags: &[String], exclude_prefix: &str| -> String {
+        tags.iter()
+            .find(|t| *t != exclude_prefix && !t.starts_with("session:"))
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string())
+    };
+
+    // Helper: check include_tool_names filter.
+    let passes_tool_filter = |tags: &[String]| -> bool {
+        if include_tool_names.is_empty() {
+            return true;
+        }
+        tags.iter().any(|t| include_tool_names.contains(t))
+    };
+
+    // Fetch tool observations from workspace "default".
+    let obs_options = ListOptions {
+        workspace: Some("default".to_string()),
+        tags: Some(vec!["tool-observation".to_string()]),
+        sort_by: Some(SortField::CreatedAt),
+        sort_order: Some(SortOrder::Asc),
+        limit: Some(1000),
+        ..Default::default()
+    };
+
+    let all_observations = match ctx
+        .storage
+        .with_connection(|conn| list_memories(conn, &obs_options))
+    {
+        Ok(mems) => mems,
+        Err(e) => return json!({"error": e.to_string()}),
+    };
+
+    // Filter observations by session tag and optional tool name whitelist.
+    let observations: Vec<_> = all_observations
+        .into_iter()
+        .filter(|m| has_session_tag(&m.tags) && passes_tool_filter(&m.tags))
+        .collect();
+
+    // Fetch archive entries from workspace "archive".
+    let archive_options = ListOptions {
+        workspace: Some("archive".to_string()),
+        tags: Some(vec!["tool-archive".to_string()]),
+        sort_by: Some(SortField::CreatedAt),
+        sort_order: Some(SortOrder::Asc),
+        limit: Some(1000),
+        ..Default::default()
+    };
+
+    let all_archives = match ctx
+        .storage
+        .with_connection(|conn| list_memories(conn, &archive_options))
+    {
+        Ok(mems) => mems,
+        Err(e) => return json!({"error": e.to_string()}),
+    };
+
+    // Filter archive entries by session tag and optional tool name whitelist.
+    let archives: Vec<_> = all_archives
+        .into_iter()
+        .filter(|m| has_session_tag(&m.tags) && passes_tool_filter(&m.tags))
+        .collect();
+
+    // Build archive_refs for the return value.
+    let archive_refs: Vec<Value> = archives
+        .iter()
+        .map(|m| {
+            let tool_name = extract_tool_name(&m.tags, "tool-archive");
+            json!({"id": m.id, "tool_name": tool_name})
+        })
+        .collect();
+
+    // Estimate available chars for observation content given the token budget.
+    // Rough layout: header + sections + per-observation headers + content + archive refs.
+    // Give the token budget to content (reserving ~500 tokens for structure).
+    let content_budget_chars = (token_budget.saturating_sub(500)) * 4;
+    let obs_count = observations.len();
+    let chars_per_obs = if obs_count > 0 {
+        content_budget_chars / obs_count
+    } else {
+        content_budget_chars
+    };
+
+    // Build markdown.
+    let mut md = format!(
+        "# Working Memory — Session {}\n\n## Tool Observations ({} total)\n\n",
+        session_id,
+        obs_count
+    );
+
+    for (i, m) in observations.iter().enumerate() {
+        let tool_name = extract_tool_name(&m.tags, "tool-observation");
+        let content = if m.content.len() > chars_per_obs && chars_per_obs > 0 {
+            format!("{}…", &m.content[..chars_per_obs])
+        } else {
+            m.content.clone()
+        };
+        md.push_str(&format!(
+            "### {} (observation #{})\n{}\n\n---\n",
+            tool_name,
+            i + 1,
+            content
+        ));
+    }
+
+    for m in &archives {
+        let tool_name = extract_tool_name(&m.tags, "tool-archive");
+        md.push_str(&format!(
+            "**Archive ref:** [{}] ID={} — call `memory_get_archived_output` with archive_id={} to retrieve full output\n",
+            tool_name, m.id, m.id
+        ));
+    }
+
+    let tokens_estimate = md.len() / 4;
+
+    json!({
+        "working_memory": md,
+        "observation_count": obs_count,
+        "archive_count": archives.len(),
+        "archive_refs": archive_refs,
+        "tokens_estimate": tokens_estimate
+    })
+}
+
 /// Get the edit history for a memory block.
 ///
 /// Params:
