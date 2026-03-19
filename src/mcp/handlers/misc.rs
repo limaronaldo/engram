@@ -863,6 +863,26 @@ pub fn scan_project(ctx: &HandlerContext, params: Value) -> Value {
         }
     }
 
+    // Phase L: best-effort attestation for each discovered file (agent-portability feature).
+    // Errors are logged but never propagated — attestation is a non-blocking enhancement.
+    #[cfg(feature = "agent-portability")]
+    {
+        use crate::attestation::AttestationChain;
+        let chain = AttestationChain::new(ctx.storage.clone());
+        for file in &discovered {
+            let content_bytes = file.content.as_bytes();
+            if let Err(e) =
+                chain.log_document(content_bytes, &file.filename, None, &[], None)
+            {
+                tracing::warn!(
+                    "Attestation hook (scan_project): failed to log '{}': {}",
+                    file.filename,
+                    e
+                );
+            }
+        }
+    }
+
     json!(result)
 }
 
@@ -1056,7 +1076,31 @@ pub fn ingest_document(ctx: &HandlerContext, params: Value) -> Value {
 
     let ingestor = DocumentIngestor::new(&ctx.storage);
     match ingestor.ingest_file(&input.path, config) {
-        Ok(result) => json!(result),
+        Ok(result) => {
+            // Phase L: best-effort attestation for the ingested document.
+            #[cfg(feature = "agent-portability")]
+            {
+                use crate::attestation::AttestationChain;
+                let chain = AttestationChain::new(ctx.storage.clone());
+                let doc_name = std::path::Path::new(&input.path)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| input.path.clone());
+                // Read file bytes for attestation (best-effort — skip on I/O error).
+                if let Ok(bytes) = std::fs::read(&input.path) {
+                    if let Err(e) =
+                        chain.log_document(&bytes, &doc_name, None, &[], None)
+                    {
+                        tracing::warn!(
+                            "Attestation hook (ingest_document): failed to log '{}': {}",
+                            doc_name,
+                            e
+                        );
+                    }
+                }
+            }
+            json!(result)
+        }
         Err(e) => json!({"error": e.to_string()}),
     }
 }

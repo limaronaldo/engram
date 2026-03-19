@@ -178,15 +178,40 @@ pub fn snapshot_load(ctx: &HandlerContext, params: Value) -> Value {
     );
 
     match result {
-        Ok(load_result) => json!({
-            "strategy": load_result.strategy.to_string(),
-            "memories_loaded": load_result.memories_loaded,
-            "memories_skipped": load_result.memories_skipped,
-            "entities_loaded": load_result.entities_loaded,
-            "edges_loaded": load_result.edges_loaded,
-            "target_workspace": load_result.target_workspace,
-            "snapshot_origin": load_result.snapshot_origin,
-        }),
+        Ok(load_result) => {
+            // Phase L: log attestation for the loaded snapshot manifest (best-effort).
+            // Use the raw snapshot archive bytes as document content so the hash
+            // matches what an external verifier would compute over the .egm file.
+            {
+                use crate::attestation::AttestationChain;
+                let chain = AttestationChain::new(ctx.storage.clone());
+                let snapshot_name = Path::new(&path_str)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path_str.clone());
+                // Read the archive bytes for attestation (best-effort).
+                if let Ok(archive_bytes) = std::fs::read(path) {
+                    if let Err(e) =
+                        chain.log_document(&archive_bytes, &snapshot_name, None, &[], None)
+                    {
+                        tracing::warn!(
+                            "Attestation hook (snapshot_load): failed to log '{}': {}",
+                            snapshot_name,
+                            e
+                        );
+                    }
+                }
+            }
+            json!({
+                "strategy": load_result.strategy.to_string(),
+                "memories_loaded": load_result.memories_loaded,
+                "memories_skipped": load_result.memories_skipped,
+                "entities_loaded": load_result.entities_loaded,
+                "edges_loaded": load_result.edges_loaded,
+                "target_workspace": load_result.target_workspace,
+                "snapshot_origin": load_result.snapshot_origin,
+            })
+        }
         Err(e) => json!({"error": e.to_string()}),
     }
 }

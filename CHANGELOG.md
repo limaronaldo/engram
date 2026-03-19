@@ -9,6 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.16.0] - 2026-03-19
+
+### Added
+- **Phase L — Agent Portability & Knowledge Packaging**
+  - Portable `.egm` snapshot format (ZIP archive with manifest, memories, entities, graph edges)
+  - `SnapshotBuilder` with fluent API — filter by workspace, tags, date range, importance, memory types
+  - `SnapshotLoader` with 4 load strategies: Merge, Replace, Isolate, Dry Run
+  - AES-256-GCM encryption for encrypted snapshots
+  - Ed25519 signing for tamper-evident snapshots
+  - Provenance tracking: `snapshot_origin` and `snapshot_loaded_at` columns on loaded memories
+- **Knowledge Attestation**
+  - Append-only attestation chain with SHA-256 content hashing
+  - `AttestationChain` — log, verify, and audit document ingestion
+  - `MerkleTree` — generate and verify cryptographic proofs of individual records
+  - Export formats: JSON, CSV, Merkle proof
+  - Ed25519 optional signing of attestation records
+- **7 new MCP tools** (feature-gated: `agent-portability`)
+  - `snapshot_create` — build .egm archives with optional encryption/signing
+  - `snapshot_load` — load archives with strategy selection
+  - `snapshot_inspect` — read metadata without loading
+  - `attestation_log` — record document ingestion with optional signing
+  - `attestation_verify` — check if document has been attested
+  - `attestation_chain_verify` — verify full chain integrity
+  - `attestation_list` — list records with JSON/CSV/Merkle proof export
+- **CLI subcommands** (feature-gated: `agent-portability`)
+  - `engram-cli snapshot create/load/inspect`
+  - `engram-cli attest log/verify/chain-verify/list`
+- **Auto-attestation hooks** (best-effort, errors logged not propagated)
+  - `memory_scan_project` — attests each discovered instruction file
+  - `memory_ingest_document` — attests ingested documents
+  - `snapshot_load` — attests loaded .egm archives
+
+### Tests
+- 10 integration tests in `tests/snapshot_attestation.rs` covering the full Phase L
+  workflow: build, inspect, isolate load, provenance columns, attestation chain verify,
+  encrypted wrong-key rejection, signed snapshot flag, list with filter, dry-run, and
+  merge deduplication
+- 38 unit tests across snapshot and attestation modules
+
+---
+
 ## [0.15.0] - 2026-03-10
 
 ### Added (Endless Mode — O(N) Context Management)
