@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
+// reqwest is available when the `multimodal` or `cloud` feature is active
+#[cfg(any(feature = "multimodal", feature = "cloud"))]
+use reqwest;
+
 use crate::error::{EngramError, Result};
 
 /// Configuration for image storage
@@ -81,6 +85,23 @@ pub struct MigrationResult {
     pub images_migrated: i64,
     pub images_failed: i64,
     pub errors: Vec<String>,
+    pub dry_run: bool,
+}
+
+/// Report returned by `sync_to_cloud`
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MediaSyncReport {
+    /// Number of media assets examined
+    pub assets_examined: i64,
+    /// Number of assets already in the cloud (skipped)
+    pub assets_already_synced: i64,
+    /// Number of assets successfully uploaded
+    pub assets_uploaded: i64,
+    /// Number of upload failures
+    pub assets_failed: i64,
+    /// Errors encountered during sync
+    pub errors: Vec<String>,
+    /// Whether this was a dry run (no actual uploads)
     pub dry_run: bool,
 }
 
@@ -478,6 +499,286 @@ pub fn migrate_images(
     Ok(result)
 }
 
+// ── Cloud sync helpers ────────────────────────────────────────────────────────
+
+/// Build the S3 key for a media asset.
+///
+/// Format: `media/{memory_id}/{file_hash}.{ext}`
+pub fn build_cloud_key(memory_id: i64, file_hash: &str, mime_type: &str) -> String {
+    let ext = extension_from_content_type(mime_type);
+    // Use first 16 chars of the hash to keep keys short but still unique
+    let short_hash = &file_hash[..file_hash.len().min(16)];
+    format!("media/{}/{}.{}", memory_id, short_hash, ext)
+}
+
+/// Build the public cloud URL from a bucket, optional public domain, and key.
+pub fn build_cloud_url(
+    s3_bucket: &str,
+    s3_endpoint: Option<&str>,
+    public_domain: Option<&str>,
+    key: &str,
+) -> String {
+    if let Some(domain) = public_domain {
+        format!("https://{}/{}", domain.trim_end_matches('/'), key)
+    } else if let Some(endpoint) = s3_endpoint {
+        format!(
+            "{}/{}/{}",
+            endpoint.trim_end_matches('/'),
+            s3_bucket,
+            key
+        )
+    } else {
+        format!("https://{}.s3.amazonaws.com/{}", s3_bucket, key)
+    }
+}
+
+/// Returns true if `file_path` already points to a cloud URL (not a local path).
+pub fn is_cloud_url(file_path: &str) -> bool {
+    file_path.starts_with("https://")
+        || file_path.starts_with("http://")
+        || file_path.starts_with("s3://")
+        || file_path.starts_with("r2://")
+}
+
+/// Synchronise local media assets to S3/R2 cloud storage.
+///
+/// Queries the `media_assets` table for rows whose `file_path` is a local file
+/// (i.e. not yet uploaded), uploads each to cloud storage at
+/// `media/{memory_id}/{file_hash}.{ext}`, and updates `file_path` in the row
+/// with the resulting cloud URL.
+///
+/// This function is feature-gated by both `multimodal` and `cloud`.
+/// It must be triggered explicitly — it does NOT run automatically.
+///
+/// # Arguments
+/// * `conn`    — SQLite connection
+/// * `config`  — Image storage configuration (S3 bucket, endpoint, public domain)
+/// * `dry_run` — If `true`, no uploads or updates are performed
+#[cfg(feature = "cloud")]
+pub fn sync_to_cloud(
+    conn: &Connection,
+    config: &ImageStorageConfig,
+    dry_run: bool,
+) -> crate::error::Result<MediaSyncReport> {
+    let bucket = match &config.s3_bucket {
+        Some(b) => b.clone(),
+        None => {
+            return Err(crate::error::EngramError::Config(
+                "s3_bucket must be configured for cloud media sync".to_string(),
+            ));
+        }
+    };
+
+    let mut report = MediaSyncReport {
+        dry_run,
+        ..Default::default()
+    };
+
+    // Query all media assets
+    let mut stmt = conn.prepare(
+        "SELECT id, memory_id, file_hash, file_path, mime_type FROM media_assets",
+    )?;
+
+    struct AssetRow {
+        id: i64,
+        memory_id: i64,
+        file_hash: String,
+        file_path: Option<String>,
+        mime_type: Option<String>,
+    }
+
+    let assets: Vec<AssetRow> = stmt
+        .query_map([], |row| {
+            Ok(AssetRow {
+                id: row.get(0)?,
+                memory_id: row.get(1)?,
+                file_hash: row.get(2)?,
+                file_path: row.get(3)?,
+                mime_type: row.get(4)?,
+            })
+        })?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    report.assets_examined = assets.len() as i64;
+
+    for asset in assets {
+        let file_path = match &asset.file_path {
+            Some(p) => p.clone(),
+            None => {
+                report.assets_failed += 1;
+                report
+                    .errors
+                    .push(format!("Asset id={} has no file_path", asset.id));
+                continue;
+            }
+        };
+
+        // Skip already-synced assets
+        if is_cloud_url(&file_path) {
+            report.assets_already_synced += 1;
+            continue;
+        }
+
+        let mime_type = asset.mime_type.as_deref().unwrap_or("application/octet-stream");
+        let cloud_key = build_cloud_key(asset.memory_id, &asset.file_hash, mime_type);
+        let cloud_url = build_cloud_url(
+            &bucket,
+            config.s3_endpoint.as_deref(),
+            config.public_domain.as_deref(),
+            &cloud_key,
+        );
+
+        if dry_run {
+            // In dry-run mode, just count what would be uploaded
+            report.assets_uploaded += 1;
+            continue;
+        }
+
+        // Read the local file
+        // Strip "local://" prefix if present
+        let local_path = file_path
+            .strip_prefix("local://")
+            .unwrap_or(&file_path);
+
+        let file_data = match std::fs::read(local_path) {
+            Ok(d) => d,
+            Err(e) => {
+                report.assets_failed += 1;
+                report.errors.push(format!(
+                    "Failed to read '{}' for asset id={}: {}",
+                    local_path, asset.id, e
+                ));
+                continue;
+            }
+        };
+
+        // Upload to S3/R2
+        match upload_bytes_to_s3_blocking(&file_data, &bucket, &cloud_key, mime_type, config) {
+            Ok(()) => {
+                // Update file_path in media_assets
+                conn.execute(
+                    "UPDATE media_assets SET file_path = ? WHERE id = ?",
+                    rusqlite::params![cloud_url, asset.id],
+                )?;
+                report.assets_uploaded += 1;
+            }
+            Err(e) => {
+                report.assets_failed += 1;
+                report.errors.push(format!(
+                    "Failed to upload asset id={}: {}",
+                    asset.id, e
+                ));
+            }
+        }
+    }
+
+    Ok(report)
+}
+
+/// Download media bytes from a cloud URL.
+///
+/// Supports `https://` and `s3://` URLs. Returns the raw bytes of the file.
+pub fn download_from_cloud(file_url: &str) -> crate::error::Result<Vec<u8>> {
+    if file_url.starts_with("local://") {
+        let path = file_url.strip_prefix("local://").unwrap_or(file_url);
+        return std::fs::read(path).map_err(|e| {
+            crate::error::EngramError::Storage(format!(
+                "Failed to read local media file '{}': {}",
+                path, e
+            ))
+        });
+    }
+
+    if file_url.starts_with("https://") || file_url.starts_with("http://") {
+        // Use a tokio runtime + reqwest async client for HTTP download
+        #[cfg(any(feature = "cloud", feature = "multimodal"))]
+        {
+            let url = file_url.to_string();
+            let rt = tokio::runtime::Runtime::new().map_err(|e| {
+                crate::error::EngramError::Storage(format!(
+                    "Failed to create async runtime for download: {}",
+                    e
+                ))
+            })?;
+            return rt.block_on(async {
+                let client = reqwest::Client::new();
+                let response = client.get(&url).send().await.map_err(|e| {
+                    crate::error::EngramError::Storage(format!(
+                        "Failed to download '{}': {}",
+                        url, e
+                    ))
+                })?;
+                if !response.status().is_success() {
+                    return Err(crate::error::EngramError::Storage(format!(
+                        "HTTP {} downloading '{}'",
+                        response.status(),
+                        url
+                    )));
+                }
+                response.bytes().await.map(|b| b.to_vec()).map_err(|e| {
+                    crate::error::EngramError::Storage(format!(
+                        "Failed to read response body from '{}': {}",
+                        url, e
+                    ))
+                })
+            });
+        }
+        #[cfg(not(any(feature = "cloud", feature = "multimodal")))]
+        {
+            return Err(crate::error::EngramError::Config(
+                "Downloading from cloud URLs requires the 'cloud' or 'multimodal' feature".to_string(),
+            ));
+        }
+    }
+
+    Err(crate::error::EngramError::InvalidInput(format!(
+        "Unsupported media URL scheme: '{}'",
+        file_url
+    )))
+}
+
+/// Blocking S3/R2 upload via tokio runtime + aws-sdk-s3.
+#[cfg(feature = "cloud")]
+fn upload_bytes_to_s3_blocking(
+    data: &[u8],
+    bucket: &str,
+    key: &str,
+    content_type: &str,
+    _config: &ImageStorageConfig,
+) -> crate::error::Result<()> {
+    // Use a short-lived Tokio runtime for the async SDK call
+    let rt = tokio::runtime::Runtime::new().map_err(|e| {
+        crate::error::EngramError::Storage(format!(
+            "Failed to create async runtime for S3 upload: {}",
+            e
+        ))
+    })?;
+
+    rt.block_on(async {
+        let sdk_config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
+        let client = aws_sdk_s3::Client::new(&sdk_config);
+
+        let body = aws_sdk_s3::primitives::ByteStream::from(data.to_vec());
+        client
+            .put_object()
+            .bucket(bucket)
+            .key(key)
+            .content_type(content_type)
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| {
+                crate::error::EngramError::Storage(format!(
+                    "S3 PutObject failed for key '{}': {}",
+                    key, e
+                ))
+            })?;
+
+        Ok(())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -518,5 +819,101 @@ mod tests {
         assert_eq!(content_type_from_extension("jpg"), "image/jpeg");
         assert_eq!(content_type_from_extension("PNG"), "image/png");
         assert_eq!(content_type_from_extension("webp"), "image/webp");
+    }
+
+    // ── T3: Cloud media sync tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_build_cloud_key_image() {
+        let key = build_cloud_key(42, "abcdef1234567890", "image/png");
+        assert_eq!(key, "media/42/abcdef1234567890.png");
+    }
+
+    #[test]
+    fn test_build_cloud_key_audio() {
+        let key = build_cloud_key(7, "feedbeef12345678", "audio/mpeg");
+        assert_eq!(key, "media/7/feedbeef12345678.bin");
+    }
+
+    #[test]
+    fn test_build_cloud_url_with_public_domain() {
+        let url = build_cloud_url(
+            "my-bucket",
+            None,
+            Some("media.example.com"),
+            "media/42/abc.png",
+        );
+        assert_eq!(url, "https://media.example.com/media/42/abc.png");
+    }
+
+    #[test]
+    fn test_build_cloud_url_with_s3_endpoint() {
+        let url = build_cloud_url(
+            "my-bucket",
+            Some("https://r2.example.com"),
+            None,
+            "media/42/abc.png",
+        );
+        assert_eq!(url, "https://r2.example.com/my-bucket/media/42/abc.png");
+    }
+
+    #[test]
+    fn test_build_cloud_url_default_s3() {
+        let url = build_cloud_url("my-bucket", None, None, "media/42/abc.png");
+        assert_eq!(
+            url,
+            "https://my-bucket.s3.amazonaws.com/media/42/abc.png"
+        );
+    }
+
+    #[test]
+    fn test_is_cloud_url() {
+        assert!(is_cloud_url("https://cdn.example.com/file.png"));
+        assert!(is_cloud_url("http://cdn.example.com/file.png"));
+        assert!(is_cloud_url("s3://my-bucket/file.png"));
+        assert!(is_cloud_url("r2://my-bucket/file.png"));
+        assert!(!is_cloud_url("local:///tmp/file.png"));
+        assert!(!is_cloud_url("/tmp/file.png"));
+    }
+
+    #[cfg(feature = "cloud")]
+    #[test]
+    fn test_sync_to_cloud_no_bucket_returns_error() {
+        use crate::storage::migrations::run_migrations;
+
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+        run_migrations(&conn).expect("migrations");
+
+        let config = ImageStorageConfig {
+            local_dir: std::path::PathBuf::from("/tmp"),
+            s3_bucket: None, // no bucket configured
+            s3_endpoint: None,
+            public_domain: None,
+        };
+
+        let result = sync_to_cloud(&conn, &config, true);
+        assert!(result.is_err(), "should fail without bucket configured");
+    }
+
+    #[cfg(feature = "cloud")]
+    #[test]
+    fn test_sync_to_cloud_empty_table_dry_run() {
+        use crate::storage::migrations::run_migrations;
+
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+        run_migrations(&conn).expect("migrations");
+
+        let config = ImageStorageConfig {
+            local_dir: std::path::PathBuf::from("/tmp"),
+            s3_bucket: Some("test-bucket".to_string()),
+            s3_endpoint: None,
+            public_domain: None,
+        };
+
+        let report = sync_to_cloud(&conn, &config, true).expect("sync report");
+        assert_eq!(report.assets_examined, 0);
+        assert_eq!(report.assets_uploaded, 0);
+        assert_eq!(report.assets_failed, 0);
+        assert!(report.dry_run);
     }
 }

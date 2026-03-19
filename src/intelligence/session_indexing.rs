@@ -344,6 +344,7 @@ pub fn index_conversation(
             event_duration_seconds: None,
             trigger_pattern: None,
             summary_of_id: None,
+            media_url: None,
         };
 
         let memory = create_memory(conn, &input)?;
@@ -544,6 +545,7 @@ pub fn index_conversation_delta(
                     event_duration_seconds: None,
                     trigger_pattern: None,
                     summary_of_id: None,
+                    media_url: None,
                 };
 
                 let memory = create_memory(conn, &input)?;

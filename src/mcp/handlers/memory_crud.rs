@@ -97,6 +97,7 @@ pub fn memory_create(ctx: &HandlerContext, params: Value) -> Value {
                                     ttl_seconds: input.ttl_seconds,
                                     event_time: None,
                                     trigger_pattern: None,
+                                    media_url: input.media_url.map(Some),
                                 };
 
                                 update_memory(conn, existing.id, &update_input)
@@ -285,6 +286,7 @@ pub fn context_seed(ctx: &HandlerContext, params: Value) -> Value {
             event_duration_seconds: None,
             trigger_pattern: None,
             summary_of_id: None,
+            media_url: None,
         });
     }
 
@@ -492,6 +494,7 @@ pub fn memory_create_daily(ctx: &HandlerContext, params: Value) -> Value {
         event_duration_seconds: None,
         trigger_pattern: None,
         summary_of_id: None,
+        media_url: None,
     };
 
     ctx.storage
@@ -629,6 +632,7 @@ pub fn memory_create_episodic(ctx: &HandlerContext, params: Value) -> Value {
         event_duration_seconds,
         trigger_pattern: None,
         summary_of_id: None,
+        media_url: None,
     };
 
     ctx.storage
@@ -692,6 +696,7 @@ pub fn memory_create_procedural(ctx: &HandlerContext, params: Value) -> Value {
         event_duration_seconds: None,
         trigger_pattern,
         summary_of_id: None,
+        media_url: None,
     };
 
     ctx.storage
@@ -941,6 +946,7 @@ pub fn create_todo(ctx: &HandlerContext, params: Value) -> Value {
         event_duration_seconds: None,
         trigger_pattern: None,
         summary_of_id: None,
+        media_url: None,
     };
 
     memory_create(ctx, serde_json::to_value(input).unwrap_or_default())
@@ -1002,6 +1008,7 @@ pub fn create_issue(ctx: &HandlerContext, params: Value) -> Value {
         event_duration_seconds: None,
         trigger_pattern: None,
         summary_of_id: None,
+        media_url: None,
     };
 
     memory_create(ctx, serde_json::to_value(input).unwrap_or_default())

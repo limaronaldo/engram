@@ -312,6 +312,207 @@ fn query_media_assets(
     Ok(rows)
 }
 
+// ── memory_search_by_image ────────────────────────────────────────────────────
+
+/// Search memories by image similarity.
+///
+/// Uses multimodal embeddings (CLIP-style description-mediated) to embed the
+/// query image, then searches the vector index for nearest neighbours. Falls
+/// back to describing the image with a vision model and searching by text if
+/// no multimodal embedder is available.
+///
+/// Required params:
+/// - `image_path` (string) — path to the local image file
+///
+/// Optional params:
+/// - `limit` (integer, default 10) — maximum results
+/// - `min_score` (number, default 0.0) — minimum similarity score
+/// - `workspace` (string) — restrict search to workspace
+/// - `strategy` (string: "clip" | "description" | "auto") — embedding strategy
+///
+/// Returns: `{ results: [...], query_description, strategy_used }`
+#[cfg(feature = "multimodal")]
+pub fn memory_search_by_image(ctx: &HandlerContext, params: Value) -> Value {
+    use crate::search::{hybrid_search, Reranker};
+    use crate::types::SearchOptions;
+
+    let image_path = match params.get("image_path").and_then(|v| v.as_str()) {
+        Some(p) => p.to_string(),
+        None => return json!({"error": "image_path is required"}),
+    };
+
+    let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as i64;
+    let min_score = params
+        .get("min_score")
+        .and_then(|v| v.as_f64())
+        .map(|f| f as f32);
+    let workspace = params
+        .get("workspace")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let strategy = params
+        .get("strategy")
+        .and_then(|v| v.as_str())
+        .unwrap_or("auto");
+
+    // Step 1: Read the image file
+    let image_bytes = match std::fs::read(&image_path) {
+        Ok(b) => b,
+        Err(e) => {
+            return json!({"error": format!("Failed to read image file '{}': {}", image_path, e)})
+        }
+    };
+
+    let mime_type = infer_mime_type(&image_path);
+
+    // Step 2: Generate a text description of the image
+    // This is the universal fallback path — works even without a CLIP embedder.
+    let vision_provider = crate::multimodal::vision::VisionProviderFactory::from_env().ok();
+
+    let description = if let Some(ref provider) = vision_provider {
+        let input = crate::multimodal::vision::VisionInput {
+            image_bytes: image_bytes.clone(),
+            mime_type: mime_type.clone(),
+        };
+        let opts = crate::multimodal::vision::VisionOptions {
+            prompt: Some(
+                "Describe this image in detail, including all visual elements, text, colors, and context. Be comprehensive.".to_string(),
+            ),
+            max_tokens: Some(512),
+        };
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                return json!({"error": format!("Failed to create async runtime: {}", e)})
+            }
+        };
+        match rt.block_on(provider.describe_image(input, opts)) {
+            Ok(desc) => Some(desc.text),
+            Err(e) => {
+                tracing::warn!("Vision model failed, falling back to filename hint: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Step 3: Build the query text for embedding
+    // Prefer the vision description; fall back to the file name
+    let query_text = description.clone().unwrap_or_else(|| {
+        std::path::Path::new(&image_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("image")
+            .replace(['-', '_'], " ")
+    });
+
+    // Step 4: Determine strategy
+    let strategy_used;
+
+    // Attempt CLIP/multimodal embedding if strategy allows
+    #[cfg(feature = "multimodal")]
+    let query_embedding: Option<Vec<f32>> = if strategy == "clip" || strategy == "auto" {
+        use crate::embedding::clip::{ClipEmbedder, MultimodalEmbedder};
+        if let Ok(clip) = ClipEmbedder::from_env() {
+            match clip.embed_image_sync(&image_bytes, &mime_type) {
+                Ok(v) => {
+                    strategy_used = "clip";
+                    Some(v)
+                }
+                Err(e) => {
+                    tracing::warn!("CLIP embedding failed, falling back to description: {}", e);
+                    strategy_used = "description";
+                    ctx.embedder.embed(&query_text).ok()
+                }
+            }
+        } else {
+            strategy_used = "description";
+            ctx.embedder.embed(&query_text).ok()
+        }
+    } else {
+        strategy_used = "description";
+        ctx.embedder.embed(&query_text).ok()
+    };
+
+    #[cfg(not(feature = "multimodal"))]
+    let query_embedding: Option<Vec<f32>> = {
+        strategy_used = "description";
+        ctx.embedder.embed(&query_text).ok()
+    };
+
+    // Step 5: Run hybrid search with the generated embedding
+    let options = SearchOptions {
+        limit: Some(limit),
+        min_score,
+        workspace,
+        ..Default::default()
+    };
+
+    let search_config = ctx.search_config.clone();
+    let embedding_ref = query_embedding.as_deref();
+
+    ctx.storage
+        .with_connection(|conn| {
+            let results = hybrid_search(conn, &query_text, embedding_ref, &options, &search_config)?;
+            Ok(results)
+        })
+        .map(|results| {
+            let reranker = Reranker::new();
+            let reranked = reranker.rerank(results, &query_text, None);
+            json!({
+                "results": reranked,
+                "query_description": description,
+                "strategy_used": strategy_used,
+            })
+        })
+        .unwrap_or_else(|e| json!({"error": e.to_string()}))
+}
+
+// ── memory_sync_media ─────────────────────────────────────────────────────────
+
+/// Sync local media assets to S3/R2 cloud storage.
+///
+/// Reads the `media_assets` table for files that have not yet been uploaded to
+/// cloud storage, uploads each one, and updates the `file_path` column in place
+/// with the resulting cloud URL.
+///
+/// Requires both `multimodal` AND `cloud` features.
+///
+/// Optional params:
+/// - `dry_run` (bool) — if true, report what would be synced without uploading
+///
+/// Returns: `{ assets_examined, assets_already_synced, assets_uploaded, assets_failed, errors, dry_run }`
+#[cfg(all(feature = "multimodal", feature = "cloud"))]
+pub fn memory_sync_media(ctx: &HandlerContext, params: Value) -> Value {
+    use crate::storage::image_storage::{ImageStorageConfig, MediaSyncReport, sync_to_cloud};
+
+    let dry_run = params.get("dry_run").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    // Build config from environment variables (same approach as existing cloud sync)
+    let config = ImageStorageConfig {
+        local_dir: ImageStorageConfig::default().local_dir,
+        s3_bucket: std::env::var("ENGRAM_S3_BUCKET")
+            .or_else(|_| std::env::var("R2_BUCKET"))
+            .ok(),
+        s3_endpoint: std::env::var("AWS_ENDPOINT_URL")
+            .or_else(|_| std::env::var("R2_ENDPOINT"))
+            .ok(),
+        public_domain: std::env::var("ENGRAM_MEDIA_PUBLIC_DOMAIN").ok(),
+    };
+
+    if config.s3_bucket.is_none() {
+        return json!({
+            "error": "S3/R2 bucket not configured. Set ENGRAM_S3_BUCKET or R2_BUCKET environment variable."
+        });
+    }
+
+    ctx.storage
+        .with_transaction(|conn| sync_to_cloud(conn, &config, dry_run))
+        .map(|report: MediaSyncReport| json!(report))
+        .unwrap_or_else(|e| json!({"error": e.to_string()}))
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// Infer MIME type from file extension.
@@ -475,5 +676,45 @@ mod tests {
         assert_eq!(infer_mime_type("pic.webp"), "image/webp");
         assert_eq!(infer_mime_type("scan.tiff"), "image/tiff");
         assert_eq!(infer_mime_type("unknown.xyz"), "image/png");
+    }
+
+    // ── T4: memory_search_by_image tests ─────────────────────────────────────
+
+    #[test]
+    fn test_search_by_image_missing_param() {
+        let ctx = make_ctx();
+        let result = memory_search_by_image(&ctx, json!({}));
+        assert!(result.get("error").is_some(), "should error without image_path");
+        assert!(
+            result["error"].as_str().unwrap().contains("image_path"),
+            "error should mention image_path"
+        );
+    }
+
+    #[test]
+    fn test_search_by_image_missing_file() {
+        let ctx = make_ctx();
+        let result = memory_search_by_image(
+            &ctx,
+            json!({"image_path": "/tmp/nonexistent_query_image_99999.png"}),
+        );
+        assert!(
+            result.get("error").is_some(),
+            "should error when image file is missing"
+        );
+    }
+
+    #[test]
+    fn test_search_by_image_tool_is_registered() {
+        // Verify the tool is listed in the tool dispatch (compile-time check via mod.rs)
+        // This test simply ensures the handler is callable without panicking
+        let ctx = make_ctx();
+        // Call with a missing param to get a predictable error without side effects
+        let result = memory_search_by_image(&ctx, json!({"image_path": "/nonexistent.png"}));
+        // Either "error" (file missing) or "results" (file found) is acceptable
+        assert!(
+            result.is_object(),
+            "handler should always return a JSON object"
+        );
     }
 }

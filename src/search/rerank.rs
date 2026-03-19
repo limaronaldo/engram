@@ -435,6 +435,7 @@ impl Reranker {
             MemoryType::Procedural => 0.06,
             MemoryType::Summary => 0.05,
             MemoryType::Checkpoint => 0.04,
+            MemoryType::Image | MemoryType::Audio | MemoryType::Video => 0.05,
         }
     }
 
@@ -517,6 +518,7 @@ mod tests {
             procedure_failure_count: 0,
             summary_of_id: None,
             lifecycle_state: crate::types::LifecycleState::Active,
+            media_url: None,
         }
     }
 

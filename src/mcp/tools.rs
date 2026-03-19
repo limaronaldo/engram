@@ -22,8 +22,8 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "type": "object",
             "properties": {
                 "content": {"type": "string", "description": "The content to remember"},
-                "memory_type": {"type": "string", "enum": ["note", "todo", "issue", "decision", "preference", "learning", "context", "credential", "episodic", "procedural", "summary", "checkpoint"], "default": "note", "description": "Memory type (preferred field; alias: type)"},
-                "type": {"type": "string", "enum": ["note", "todo", "issue", "decision", "preference", "learning", "context", "credential", "episodic", "procedural", "summary", "checkpoint"], "default": "note", "description": "Deprecated alias for memory_type"},
+                "memory_type": {"type": "string", "enum": ["note", "todo", "issue", "decision", "preference", "learning", "context", "credential", "episodic", "procedural", "summary", "checkpoint", "image", "audio", "video"], "default": "note", "description": "Memory type (preferred field; alias: type)"},
+                "type": {"type": "string", "enum": ["note", "todo", "issue", "decision", "preference", "learning", "context", "credential", "episodic", "procedural", "summary", "checkpoint", "image", "audio", "video"], "default": "note", "description": "Deprecated alias for memory_type"},
                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Tags for categorization"},
                 "metadata": {"type": "object", "description": "Additional metadata as key-value pairs"},
                 "importance": {"type": "number", "minimum": 0, "maximum": 1, "description": "Importance score (0-1)"},
@@ -36,7 +36,8 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
                 "event_time": {"type": "string", "format": "date-time", "description": "ISO8601 timestamp for episodic memories (when the event occurred)"},
                 "event_duration_seconds": {"type": "integer", "description": "Duration of the event in seconds (for episodic memories)"},
                 "trigger_pattern": {"type": "string", "description": "Pattern that triggers this procedure (for procedural memories)"},
-                "summary_of_id": {"type": "integer", "description": "ID of the memory this summarizes (for summary memories)"}
+                "summary_of_id": {"type": "integer", "description": "ID of the memory this summarizes (for summary memories)"},
+                "media_url": {"type": "string", "description": "URL or local path to the primary media asset (for Image/Audio/Video memory types). Format: local:///path, https://..., or s3://..."}
             },
             "required": ["content"]
         }"#,
@@ -169,8 +170,8 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {
                 "id": {"type": "integer", "description": "Memory ID"},
                 "content": {"type": "string", "description": "New content"},
-                "memory_type": {"type": "string", "enum": ["note", "todo", "issue", "decision", "preference", "learning", "context", "credential", "episodic", "procedural", "summary", "checkpoint"], "description": "Memory type (preferred field; alias: type)"},
-                "type": {"type": "string", "enum": ["note", "todo", "issue", "decision", "preference", "learning", "context", "credential", "episodic", "procedural", "summary", "checkpoint"], "description": "Deprecated alias for memory_type"},
+                "memory_type": {"type": "string", "enum": ["note", "todo", "issue", "decision", "preference", "learning", "context", "credential", "episodic", "procedural", "summary", "checkpoint", "image", "audio", "video"], "description": "Memory type (preferred field; alias: type)"},
+                "type": {"type": "string", "enum": ["note", "todo", "issue", "decision", "preference", "learning", "context", "credential", "episodic", "procedural", "summary", "checkpoint", "image", "audio", "video"], "description": "Deprecated alias for memory_type"},
                 "tags": {"type": "array", "items": {"type": "string"}},
                 "metadata": {"type": "object"},
                 "importance": {"type": "number", "minimum": 0, "maximum": 1},
@@ -423,6 +424,33 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
         name: "memory_sync_status",
         description: "Get cloud sync status",
         schema: r#"{"type": "object", "properties": {}}"#,
+        annotations: ToolAnnotations::read_only(),
+    },
+    ToolDef {
+        name: "memory_sync_media",
+        description: "Sync local media assets (images, audio, video) to cloud S3/R2 storage. Uploads files from media_assets table that have not yet been synced. Returns a report of synced files. Requires both multimodal and cloud features.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "dry_run": {"type": "boolean", "default": false, "description": "If true, report what would be synced without actually uploading"}
+            }
+        }"#,
+        annotations: ToolAnnotations::mutating(),
+    },
+    ToolDef {
+        name: "memory_search_by_image",
+        description: "Search memories using an image as the query. Uses multimodal embeddings (CLIP-style) or falls back to describing the image via vision model and searching by description. Returns semantically similar memories — text or media — ranked by relevance.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "image_path": {"type": "string", "description": "Path to the local image file to use as the search query"},
+                "limit": {"type": "integer", "default": 10, "description": "Maximum number of results to return"},
+                "min_score": {"type": "number", "minimum": 0, "maximum": 1, "description": "Minimum similarity score (0.0-1.0)"},
+                "workspace": {"type": "string", "description": "Restrict search to a specific workspace"},
+                "strategy": {"type": "string", "enum": ["clip", "description", "auto"], "default": "auto", "description": "Embedding strategy: clip (requires CLIP embedder), description (vision model + text embedding), auto (use CLIP if available, else description)"}
+            },
+            "required": ["image_path"]
+        }"#,
         annotations: ToolAnnotations::read_only(),
     },
     // Stats and aggregation

@@ -201,6 +201,8 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
 
         // ── Sync ─────────────────────────────────────────────────────────────
         "memory_sync_status" => sync::sync_status(ctx, params),
+        #[cfg(all(feature = "multimodal", feature = "cloud"))]
+        "memory_sync_media" => multimodal::memory_sync_media(ctx, params),
         "sync_version" => sync::sync_version(ctx, params),
         "sync_delta" => sync::sync_delta(ctx, params),
         "sync_state" => sync::sync_state(ctx, params),
@@ -300,6 +302,8 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         "memory_process_video" => multimodal::memory_process_video(ctx, params),
         #[cfg(feature = "multimodal")]
         "memory_list_media" => multimodal::memory_list_media(ctx, params),
+        #[cfg(feature = "multimodal")]
+        "memory_search_by_image" => multimodal::memory_search_by_image(ctx, params),
 
         // ── Retrieval excellence ─────────────────────────────────────────────
         "memory_cache_stats" => retrieval::memory_cache_stats(ctx, params),

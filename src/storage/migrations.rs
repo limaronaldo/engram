@@ -5,7 +5,7 @@ use rusqlite::Connection;
 use crate::error::Result;
 
 /// Current schema version
-pub const SCHEMA_VERSION: i32 = 33;
+pub const SCHEMA_VERSION: i32 = 34;
 
 /// Run all migrations
 pub fn run_migrations(conn: &Connection) -> Result<()> {
@@ -154,8 +154,12 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         migrate_v32(conn)?;
     }
 
-    if current_version < SCHEMA_VERSION {
+    if current_version < 33 {
         migrate_v33(conn)?;
+    }
+
+    if current_version < SCHEMA_VERSION {
+        migrate_v34(conn)?;
     }
 
     Ok(())
@@ -1730,6 +1734,25 @@ fn migrate_v33(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn migrate_v34(conn: &Connection) -> Result<()> {
+    tracing::info!("Migration v34: Adding media_url column to memories table for multimodal support...");
+
+    conn.execute_batch(
+        r#"
+        -- Multimodal: URL or local path to the primary media asset
+        -- Nullable, additive column. Used by Image, Audio, Video memory types.
+        ALTER TABLE memories ADD COLUMN media_url TEXT;
+        CREATE INDEX IF NOT EXISTS idx_memories_media_url ON memories(media_url) WHERE media_url IS NOT NULL;
+
+        INSERT INTO schema_version (version) VALUES (34);
+        "#,
+    )?;
+
+    tracing::info!("Migration v34 complete: media_url column added to memories");
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1751,12 +1774,12 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query schema version");
-        assert_eq!(version, 33);
+        assert_eq!(version, 34);
     }
 
     #[test]
     fn test_schema_version_constant_is_19() {
-        assert_eq!(SCHEMA_VERSION, 33);
+        assert_eq!(SCHEMA_VERSION, 34);
     }
 
     #[test]
@@ -1911,7 +1934,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query schema version");
-        assert_eq!(version, 33, "should reach v33 after full migration");
+        assert_eq!(version, 34, "should reach v34 after full migration");
 
         // Verify both new tables exist
         let auto_links_exists: i32 = conn

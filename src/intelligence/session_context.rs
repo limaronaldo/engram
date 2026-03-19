@@ -580,6 +580,7 @@ pub fn search_session_memories(
                     lifecycle_state: lifecycle_str
                         .parse()
                         .unwrap_or(crate::types::LifecycleState::Active),
+                    media_url: None,
                 };
 
                 SessionSearchResult {

@@ -367,6 +367,7 @@ impl<'a> DocumentIngestor<'a> {
             event_duration_seconds: None,
             trigger_pattern: None,
             summary_of_id: None,
+            media_url: None,
         };
 
         self.storage.with_connection(|conn| {

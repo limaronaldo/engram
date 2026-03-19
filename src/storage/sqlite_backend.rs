@@ -533,6 +533,7 @@ mod tests {
             event_duration_seconds: None,
             trigger_pattern: None,
             summary_of_id: None,
+                media_url: None,
         };
 
         let memory = backend.create_memory(input).unwrap();
@@ -556,6 +557,7 @@ mod tests {
             ttl_seconds: None,
             event_time: None,
             trigger_pattern: None,
+            media_url: None,
         };
         let updated = backend.update_memory(memory.id, update_input).unwrap();
         assert_eq!(updated.content, "Updated memory");

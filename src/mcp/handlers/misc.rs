@@ -487,6 +487,7 @@ pub fn memory_auto_tag(ctx: &HandlerContext, params: Value) -> Value {
         ttl_seconds: None,
         event_time: None,
         trigger_pattern: None,
+        media_url: None,
     };
 
     match ctx
@@ -637,6 +638,7 @@ pub fn scan_project(ctx: &HandlerContext, params: Value) -> Value {
                         ttl_seconds: None,
                         event_time: None,
                         trigger_pattern: None,
+                        media_url: None,
                     };
 
                     match ctx.storage.with_transaction(|conn| {
@@ -684,6 +686,7 @@ pub fn scan_project(ctx: &HandlerContext, params: Value) -> Value {
                     event_duration_seconds: None,
                     trigger_pattern: None,
                     summary_of_id: None,
+                    media_url: None,
                 };
 
                 match ctx
@@ -783,6 +786,7 @@ pub fn scan_project(ctx: &HandlerContext, params: Value) -> Value {
                         ttl_seconds: None,
                         event_time: None,
                         trigger_pattern: None,
+                        media_url: None,
                     };
 
                     match ctx
@@ -826,6 +830,7 @@ pub fn scan_project(ctx: &HandlerContext, params: Value) -> Value {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                        media_url: None,
                     };
 
                     match ctx

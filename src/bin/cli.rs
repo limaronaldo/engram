@@ -243,6 +243,7 @@ fn main() -> Result<()> {
                 event_duration_seconds: None,
                 trigger_pattern: None,
                 summary_of_id: None,
+                media_url: None,
             };
 
             let memory = storage.with_transaction(|conn| create_memory(conn, &input))?;
@@ -640,6 +641,7 @@ fn main() -> Result<()> {
                             event_duration_seconds: None,
                             trigger_pattern: None,
                             summary_of_id: None,
+                            media_url: None,
                         };
                         match storage.with_transaction(|conn| create_memory(conn, &input)) {
                             Ok(memory) => println!("Created #{}", memory.id),

@@ -78,6 +78,9 @@ pub struct Memory {
     /// Lifecycle state for memory management (active, stale, archived)
     #[serde(default)]
     pub lifecycle_state: LifecycleState,
+    /// URL or local path to the primary media asset (for Image/Audio/Video memories)
+    /// Format: local:///path/to/file or https://... or s3://...
+    pub media_url: Option<String>,
 }
 
 /// Lifecycle state for memory management (Phase 5 - ENG-37)
@@ -241,6 +244,13 @@ pub enum MemoryType {
     /// Conversation state snapshots for session resumption
     /// Replaces Context type for checkpoint-specific use
     Checkpoint,
+    // Multimodal memory types
+    /// Image memory with optional media_url pointing to the asset
+    Image,
+    /// Audio memory with optional media_url pointing to the asset
+    Audio,
+    /// Video memory with optional media_url pointing to the asset
+    Video,
 }
 
 /// Memory tier for tiered storage (permanent vs ephemeral)
@@ -308,12 +318,20 @@ impl MemoryType {
             MemoryType::Procedural => "procedural",
             MemoryType::Summary => "summary",
             MemoryType::Checkpoint => "checkpoint",
+            MemoryType::Image => "image",
+            MemoryType::Audio => "audio",
+            MemoryType::Video => "video",
         }
     }
 
     /// Returns true if this type should be excluded from default search
     pub fn excluded_from_default_search(&self) -> bool {
         matches!(self, MemoryType::TranscriptChunk)
+    }
+
+    /// Returns true if this type is a multimodal (media) memory
+    pub fn is_multimodal(&self) -> bool {
+        matches!(self, MemoryType::Image | MemoryType::Audio | MemoryType::Video)
     }
 }
 
@@ -336,6 +354,9 @@ impl std::str::FromStr for MemoryType {
             "procedural" => Ok(MemoryType::Procedural),
             "summary" => Ok(MemoryType::Summary),
             "checkpoint" => Ok(MemoryType::Checkpoint),
+            "image" => Ok(MemoryType::Image),
+            "audio" => Ok(MemoryType::Audio),
+            "video" => Ok(MemoryType::Video),
             _ => Err(format!("Unknown memory type: {}", s)),
         }
     }
@@ -800,6 +821,8 @@ pub struct CreateMemoryInput {
     pub trigger_pattern: Option<String>,
     /// ID of the memory this is a summary of (for Summary memories)
     pub summary_of_id: Option<MemoryId>,
+    /// URL or local path to the primary media asset (for Image/Audio/Video memories)
+    pub media_url: Option<String>,
 }
 
 /// Input for updating a memory
@@ -822,6 +845,9 @@ pub struct UpdateMemoryInput {
     /// Pattern that triggers this procedure (for Procedural memories)
     /// Use Some(None) to clear the value
     pub trigger_pattern: Option<Option<String>>,
+    /// URL or local path to the primary media asset (for Image/Audio/Video memories)
+    /// Use Some(None) to clear, Some(Some(url)) to set
+    pub media_url: Option<Option<String>>,
 }
 
 /// Input for creating a cross-reference

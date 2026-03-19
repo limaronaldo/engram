@@ -76,6 +76,9 @@ pub fn memory_from_row(row: &Row) -> rusqlite::Result<Memory> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(crate::types::LifecycleState::Active);
 
+    // media_url column (additive, nullable — with fallback for older schema versions)
+    let media_url: Option<String> = row.get("media_url").unwrap_or(None);
+
     Ok(Memory {
         id,
         content,
@@ -119,6 +122,7 @@ pub fn memory_from_row(row: &Row) -> rusqlite::Result<Memory> {
         procedure_failure_count,
         summary_of_id,
         lifecycle_state,
+        media_url,
     })
 }
 
@@ -168,7 +172,9 @@ fn get_memory_internal(conn: &Connection, id: i64, track_access: bool) -> Result
         "SELECT id, content, memory_type, importance, access_count,
                 created_at, updated_at, last_accessed_at, owner_id,
                 visibility, version, has_embedding, metadata,
-                scope_type, scope_id, workspace, tier, expires_at, content_hash
+                scope_type, scope_id, workspace, tier, expires_at, content_hash,
+                event_time, event_duration_seconds, trigger_pattern, procedure_success_count,
+                procedure_failure_count, summary_of_id, lifecycle_state, media_url
          FROM memories
          WHERE id = ? AND valid_to IS NULL
            AND (expires_at IS NULL OR expires_at > ?)",
@@ -245,7 +251,9 @@ pub fn find_by_content_hash(
         "SELECT id, content, memory_type, importance, access_count,
                 created_at, updated_at, last_accessed_at, owner_id,
                 visibility, version, has_embedding, metadata,
-                scope_type, scope_id, workspace, tier, expires_at, content_hash
+                scope_type, scope_id, workspace, tier, expires_at, content_hash,
+                event_time, event_duration_seconds, trigger_pattern, procedure_success_count,
+                procedure_failure_count, summary_of_id, lifecycle_state, media_url
          FROM memories
          WHERE content_hash = ? AND valid_to IS NULL
            AND (expires_at IS NULL OR expires_at > ?)
@@ -293,7 +301,9 @@ pub fn find_similar_by_embedding(
         "SELECT id, content, memory_type, importance, access_count,
                 created_at, updated_at, last_accessed_at, owner_id,
                 visibility, version, has_embedding, metadata,
-                scope_type, scope_id, workspace, tier, expires_at, content_hash
+                scope_type, scope_id, workspace, tier, expires_at, content_hash,
+                event_time, event_duration_seconds, trigger_pattern, procedure_success_count,
+                procedure_failure_count, summary_of_id, lifecycle_state, media_url
          FROM memories
          WHERE has_embedding = 1 AND valid_to IS NULL
            AND (expires_at IS NULL OR expires_at > ?)
@@ -668,9 +678,9 @@ pub fn create_memory(conn: &Connection, input: &CreateMemoryInput) -> Result<Mem
                         importance: input.importance, // Use new importance if provided
                         scope: None,
                         ttl_seconds: input.ttl_seconds, // Apply new TTL if provided
-
                         event_time: None,
                         trigger_pattern: None,
+                        media_url: input.media_url.clone().map(Some),
                     };
 
                     return update_memory(conn, existing.id, &update_input);
@@ -713,8 +723,8 @@ pub fn create_memory(conn: &Connection, input: &CreateMemoryInput) -> Result<Mem
     let event_time = input.event_time.map(|dt| dt.to_rfc3339());
 
     conn.execute(
-        "INSERT INTO memories (content, memory_type, importance, metadata, created_at, updated_at, valid_from, scope_type, scope_id, workspace, tier, expires_at, content_hash, event_time, event_duration_seconds, trigger_pattern, summary_of_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO memories (content, memory_type, importance, metadata, created_at, updated_at, valid_from, scope_type, scope_id, workspace, tier, expires_at, content_hash, event_time, event_duration_seconds, trigger_pattern, summary_of_id, media_url)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params![
             input.content,
             input.memory_type.as_str(),
@@ -733,6 +743,7 @@ pub fn create_memory(conn: &Connection, input: &CreateMemoryInput) -> Result<Mem
             input.event_duration_seconds,
             input.trigger_pattern,
             input.summary_of_id,
+            input.media_url,
         ],
     )?;
 
@@ -855,6 +866,12 @@ pub fn update_memory(conn: &Connection, id: i64, input: &UpdateMemoryInput) -> R
     if let Some(trigger_pattern) = &input.trigger_pattern {
         updates.push("trigger_pattern = ?".to_string());
         values.push(Box::new(trigger_pattern.clone()));
+    }
+
+    // Update media_url if provided (Some(None) clears, Some(Some(url)) sets)
+    if let Some(media_url) = &input.media_url {
+        updates.push("media_url = ?".to_string());
+        values.push(Box::new(media_url.clone()));
     }
 
     // Handle TTL update with tier invariant enforcement
@@ -1334,7 +1351,9 @@ pub fn list_memories(conn: &Connection, options: &ListOptions) -> Result<Vec<Mem
         "SELECT DISTINCT m.id, m.content, m.memory_type, m.importance, m.access_count,
                 m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
                 m.visibility, m.version, m.has_embedding, m.metadata,
-                m.scope_type, m.scope_id, m.workspace, m.tier, m.expires_at, m.content_hash
+                m.scope_type, m.scope_id, m.workspace, m.tier, m.expires_at, m.content_hash,
+                m.event_time, m.event_duration_seconds, m.trigger_pattern, m.procedure_success_count,
+                m.procedure_failure_count, m.summary_of_id, m.lifecycle_state, m.media_url
          FROM memories m",
     );
 
@@ -1450,6 +1469,8 @@ pub fn get_episodic_timeline(
                 m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
                 m.visibility, m.version, m.has_embedding, m.metadata,
                 m.scope_type, m.scope_id, m.workspace, m.tier, m.expires_at, m.content_hash,
+                m.event_time, m.event_duration_seconds, m.trigger_pattern, m.procedure_success_count,
+                m.procedure_failure_count, m.summary_of_id, m.lifecycle_state, m.media_url,
                 m.event_time, m.event_duration_seconds, m.trigger_pattern,
                 m.procedure_success_count, m.procedure_failure_count, m.summary_of_id,
                 m.lifecycle_state
@@ -1527,6 +1548,8 @@ pub fn get_procedural_memories(
                 m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
                 m.visibility, m.version, m.has_embedding, m.metadata,
                 m.scope_type, m.scope_id, m.workspace, m.tier, m.expires_at, m.content_hash,
+                m.event_time, m.event_duration_seconds, m.trigger_pattern, m.procedure_success_count,
+                m.procedure_failure_count, m.summary_of_id, m.lifecycle_state, m.media_url,
                 m.event_time, m.event_duration_seconds, m.trigger_pattern,
                 m.procedure_success_count, m.procedure_failure_count, m.summary_of_id,
                 m.lifecycle_state
@@ -2893,6 +2916,7 @@ pub fn import_memories(
             event_duration_seconds: None,
             trigger_pattern: None,
             summary_of_id: None,
+            media_url: None,
         };
 
         match create_memory(conn, &input) {
@@ -2993,6 +3017,7 @@ pub fn create_section_memory(
         event_duration_seconds: None,
         trigger_pattern: None,
         summary_of_id: None,
+        media_url: None,
     };
 
     create_memory(conn, &input)
@@ -3033,6 +3058,7 @@ pub fn create_checkpoint(
         event_duration_seconds: None,
         trigger_pattern: None,
         summary_of_id: None,
+        media_url: None,
     };
 
     create_memory(conn, &input)
@@ -3660,7 +3686,9 @@ pub fn search_by_identity(
         "SELECT DISTINCT m.id, m.content, m.memory_type, m.importance, m.access_count,
                 m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
                 m.visibility, m.version, m.has_embedding, m.metadata,
-                m.scope_type, m.scope_id, m.workspace, m.tier, m.expires_at, m.content_hash
+                m.scope_type, m.scope_id, m.workspace, m.tier, m.expires_at, m.content_hash,
+                m.event_time, m.event_duration_seconds, m.trigger_pattern, m.procedure_success_count,
+                m.procedure_failure_count, m.summary_of_id, m.lifecycle_state, m.media_url
          FROM memories m
          LEFT JOIN memory_tags mt ON m.id = mt.memory_id
          LEFT JOIN tags t ON mt.tag_id = t.id
@@ -3673,7 +3701,9 @@ pub fn search_by_identity(
         "SELECT DISTINCT m.id, m.content, m.memory_type, m.importance, m.access_count,
                 m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
                 m.visibility, m.version, m.has_embedding, m.metadata,
-                m.scope_type, m.scope_id, m.workspace, m.tier, m.expires_at, m.content_hash
+                m.scope_type, m.scope_id, m.workspace, m.tier, m.expires_at, m.content_hash,
+                m.event_time, m.event_duration_seconds, m.trigger_pattern, m.procedure_success_count,
+                m.procedure_failure_count, m.summary_of_id, m.lifecycle_state, m.media_url
          FROM memories m
          LEFT JOIN memory_tags mt ON m.id = mt.memory_id
          LEFT JOIN tags t ON mt.tag_id = t.id
@@ -3756,7 +3786,9 @@ pub fn search_sessions(
         "SELECT DISTINCT m.id, m.content, m.memory_type, m.importance, m.access_count,
                 m.created_at, m.updated_at, m.last_accessed_at, m.owner_id,
                 m.visibility, m.version, m.has_embedding, m.metadata,
-                m.scope_type, m.scope_id, m.workspace, m.tier, m.expires_at, m.content_hash
+                m.scope_type, m.scope_id, m.workspace, m.tier, m.expires_at, m.content_hash,
+                m.event_time, m.event_duration_seconds, m.trigger_pattern, m.procedure_success_count,
+                m.procedure_failure_count, m.summary_of_id, m.lifecycle_state, m.media_url
          FROM memories m {} WHERE {} ORDER BY m.created_at DESC LIMIT ?",
         join_clause,
         conditions.join(" AND ")
@@ -3814,6 +3846,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
                 let memory2 = create_memory(
@@ -3835,6 +3868,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -3919,6 +3953,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -3942,6 +3977,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -3965,6 +4001,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -3988,6 +4025,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4105,6 +4143,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4142,6 +4181,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4179,6 +4219,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4202,6 +4243,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4260,6 +4302,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4306,6 +4349,7 @@ mod tests {
                             event_duration_seconds: None,
                             trigger_pattern: None,
                             summary_of_id: None,
+                                media_url: None,
                         },
                     )?;
                     expired_ids.push(mem.id);
@@ -4332,6 +4376,7 @@ mod tests {
                             event_duration_seconds: None,
                             trigger_pattern: None,
                             summary_of_id: None,
+                                media_url: None,
                         },
                     )?;
                 }
@@ -4419,6 +4464,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4442,6 +4488,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 );
 
@@ -4483,6 +4530,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4506,6 +4554,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4555,6 +4604,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4582,6 +4632,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4635,6 +4686,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4658,6 +4710,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4704,6 +4757,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4726,6 +4780,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4749,6 +4804,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4792,6 +4848,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4835,6 +4892,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4854,6 +4912,7 @@ mod tests {
                         ttl_seconds: None,
                         event_time: None,
                         trigger_pattern: None,
+                        media_url: None,
                     },
                 )?;
 
@@ -4898,6 +4957,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -4922,6 +4982,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 );
 
@@ -4949,6 +5010,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 );
 
@@ -5013,6 +5075,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -5040,6 +5103,7 @@ mod tests {
                         event_duration_seconds: None,
                         trigger_pattern: None,
                         summary_of_id: None,
+                            media_url: None,
                     },
                 )?;
 
@@ -5097,5 +5161,190 @@ mod tests {
                 Ok(())
             })
             .unwrap();
+    }
+
+    // ── T1: Multimodal MemoryType tests ──────────────────────────────────────
+
+    fn open_test_storage() -> crate::storage::Storage {
+        crate::storage::Storage::open_in_memory().expect("in-memory storage")
+    }
+
+    #[test]
+    fn test_create_image_memory_with_media_url() {
+        let storage = open_test_storage();
+        let memory = storage
+            .with_transaction(|conn| {
+                create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "A screenshot of the dashboard".to_string(),
+                        memory_type: MemoryType::Image,
+                        media_url: Some("local:///tmp/dashboard.png".to_string()),
+                        ..Default::default()
+                    },
+                )
+            })
+            .expect("create image memory");
+        assert_eq!(memory.memory_type, MemoryType::Image);
+        assert_eq!(
+            memory.media_url.as_deref(),
+            Some("local:///tmp/dashboard.png")
+        );
+    }
+
+    #[test]
+    fn test_create_audio_memory_with_media_url() {
+        let storage = open_test_storage();
+        let memory = storage
+            .with_transaction(|conn| {
+                create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Meeting recording transcript".to_string(),
+                        memory_type: MemoryType::Audio,
+                        media_url: Some("local:///tmp/meeting.mp3".to_string()),
+                        ..Default::default()
+                    },
+                )
+            })
+            .expect("create audio memory");
+        assert_eq!(memory.memory_type, MemoryType::Audio);
+        assert_eq!(
+            memory.media_url.as_deref(),
+            Some("local:///tmp/meeting.mp3")
+        );
+    }
+
+    #[test]
+    fn test_create_video_memory_with_media_url() {
+        let storage = open_test_storage();
+        let memory = storage
+            .with_transaction(|conn| {
+                create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Keynote presentation video".to_string(),
+                        memory_type: MemoryType::Video,
+                        media_url: Some("https://cdn.example.com/keynote.mp4".to_string()),
+                        ..Default::default()
+                    },
+                )
+            })
+            .expect("create video memory");
+        assert_eq!(memory.memory_type, MemoryType::Video);
+        assert_eq!(
+            memory.media_url.as_deref(),
+            Some("https://cdn.example.com/keynote.mp4")
+        );
+    }
+
+    #[test]
+    fn test_get_memory_returns_media_url() {
+        let storage = open_test_storage();
+        let created = storage
+            .with_transaction(|conn| {
+                create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Image with URL".to_string(),
+                        memory_type: MemoryType::Image,
+                        media_url: Some("local:///tmp/image.png".to_string()),
+                        ..Default::default()
+                    },
+                )
+            })
+            .expect("create");
+        let fetched = storage
+            .with_connection(|conn| get_memory(conn, created.id))
+            .expect("get");
+        assert_eq!(fetched.media_url, created.media_url);
+    }
+
+    #[test]
+    fn test_create_image_memory_without_media_url() {
+        let storage = open_test_storage();
+        let memory = storage
+            .with_transaction(|conn| {
+                create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Image described in text only".to_string(),
+                        memory_type: MemoryType::Image,
+                        media_url: None,
+                        ..Default::default()
+                    },
+                )
+            })
+            .expect("create image memory without media_url");
+        assert_eq!(memory.memory_type, MemoryType::Image);
+        assert!(memory.media_url.is_none());
+    }
+
+    #[test]
+    fn test_update_memory_sets_media_url() {
+        let storage = open_test_storage();
+        let created = storage
+            .with_transaction(|conn| {
+                create_memory(
+                    conn,
+                    &CreateMemoryInput {
+                        content: "Image memory".to_string(),
+                        memory_type: MemoryType::Image,
+                        ..Default::default()
+                    },
+                )
+            })
+            .expect("create");
+        let updated = storage
+            .with_transaction(|conn| {
+                update_memory(
+                    conn,
+                    created.id,
+                    &UpdateMemoryInput {
+                        media_url: Some(Some("local:///tmp/updated.png".to_string())),
+                        content: None,
+                        memory_type: None,
+                        tags: None,
+                        metadata: None,
+                        importance: None,
+                        scope: None,
+                        ttl_seconds: None,
+                        event_time: None,
+                        trigger_pattern: None,
+                    },
+                )
+            })
+            .expect("update");
+        assert_eq!(
+            updated.media_url.as_deref(),
+            Some("local:///tmp/updated.png")
+        );
+    }
+
+    #[test]
+    fn test_memory_type_is_multimodal() {
+        assert!(MemoryType::Image.is_multimodal());
+        assert!(MemoryType::Audio.is_multimodal());
+        assert!(MemoryType::Video.is_multimodal());
+        assert!(!MemoryType::Note.is_multimodal());
+        assert!(!MemoryType::Episodic.is_multimodal());
+    }
+
+    #[test]
+    fn test_schema_migration_v34_idempotent() {
+        use crate::storage::migrations::run_migrations;
+        let conn =
+            rusqlite::Connection::open_in_memory().expect("in-memory db");
+        run_migrations(&conn).expect("run migrations");
+        // Running again should be a no-op
+        run_migrations(&conn).expect("idempotent second run");
+        let version: i32 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(version), 0) FROM schema_version",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query version");
+        assert_eq!(version, 34);
     }
 }

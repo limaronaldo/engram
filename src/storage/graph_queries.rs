@@ -663,6 +663,7 @@ mod tests {
             event_duration_seconds: None,
             trigger_pattern: None,
             summary_of_id: None,
+                media_url: None,
         };
         create_memory(conn, &input).unwrap().id
     }

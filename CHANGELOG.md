@@ -9,6 +9,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.19.0] - 2026-03-19
+
+### Added
+
+- **Multimodal Memory Types (Phase O)** — First-class support for image, audio, and video memories feature-gated under `--features multimodal`
+  - `MemoryType::Image`, `MemoryType::Audio`, `MemoryType::Video` variants added to the type system
+  - `is_multimodal()` method on `MemoryType` for quick type checks
+  - `media_url: Option<String>` field on `Memory`, `CreateMemoryInput`, and `UpdateMemoryInput`
+  - Schema migration v34: additive nullable `media_url TEXT` column + sparse index on `memories` table
+
+- **CLIP Embedding Provider** (`src/embedding/clip.rs`, feature: `multimodal`)
+  - `MultimodalEmbedder` trait extending `Embedder` with `embed_image_sync()` and `multimodal_provider_name()`
+  - `ClipEmbedder` — description-mediated cross-modal embedder: image bytes → VisionProvider description → text embedding (no ONNX model required)
+  - `create_clip_embedder()` factory function; env-key driven via `OPENAI_API_KEY`
+  - `CLIP_PROVIDER_NAME` constant; registered in `create_embedder()` under the `"clip"` key
+
+- **Cloud Media Sync** (`src/storage/image_storage.rs`, features: `multimodal` + `cloud`)
+  - `sync_to_cloud(conn, config, dry_run)` — queries `media_assets` table, uploads local files to S3/R2, updates `file_path` to cloud URL
+  - `MediaSyncReport` struct with `assets_examined`, `assets_uploaded`, `assets_failed`, `errors`, `dry_run` fields
+  - `build_cloud_key(memory_id, file_hash, mime_type)` and `build_cloud_url()` helpers
+  - `is_cloud_url()` guard to skip already-synced assets
+  - `memory_sync_media` MCP tool — triggers cloud sync with optional `dry_run` parameter
+
+- **Cross-Modal Image Search** (`src/mcp/handlers/multimodal.rs`, feature: `multimodal`)
+  - `memory_search_by_image` MCP tool — find semantically similar memories given an image path
+  - Automatic strategy selection: `clip` (CLIP embedding via vision description) or `description` (text fallback)
+  - `strategy_used` field in response indicates which path was taken
+  - Full reranking pipeline applied to results
+
+### Changed
+
+- `MemoryType` match arms in `src/search/rerank.rs` updated with `Image | Audio | Video` returning default relevance score `0.05`
+
+### Schema
+
+- **v34**: `ALTER TABLE memories ADD COLUMN media_url TEXT` (nullable, additive) + sparse index `idx_memories_media_url`
+
+### MCP Tools Added
+
+| Tool | Feature Gate | Description |
+|------|-------------|-------------|
+| `memory_search_by_image` | `multimodal` | Cross-modal similarity search from an image file |
+| `memory_sync_media` | `multimodal` + `cloud` | Upload local media assets to S3/R2 cloud storage |
+
+### Tests
+
+- 797 tests passing (up from 787 in v0.18.0)
+- New tests: multimodal memory type CRUD, media_url round-trip, CLIP embedder type checks, cloud key/URL helpers, sync dry-run, cross-modal search handler
+
+---
+
 ## [0.18.0] - 2026-03-19
 
 ### Added

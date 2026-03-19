@@ -567,6 +567,7 @@ pub fn get_memory_salience_with_feedback(
                 procedure_failure_count: 0,
                 summary_of_id: None,
                 lifecycle_state,
+                media_url: None,
             };
 
             Ok(Some(calculator.calculate(&memory, feedback_signal)))
@@ -883,6 +884,7 @@ mod tests {
             procedure_failure_count: 0,
             summary_of_id: None,
             lifecycle_state: LifecycleState::Active,
+            media_url: None,
         }
     }
 

@@ -126,6 +126,7 @@ impl LongMemEvalBenchmark {
             ttl_seconds: None,
             event_time: None,
             trigger_pattern: None,
+            media_url: None,
         };
         let _ = storage.with_connection(|conn| update_memory(conn, mem.id, &update));
 
@@ -171,6 +172,7 @@ impl LongMemEvalBenchmark {
             ttl_seconds: None,
             event_time: None,
             trigger_pattern: None,
+            media_url: None,
         };
         let _ = storage.with_connection(|conn| update_memory(conn, tag_mem.id, &update2));
 

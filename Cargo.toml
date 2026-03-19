@@ -1,6 +1,6 @@
 [package]
 name = "engram-core"
-version = "0.18.0"
+version = "0.19.0"
 edition = "2021"
 authors = ["Ronaldo Lima"]
 description = "AI Memory Infrastructure - Persistent memory for AI agents with semantic search"
