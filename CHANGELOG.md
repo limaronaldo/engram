@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.17.0] - 2026-03-19
+
+### Added
+- **Engram Watcher — Proactive Context Capture Daemon**
+  - Separate binary `engram-watcher` for background monitoring of the developer's working environment
+  - **File system watcher** (`src/watcher/fs_watcher.rs`) — monitors directories for file changes using the `notify` crate, debounced events (configurable, default 500ms), extension filtering, glob-based ignore patterns (.git, node_modules, target)
+  - **Browser history watcher** (`src/watcher/browser.rs`) — polls Chrome, Firefox, and Safari history databases (SQLite), handles locked DBs via temp file copy, URL substring exclusion patterns
+  - **Application focus watcher** (`src/watcher/app_focus.rs`) — tracks active window and attention time via platform-specific APIs, configurable minimum focus duration, app exclusion list
+  - **TOML configuration** (`~/.config/engram/watcher.toml`) — per-watcher enable/disable, paths, intervals, exclusion patterns, engram-server URL and API key
+  - **Daemon lifecycle** — graceful shutdown via Ctrl-C, `--dry-run` mode for testing without side effects, `--verbose` for debug logging
+  - **HTTP transport** — communicates with engram-server via JSON-RPC 2.0 POST to `/v1/mcp`, bearer auth, 10s timeout, best-effort delivery (queue and retry when server unavailable)
+  - **Privacy-first** — all processing local, no data leaves the machine except to the configured engram-server
+  - Feature-gated: `--features watcher` (deps: `notify`, `toml`, `tempfile`, `reqwest`)
+
+### Tests
+- 8 integration tests in `tests/watcher_integration.rs` covering file creation/modification detection, extension filtering, ignore patterns, app focus tracking, config TOML round-trip, and memory content formatting
+- 29 unit tests across watcher modules
+
+---
+
 ## [0.16.0] - 2026-03-19
 
 ### Added
