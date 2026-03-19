@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "engram-client"
-version = "0.3.0"
+version = "0.4.0"
 description = "Python client for Engram Cloud - AI memory infrastructure"
 readme = "README.md"
 license = {text = "MIT"}
@@ -26,6 +26,7 @@ dependencies = [
 langchain = ["langchain-core>=0.3.0"]
 crewai = ["crewai>=0.86.0"]
 openai = ["openai>=1.0.0"]
+llamaindex = ["llama-index-core>=0.11.0"]
 
 [project.urls]
 Homepage = "https://github.com/limaronaldo/engram"
