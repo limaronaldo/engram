@@ -9,6 +9,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.18.0] - 2026-03-19
+
+### Added
+
+- **gRPC Transport (Phase N)** — tonic-based gRPC server alongside the existing stdio/HTTP transports
+  - `proto/mcp.proto` — protobuf schema for MCP JSON-RPC; keeps params/results as JSON strings for stability as the 200+ tool catalogue evolves
+  - `src/mcp/grpc_transport.rs` — `GrpcMcpService` implementing the generated `McpService` trait; bridges to `McpHandler`, bearer-token auth via gRPC metadata, server-streaming `Subscribe` RPC via `RealtimeManager`
+  - `TransportMode::Grpc` variant added to the server CLI; new flags `--grpc-port` (env `ENGRAM_GRPC_PORT`, default `50051`) and `--grpc-api-key` (env `ENGRAM_GRPC_API_KEY`)
+  - `build.rs` — compiles `proto/mcp.proto` with `tonic-build` only when the `grpc` feature is active, keeping default builds clean
+  - Feature-gated: `--features grpc` (deps: `tonic 0.12`, `prost 0.13`, `tonic-build 0.12`)
+
+### Usage
+
+```bash
+# gRPC transport only (default port 50051)
+engram-server --transport grpc
+
+# gRPC with custom port and auth
+engram-server --transport grpc --grpc-port 50051 --grpc-api-key my-secret
+
+# HTTP + gRPC simultaneously
+engram-server --transport http --http-port 3100 &
+engram-server --transport grpc --grpc-port 50051
+```
+
+### Tests
+
+- 12 unit tests in `src/mcp/grpc_transport.rs` covering proto/handler conversion, auth, event-type parsing, and round-trip call
+- 7 integration test scenarios in `tests/grpc_transport.rs`:
+  - `initialize` returns server info
+  - `tools/list` returns full tool catalogue
+  - `memory_create` via `tools/call` returns ID
+  - `memory_search` via `tools/call` returns results
+  - Missing token returns `UNAUTHENTICATED`
+  - Correct token succeeds
+  - Unknown method returns `-32601` error response
+
+### Feature Flags
+
+| Feature | Description | New? |
+|---------|-------------|------|
+| `grpc` | gRPC transport (tonic 0.12 + prost 0.13) | Yes |
+
+---
+
 ## [0.17.0] - 2026-03-19
 
 ### Added

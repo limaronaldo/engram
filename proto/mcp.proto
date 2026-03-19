@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package engram.mcp;
+
+// McpService exposes the two core RPC methods:
+//   - Call: single request/response (mirrors JSON-RPC call semantics)
+//   - Subscribe: server-streaming RPC for real-time event delivery
+//
+// Params and results are kept as opaque JSON strings so the protobuf schema
+// stays stable even as the 200+ MCP tool catalogue evolves.
+service McpService {
+  // Call a method — mirrors JSON-RPC 2.0 request/response.
+  rpc Call (McpRequest) returns (McpResponse);
+
+  // Subscribe to real-time events — server streaming.
+  rpc Subscribe (SubscribeRequest) returns (stream McpEvent);
+}
+
+// McpRequest mirrors a JSON-RPC 2.0 request.
+message McpRequest {
+  // JSON-RPC request id (string form; empty string = notification).
+  string id = 1;
+  // Method name, e.g. "tools/call", "initialize", "tools/list".
+  string method = 2;
+  // Serialised JSON params object (or "null").
+  string params_json = 3;
+}
+
+// McpResponse mirrors a JSON-RPC 2.0 response.
+message McpResponse {
+  // Echoed request id.
+  string id = 1;
+  // Exactly one of result_json / error will be set.
+  oneof result {
+    // Serialised JSON result value on success.
+    string result_json = 2;
+    // Structured error on failure.
+    McpError error = 3;
+  }
+}
+
+// McpError mirrors JSON-RPC 2.0 error object.
+message McpError {
+  // JSON-RPC error code (e.g. -32601 = method not found).
+  int32 code = 1;
+  // Human-readable error message.
+  string message = 2;
+  // Optional serialised JSON error data.
+  string data_json = 3;
+}
+
+// SubscribeRequest sets up a server-streaming subscription.
+message SubscribeRequest {
+  // Event type filters; empty list = subscribe to all types.
+  // Accepted values match EventType snake_case variants:
+  //   memory_created, memory_updated, memory_deleted,
+  //   crossref_created, crossref_deleted,
+  //   sync_started, sync_completed, sync_failed
+  repeated string event_types = 1;
+  // Optional workspace filter; empty = all workspaces.
+  string workspace = 2;
+}
+
+// McpEvent is a single real-time event pushed to subscribers.
+message McpEvent {
+  // Snake-case event type, e.g. "memory_created".
+  string event_type = 1;
+  // Serialised JSON event payload.
+  string data_json = 2;
+  // Monotonically-increasing sequence number assigned by RealtimeManager.
+  uint64 sequence_id = 3;
+}

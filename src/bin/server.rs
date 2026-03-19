@@ -33,6 +33,9 @@ enum TransportMode {
     Http,
     /// Both stdio and HTTP transports simultaneously
     Both,
+    /// gRPC transport only (requires the `grpc` feature)
+    #[cfg(feature = "grpc")]
+    Grpc,
 }
 
 #[derive(Parser, Debug)]
@@ -132,6 +135,16 @@ struct Args {
     /// API key for HTTP transport authentication (optional)
     #[arg(long, env = "ENGRAM_HTTP_API_KEY")]
     http_api_key: Option<String>,
+
+    /// gRPC transport port (used when --transport is grpc)
+    #[cfg(feature = "grpc")]
+    #[arg(long, env = "ENGRAM_GRPC_PORT", default_value = "50051")]
+    grpc_port: u16,
+
+    /// API key for gRPC transport authentication (optional Bearer token)
+    #[cfg(feature = "grpc")]
+    #[arg(long, env = "ENGRAM_GRPC_API_KEY")]
+    grpc_api_key: Option<String>,
 
     /// Meilisearch URL for optional search indexing
     #[cfg(feature = "meilisearch")]
@@ -647,6 +660,23 @@ fn main() -> Result<()> {
 
             // Run stdio in the main thread
             server.run()?;
+        }
+        #[cfg(feature = "grpc")]
+        TransportMode::Grpc => {
+            use engram::mcp::grpc_transport;
+
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| engram::error::EngramError::Internal(e.to_string()))?;
+            rt.block_on(async {
+                grpc_transport::serve_grpc(
+                    handler,
+                    args.grpc_port,
+                    args.grpc_api_key,
+                    realtime_manager,
+                )
+                .await
+                .map_err(|e| engram::error::EngramError::Internal(e.to_string()))
+            })?;
         }
     }
 

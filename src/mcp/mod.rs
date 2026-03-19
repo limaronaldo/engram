@@ -4,6 +4,8 @@
 
 pub mod handlers;
 pub mod http_transport;
+#[cfg(feature = "grpc")]
+pub mod grpc_transport;
 pub mod prompts;
 pub mod protocol;
 pub mod resources;
