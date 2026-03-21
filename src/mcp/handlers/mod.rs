@@ -17,6 +17,7 @@ pub mod agent;
 pub mod autonomous;
 pub mod compression;
 pub mod context;
+pub mod markdown_export;
 pub mod evolution;
 pub mod graph;
 pub mod identity;
@@ -225,6 +226,7 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         "memory_tag_hierarchy" => misc::memory_tag_hierarchy(ctx, params),
         "memory_validate_tags" => misc::memory_validate_tags(ctx, params),
         "memory_export" => misc::memory_export(ctx, params),
+        "memory_export_markdown" => markdown_export::memory_export_markdown(ctx, params),
         "memory_import" => misc::memory_import(ctx, params),
         "memory_rebuild_embeddings" => misc::memory_rebuild_embeddings(ctx, params),
         "memory_rebuild_crossrefs" => misc::memory_rebuild_crossrefs(ctx, params),
