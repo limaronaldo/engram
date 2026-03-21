@@ -2866,6 +2866,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["session_id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Essential,
     },
     ToolDef {
         name: "memory_build_context",
@@ -2886,6 +2887,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["query"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_export_markdown",
@@ -2900,6 +2902,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["workspace"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "recent_activity",
@@ -2914,6 +2917,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Essential,
     },
     // ── Meta / Discovery ─────────────────────────────────────────────────────
     ToolDef {
