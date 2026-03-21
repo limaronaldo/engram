@@ -589,11 +589,11 @@ fn test_prompts_list() {
         .as_array()
         .expect("Expected prompts array");
 
-    // Should have exactly 4 prompts
+    // Should have exactly 5 prompts
     assert_eq!(
         prompts.len(),
-        4,
-        "Expected 4 prompts, got {}",
+        5,
+        "Expected 5 prompts, got {}",
         prompts.len()
     );
 

@@ -74,6 +74,24 @@ pub fn list_prompts() -> Vec<PromptDefinition> {
                 },
             ]),
         },
+        PromptDefinition {
+            name: "session-handoff".to_string(),
+            description: Some(
+                "End-of-session handoff: summarize progress, capture open items, and generate a bootstrap prompt for the next session".to_string(),
+            ),
+            arguments: Some(vec![
+                PromptArgument {
+                    name: "session_id".to_string(),
+                    description: Some("Session identifier for the handoff".to_string()),
+                    required: Some(true),
+                },
+                PromptArgument {
+                    name: "workspace".to_string(),
+                    description: Some("Workspace scope (default: 'default')".to_string()),
+                    required: Some(false),
+                },
+            ]),
+        },
     ]
 }
 
@@ -211,6 +229,35 @@ pub fn get_prompt(name: &str, arguments: &Value) -> Result<Vec<PromptMessage>, S
             ])
         }
 
+        "session-handoff" => {
+            let session_id = arg("session_id")
+                .ok_or_else(|| "Missing required argument: session_id".to_string())?;
+            let workspace = arg("workspace").unwrap_or("default");
+
+            Ok(vec![PromptMessage {
+                role: "user".to_string(),
+                content: PromptContent {
+                    content_type: "text".to_string(),
+                    text: format!(
+                        "Please perform an end-of-session handoff for session '{}' in workspace '{}'.\n\n\
+                         Follow these steps:\n\n\
+                         1. **Summarize Progress**: Briefly describe what was accomplished this session.\n\n\
+                         2. **Capture Open Items**: Create or update todo memories for any unfinished work:\n\
+                            ```json\n\
+                            {{\"tool\": \"memory_create\", \"params\": {{\"content\": \"...\", \"memory_type\": \"todo\", \"workspace\": \"{}\"}}}}\n\
+                            ```\n\n\
+                         3. **Land the Plane**: Call session_land to generate the handoff checkpoint:\n\
+                            ```json\n\
+                            {{\"tool\": \"session_land\", \"params\": {{\"session_id\": \"{}\", \"workspace\": \"{}\", \"summary\": \"<your summary>\", \"next_session_hints\": [\"<hint1>\", \"<hint2>\"]}}}}\n\
+                            ```\n\n\
+                         4. **Report**: Share the bootstrap prompt from the handoff so it can be used to start the next session.\n\n\
+                         This ensures seamless continuity across sessions — no context is lost.",
+                        session_id, workspace, workspace, session_id, workspace
+                    ),
+                },
+            }])
+        }
+
         _ => Err(format!("Prompt not found: {name}")),
     }
 }
@@ -221,14 +268,15 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_list_prompts_returns_four_prompts() {
+    fn test_list_prompts_returns_five_prompts() {
         let prompts = list_prompts();
-        assert_eq!(prompts.len(), 4);
+        assert_eq!(prompts.len(), 5);
         let names: Vec<&str> = prompts.iter().map(|p| p.name.as_str()).collect();
         assert!(names.contains(&"create-knowledge-base"));
         assert!(names.contains(&"daily-review"));
         assert!(names.contains(&"search-and-organize"));
         assert!(names.contains(&"seed-entity"));
+        assert!(names.contains(&"session-handoff"));
     }
 
     #[test]
@@ -327,6 +375,31 @@ mod tests {
         let result = get_prompt("seed-entity", &args);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("entity_name"));
+    }
+
+    #[test]
+    fn test_session_handoff_with_required_args() {
+        let args = json!({"session_id": "sess-42", "workspace": "work"});
+        let messages = get_prompt("session-handoff", &args).unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "user");
+        assert!(messages[0].content.text.contains("sess-42"));
+        assert!(messages[0].content.text.contains("work"));
+    }
+
+    #[test]
+    fn test_session_handoff_default_workspace() {
+        let args = json!({"session_id": "sess-1"});
+        let messages = get_prompt("session-handoff", &args).unwrap();
+        assert!(messages[0].content.text.contains("default"));
+    }
+
+    #[test]
+    fn test_session_handoff_missing_session_id_returns_error() {
+        let args = json!({});
+        let result = get_prompt("session-handoff", &args);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("session_id"));
     }
 
     #[test]
