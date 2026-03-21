@@ -2658,6 +2658,20 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
         }"#,
         annotations: ToolAnnotations::read_only(),
     },
+    ToolDef {
+        name: "recent_activity",
+        description: "Discover recently created or updated memories. Returns compact previews sorted by most recent activity. Useful for understanding what has changed recently.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Filter by workspace (omit for all workspaces)"},
+                "timeframe": {"type": "string", "enum": ["1h", "24h", "7d", "30d"], "default": "24h", "description": "Time window for activity"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20, "description": "Max results to return"},
+                "include_types": {"type": "array", "items": {"type": "string"}, "description": "Only include these memory types"}
+            }
+        }"#,
+        annotations: ToolAnnotations::read_only(),
+    },
 ];
 
 /// Get all tool definitions as ToolDefinition structs
@@ -2783,6 +2797,24 @@ mod tests {
         assert!(
             !json.contains("read_only_hint"),
             "must not use snake_case key"
+        );
+    }
+
+    #[test]
+    fn test_recent_activity_tool_is_defined_as_read_only() {
+        let tools = get_tool_definitions();
+        let tool = tools
+            .iter()
+            .find(|t| t.name == "recent_activity")
+            .expect("recent_activity tool must be defined");
+        let ann = tool
+            .annotations
+            .as_ref()
+            .expect("annotations must be present");
+        assert_eq!(
+            ann.read_only_hint,
+            Some(true),
+            "recent_activity should have readOnlyHint=true"
         );
     }
 

@@ -440,6 +440,125 @@ pub fn memory_search_compact(ctx: &HandlerContext, params: Value) -> Value {
         .unwrap_or_else(|e| json!({"error": e.to_string()}))
 }
 
+/// Return recently created or updated memories for discovery.
+///
+/// Params:
+/// - `workspace` (string, optional) — filter by workspace
+/// - `timeframe` (string, optional) — "1h", "24h", "7d", "30d" (default: "24h")
+/// - `limit` (integer, optional, default 20, max 100)
+/// - `include_types` (array of strings, optional) — filter by memory type
+pub fn recent_activity(ctx: &HandlerContext, params: Value) -> Value {
+    let workspace = params.get("workspace").and_then(|v| v.as_str());
+    let timeframe = params
+        .get("timeframe")
+        .and_then(|v| v.as_str())
+        .unwrap_or("24h");
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(20)
+        .min(100) as i64;
+    let include_types: Option<Vec<String>> = params
+        .get("include_types")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        });
+
+    let time_clause = match timeframe {
+        "1h" => "AND created_at > datetime('now', '-1 hours')",
+        "24h" => "AND created_at > datetime('now', '-24 hours')",
+        "7d" => "AND created_at > datetime('now', '-7 days')",
+        "30d" => "AND created_at > datetime('now', '-30 days')",
+        _ => "AND created_at > datetime('now', '-24 hours')",
+    };
+
+    let workspace_owned = workspace.map(String::from);
+    let timeframe_owned = timeframe.to_string();
+
+    ctx.storage
+        .with_connection(|conn| {
+            let mut sql = format!(
+                "SELECT m.id, m.content, m.memory_type, m.importance, m.workspace, \
+                 m.created_at, m.updated_at, \
+                 (SELECT GROUP_CONCAT(t.name, ',') FROM memory_tags mt \
+                  JOIN tags t ON mt.tag_id = t.id WHERE mt.memory_id = m.id) AS tags \
+                 FROM memories m WHERE m.valid_to IS NULL {} ",
+                time_clause
+            );
+
+            let mut param_values: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+            if let Some(ref ws) = workspace_owned {
+                sql.push_str(&format!("AND m.workspace = ?{} ", param_values.len() + 1));
+                param_values.push(Box::new(ws.clone()));
+            }
+
+            if let Some(ref types) = include_types {
+                if !types.is_empty() {
+                    let placeholders: Vec<String> = types
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| format!("?{}", param_values.len() + i + 1))
+                        .collect();
+                    sql.push_str(&format!(
+                        "AND m.memory_type IN ({}) ",
+                        placeholders.join(",")
+                    ));
+                    for t in types {
+                        param_values.push(Box::new(t.clone()));
+                    }
+                }
+            }
+
+            sql.push_str(&format!(
+                "ORDER BY COALESCE(m.updated_at, m.created_at) DESC LIMIT ?{}",
+                param_values.len() + 1
+            ));
+            param_values.push(Box::new(limit));
+
+            let mut stmt = conn.prepare(&sql)?;
+
+            let rows = stmt.query_map(
+                rusqlite::params_from_iter(param_values.iter().map(|p| p.as_ref())),
+                |row| {
+                    let content: String = row.get(1)?;
+                    let char_count = content.chars().count();
+                    let preview: String = content.chars().take(100).collect();
+                    let preview = if char_count > 100 {
+                        format!("{}...", preview)
+                    } else {
+                        preview
+                    };
+
+                    Ok(json!({
+                        "id": row.get::<_, i64>(0)?,
+                        "preview": preview,
+                        "memory_type": row.get::<_, String>(2)?,
+                        "importance": row.get::<_, f64>(3)?,
+                        "workspace": row.get::<_, String>(4)?,
+                        "created_at": row.get::<_, String>(5)?,
+                        "updated_at": row.get::<_, String>(6)?,
+                        "tags": row.get::<_, Option<String>>(7)?
+                    }))
+                },
+            )?;
+
+            let activities: Vec<Value> = rows.filter_map(|r| r.ok()).collect();
+            let count = activities.len();
+
+            Ok(json!({
+                "activities": activities,
+                "count": count,
+                "timeframe": timeframe_owned,
+                "workspace": workspace_owned
+            }))
+        })
+        .unwrap_or_else(|e| json!({"error": e.to_string()}))
+}
+
 /// Fetch full Memory objects for a list of IDs.
 ///
 /// Parameters:
