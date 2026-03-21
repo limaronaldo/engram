@@ -1,6 +1,6 @@
 # Engram — Complete AI Agent Guide
 
-> **Version:** 0.19.0 | **Protocol:** MCP 2025-11-25 | **Tools:** 216+ | **Schema:** v34
+> **Version:** 0.20.0 | **Protocol:** MCP 2025-11-25 | **Tools:** 220+ | **Schema:** v34
 
 This guide teaches AI agents how to use every Engram capability — from basic CRUD to cloud sync, multimodal memory, knowledge packaging, and multi-agent coordination.
 
@@ -31,6 +31,10 @@ This guide teaches AI agents how to use every Engram capability — from basic C
 21. [Watcher Daemon](#21-watcher-daemon)
 22. [Recipes & Patterns](#22-recipes--patterns)
 23. [Tool Reference](#23-tool-reference)
+24. [Progressive Tool Discovery](#24-progressive-tool-discovery)
+25. [Session Handoff Protocol](#25-session-handoff-protocol)
+26. [Markdown Export](#26-markdown-export)
+27. [Recent Activity](#27-recent-activity)
 
 ---
 
@@ -1566,5 +1570,199 @@ Every tool includes MCP 2025-11-25 annotations:
 
 ---
 
-*Engram v0.19.0 — AI Memory Engine*
-*216+ MCP tools | Hybrid search | Knowledge graphs | Cloud sync | Multimodal | Agent portability*
+## 24. Progressive Tool Discovery
+
+Engram exposes 220+ tools. To avoid overwhelming agents, tools are organized into three tiers:
+
+| Tier | Count | Description |
+|------|-------|-------------|
+| **Essential** | ~20 | Core tools every agent needs: CRUD, search, stats, sessions |
+| **Standard** | ~57 | Common operations: lifecycle, quality, identity, context engineering |
+| **Advanced** | ~104 | Specialized: compression, evolution, attestation, multimodal |
+
+### Controlling Exposure
+
+Set `ENGRAM_TOOL_TIER` to control which tools are listed:
+
+```bash
+# Only essential tools (~20) — great for simple agents
+ENGRAM_TOOL_TIER=essential cargo run --bin engram-server
+
+# Essential + standard (~77) — recommended for most agents
+ENGRAM_TOOL_TIER=standard cargo run --bin engram-server
+
+# All tools (default, backward compatible)
+ENGRAM_TOOL_TIER=all cargo run --bin engram-server
+```
+
+### Discovering Tools
+
+The `discover_tools` tool is always available regardless of tier setting:
+
+```json
+{"tool": "discover_tools", "params": {"tier": "standard"}}
+{"tool": "discover_tools", "params": {"category": "search"}}
+{"tool": "discover_tools", "params": {"search": "graph"}}
+```
+
+Response includes tool names, descriptions, tiers, and summary counts. Agents can progressively discover capabilities as needed.
+
+---
+
+## 25. Session Handoff Protocol
+
+Inspired by Beads' "land the plane" pattern, Engram provides a structured end-of-session handoff:
+
+### session_land Tool
+
+```json
+{
+  "tool": "session_land",
+  "params": {
+    "session_id": "coding-session-42",
+    "workspace": "default",
+    "summary": "Implemented auth middleware and wrote unit tests",
+    "next_session_hints": [
+      "Integration tests still needed",
+      "Review rate limiting config"
+    ]
+  }
+}
+```
+
+Returns a structured handoff with:
+- **summary** — what was accomplished
+- **open_items** — unfinished todos and issues
+- **recent_decisions** — decisions made in the last 24h
+- **bootstrap_prompt** — ready-to-use prompt to start the next session
+
+A checkpoint memory is automatically created with the handoff data.
+
+### session-handoff Prompt
+
+Use the MCP prompt for a guided workflow:
+
+```json
+{"method": "prompts/get", "params": {"name": "session-handoff", "arguments": {"session_id": "my-session"}}}
+```
+
+This guides you through: summarize progress → capture open items → call session_land → report bootstrap prompt.
+
+---
+
+## 26. Markdown Export
+
+Export memories as human-readable Markdown files, inspired by Basic Memory:
+
+```json
+{
+  "tool": "memory_export_markdown",
+  "params": {
+    "workspace": "default",
+    "output_dir": "./my-knowledge-base/",
+    "include_links": true
+  }
+}
+```
+
+### Output Structure
+
+```
+my-knowledge-base/
+├── index.md                    # Workspace overview + table of contents
+├── notes/
+│   ├── 42-project-architecture.md
+│   └── 57-api-design-notes.md
+├── decisions/
+│   └── 63-chose-postgresql.md
+└── todos/
+    └── 71-add-rate-limiting.md
+```
+
+### File Format
+
+Each file includes YAML frontmatter and optional wiki-style `[[links]]`:
+
+```markdown
+---
+id: 42
+type: note
+tags: ["architecture", "backend"]
+importance: 0.80
+tier: permanent
+created_at: "2026-03-20T10:30:00Z"
+---
+
+Project architecture uses a layered approach with...
+
+## Related
+
+- relates_to [[63-chose-postgresql]]
+- supports [[57-api-design-notes]]
+```
+
+---
+
+## 27. Recent Activity
+
+Discover what changed recently with the `recent_activity` tool:
+
+```json
+{
+  "tool": "recent_activity",
+  "params": {
+    "workspace": "default",
+    "timeframe": "24h",
+    "limit": 10
+  }
+}
+```
+
+Returns compact previews sorted by most recent activity:
+
+```json
+{
+  "activities": [
+    {
+      "id": 42,
+      "preview": "Project architecture uses a layered approach with...",
+      "memory_type": "note",
+      "tags": "architecture,backend",
+      "created_at": "2026-03-20T10:30:00Z",
+      "updated_at": "2026-03-20T14:15:00Z"
+    }
+  ],
+  "count": 1,
+  "timeframe": "24h"
+}
+```
+
+Timeframe options: `"1h"`, `"24h"`, `"7d"`, `"30d"`.
+
+### Enhanced Context Building
+
+`memory_build_context` now supports depth traversal and timeframe filtering:
+
+```json
+{
+  "tool": "memory_build_context",
+  "params": {
+    "query": "authentication",
+    "depth": 2,
+    "timeframe": "7d",
+    "include_types": ["note", "decision"],
+    "include_graph": true,
+    "total_budget": 4096
+  }
+}
+```
+
+- **depth** (1-3): Follow related memory links for richer context
+- **timeframe**: Filter to recent memories only
+- **include_types**: Restrict to specific memory types
+- **include_graph**: Include entity relationship edges in response
+
+---
+
+*Engram v0.20.0 — AI Memory Engine*
+*220+ MCP tools | Hybrid search | Knowledge graphs | Cloud sync | Multimodal | Agent portability | Progressive discovery*
