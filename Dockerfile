@@ -2,7 +2,7 @@
 # Build: docker build -t engram-server .
 # Run:   docker run -v engram-data:/data -p 8080:8080 engram-server
 
-FROM rust:1.83-bookworm AS builder
+FROM rust:latest AS builder
 
 WORKDIR /build
 COPY . .
