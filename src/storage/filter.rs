@@ -329,15 +329,17 @@ impl SqlBuilder {
                 let s = value.as_str().ok_or_else(|| {
                     EngramError::InvalidInput("contains requires a string value".to_string())
                 })?;
-                self.params.push(Box::new(format!("%{}%", s)));
-                Ok(format!("{} LIKE ?", column))
+                let escaped = s.replace('%', "\\%").replace('_', "\\_");
+                self.params.push(Box::new(format!("%{}%", escaped)));
+                Ok(format!("{} LIKE ? ESCAPE '\\'", column))
             }
             (_, FilterOp::NotContains(value)) => {
                 let s = value.as_str().ok_or_else(|| {
                     EngramError::InvalidInput("not_contains requires a string value".to_string())
                 })?;
-                self.params.push(Box::new(format!("%{}%", s)));
-                Ok(format!("{} NOT LIKE ?", column))
+                let escaped = s.replace('%', "\\%").replace('_', "\\_");
+                self.params.push(Box::new(format!("%{}%", escaped)));
+                Ok(format!("{} NOT LIKE ? ESCAPE '\\'", column))
             }
             (_, FilterOp::Exists(exists)) => {
                 if *exists {
@@ -433,7 +435,7 @@ pub fn parse_filter(json: &Value) -> Result<FilterExpr> {
         validate_no_mixed_keys(obj)?;
     }
 
-    serde_json::from_value(json.clone())
+    FilterExpr::deserialize(json)
         .map_err(|e| EngramError::InvalidInput(format!("Invalid filter syntax: {}", e)))
 }
 
