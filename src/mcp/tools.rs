@@ -2915,6 +2915,21 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
         }"#,
         annotations: ToolAnnotations::read_only(),
     },
+    // ── Meta / Discovery ─────────────────────────────────────────────────────
+    ToolDef {
+        name: "discover_tools",
+        description: "List available Engram tools by tier and category. Use this to progressively discover capabilities beyond the essential tool set. Returns tool names, descriptions, and tiers.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "tier": {"type": "string", "enum": ["essential", "standard", "advanced", "all"], "default": "all", "description": "Filter by tier: essential (~20 core tools), standard (~57 common tools), advanced (~104 specialized tools), all (everything)"},
+                "category": {"type": "string", "description": "Filter by category keyword (e.g., 'search', 'graph', 'session', 'identity', 'quality')"},
+                "search": {"type": "string", "description": "Search tool names and descriptions"}
+            }
+        }"#,
+        tier: ToolTier::Essential,
+        annotations: ToolAnnotations::read_only(),
+    },
 ];
 
 /// Get all tool definitions as ToolDefinition structs.
@@ -2933,6 +2948,49 @@ pub fn get_tool_definitions() -> Vec<ToolDefinition> {
                 return cfg!(feature = "multimodal");
             }
             true
+        })
+        .map(|def| ToolDefinition {
+            name: def.name.to_string(),
+            description: def.description.to_string(),
+            input_schema: serde_json::from_str(def.schema).unwrap_or(json!({})),
+            annotations: Some(def.annotations.clone()),
+        })
+        .collect()
+}
+
+/// Get tool definitions filtered by maximum tier level.
+///
+/// - `Some("essential")` → only Essential tools + discover_tools
+/// - `Some("standard")` → Essential + Standard tools + discover_tools
+/// - `Some("all")` or `None` → all tools (backward compatible)
+pub fn get_tool_definitions_tiered(max_tier: Option<&str>) -> Vec<ToolDefinition> {
+    let max = match max_tier {
+        Some("essential") => ToolTier::Essential,
+        Some("standard") => ToolTier::Standard,
+        _ => ToolTier::Advanced, // "all" or None = everything
+    };
+
+    TOOL_DEFINITIONS
+        .iter()
+        .filter(|def| {
+            // discover_tools is always included regardless of tier
+            if def.name == "discover_tools" {
+                return true;
+            }
+            // Feature-gate filtering (existing logic)
+            if def.name == "memory_sync_media" {
+                return cfg!(all(feature = "multimodal", feature = "cloud"));
+            }
+            if def.name == "memory_search_by_image" {
+                return cfg!(feature = "multimodal");
+            }
+            // Tier filtering
+            matches!(
+                (max, def.tier),
+                (ToolTier::Essential, ToolTier::Essential)
+                    | (ToolTier::Standard, ToolTier::Essential | ToolTier::Standard)
+                    | (ToolTier::Advanced, _)
+            )
         })
         .map(|def| ToolDefinition {
             name: def.name.to_string(),

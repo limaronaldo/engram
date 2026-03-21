@@ -890,3 +890,94 @@ pub fn meilisearch_config(ctx: &HandlerContext, _params: Value) -> Value {
         }),
     }
 }
+
+// ── Tool Discovery ───────────────────────────────────────────────────────────
+
+/// List available tools by tier, category, or search query.
+pub fn discover_tools(_ctx: &HandlerContext, params: Value) -> Value {
+    use crate::mcp::tools::{ToolTier, TOOL_DEFINITIONS};
+
+    let tier_filter = params.get("tier").and_then(|v| v.as_str());
+    let category = params.get("category").and_then(|v| v.as_str());
+    let search = params.get("search").and_then(|v| v.as_str());
+
+    let tools: Vec<Value> = TOOL_DEFINITIONS
+        .iter()
+        .filter(|def| {
+            if let Some(t) = tier_filter {
+                match t {
+                    "essential" => {
+                        if def.tier != ToolTier::Essential {
+                            return false;
+                        }
+                    }
+                    "standard" => {
+                        if def.tier != ToolTier::Standard {
+                            return false;
+                        }
+                    }
+                    "advanced" => {
+                        if def.tier != ToolTier::Advanced {
+                            return false;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(cat) = category {
+                let cat_lower = cat.to_lowercase();
+                if !def.name.contains(&cat_lower)
+                    && !def.description.to_lowercase().contains(&cat_lower)
+                {
+                    return false;
+                }
+            }
+            if let Some(q) = search {
+                let q_lower = q.to_lowercase();
+                if !def.name.to_lowercase().contains(&q_lower)
+                    && !def.description.to_lowercase().contains(&q_lower)
+                {
+                    return false;
+                }
+            }
+            true
+        })
+        .map(|def| {
+            let tier_str = match def.tier {
+                ToolTier::Essential => "essential",
+                ToolTier::Standard => "standard",
+                ToolTier::Advanced => "advanced",
+            };
+            json!({
+                "name": def.name,
+                "description": def.description,
+                "tier": tier_str
+            })
+        })
+        .collect();
+
+    let essential_count = TOOL_DEFINITIONS
+        .iter()
+        .filter(|d| d.tier == ToolTier::Essential)
+        .count();
+    let standard_count = TOOL_DEFINITIONS
+        .iter()
+        .filter(|d| d.tier == ToolTier::Standard)
+        .count();
+    let advanced_count = TOOL_DEFINITIONS
+        .iter()
+        .filter(|d| d.tier == ToolTier::Advanced)
+        .count();
+    let count = tools.len();
+
+    json!({
+        "tools": tools,
+        "count": count,
+        "total_available": TOOL_DEFINITIONS.len(),
+        "tier_summary": {
+            "essential": essential_count,
+            "standard": standard_count,
+            "advanced": advanced_count
+        }
+    })
+}

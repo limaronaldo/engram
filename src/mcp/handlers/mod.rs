@@ -234,6 +234,9 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         "memory_get_project_context" => project_context::get_project_context(ctx, params),
         "memory_list_instruction_files" => project_context::list_instruction_files(ctx, params),
 
+        // ── Tool discovery ──────────────────────────────────────────────────────
+        "discover_tools" => misc::discover_tools(ctx, params),
+
         // ── Document ingestion ────────────────────────────────────────────────
         "memory_ingest_document" => document_ingest::ingest_document(ctx, params),
 

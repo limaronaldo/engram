@@ -12,7 +12,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use engram::embedding::create_embedder;
 use engram::error::Result;
 use engram::mcp::{
-    get_prompt, get_tool_definitions, handlers, http_transport, list_prompts, list_resources,
+    get_prompt, get_tool_definitions_tiered, handlers, http_transport, list_prompts, list_resources,
     methods, read_resource, InitializeResult, McpHandler, McpRequest, McpResponse, McpServer,
     PromptCapabilities, ResourceCapabilities, ServerCapabilities, ToolCallResult, ToolsCapability,
     MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_LEGACY,
@@ -312,7 +312,8 @@ impl McpHandler for EngramHandler {
                 }
             }
             methods::LIST_TOOLS => {
-                let tools = get_tool_definitions();
+                let tier = std::env::var("ENGRAM_TOOL_TIER").ok();
+                let tools = get_tool_definitions_tiered(tier.as_deref());
                 McpResponse::success(request.id, json!({"tools": tools}))
             }
             methods::CALL_TOOL => {

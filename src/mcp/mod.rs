@@ -19,4 +19,4 @@ pub use protocol::{
     ToolsCapability, MCP_PROTOCOL_VERSION, MCP_PROTOCOL_VERSION_LEGACY,
 };
 pub use resources::{list_resources, read_resource};
-pub use tools::{get_tool_definitions, TOOL_DEFINITIONS};
+pub use tools::{get_tool_definitions, get_tool_definitions_tiered, TOOL_DEFINITIONS};
