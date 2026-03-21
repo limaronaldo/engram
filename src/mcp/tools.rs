@@ -4,12 +4,24 @@ use serde_json::json;
 
 use super::protocol::{ToolAnnotations, ToolDefinition};
 
+/// Tool exposure tier for progressive discovery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolTier {
+    /// ~20 core tools every agent needs. Always exposed.
+    Essential,
+    /// ~50 common tools for standard workflows.
+    Standard,
+    /// ~110 advanced/specialized tools.
+    Advanced,
+}
+
 /// Structured tool definition with MCP 2025-11-25 annotations.
 pub struct ToolDef {
     pub name: &'static str,
     pub description: &'static str,
     pub schema: &'static str,
     pub annotations: ToolAnnotations,
+    pub tier: ToolTier,
 }
 
 /// All tool definitions for Engram
@@ -42,6 +54,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["content"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Essential,
     },
     ToolDef {
         name: "context_seed",
@@ -95,6 +108,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["facts"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Essential,
     },
     ToolDef {
         name: "memory_seed",
@@ -148,6 +162,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["facts"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_get",
@@ -161,6 +176,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Essential,
     },
     ToolDef {
         name: "memory_update",
@@ -182,6 +198,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Essential,
     },
     ToolDef {
         name: "memory_delete",
@@ -194,6 +211,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::destructive(),
+        tier: ToolTier::Essential,
     },
     ToolDef {
         name: "memory_list",
@@ -222,6 +240,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Essential,
     },
     // Search
     ToolDef {
@@ -252,6 +271,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["query"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Essential,
     },
     ToolDef {
         name: "memory_search_suggest",
@@ -264,6 +284,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["query"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     // Cross-references
     ToolDef {
@@ -282,6 +303,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["from_id", "to_id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Essential,
     },
     ToolDef {
         name: "memory_unlink",
@@ -296,6 +318,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["from_id", "to_id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_related",
@@ -312,6 +335,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Essential,
     },
     // Convenience creators
     ToolDef {
@@ -328,6 +352,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["content"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_create_issue",
@@ -343,6 +368,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["title"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     // Versioning
     ToolDef {
@@ -356,6 +382,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_get_version",
@@ -369,6 +396,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id", "version"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_revert",
@@ -382,6 +410,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id", "version"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     // Embedding status
     ToolDef {
@@ -395,6 +424,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     // Memory TTL / Expiration (RML-930)
     ToolDef {
@@ -409,6 +439,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id", "ttl_seconds"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_cleanup_expired",
@@ -418,6 +449,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {}
         }"#,
         annotations: ToolAnnotations::destructive(),
+        tier: ToolTier::Standard,
     },
     // Sync
     ToolDef {
@@ -425,6 +457,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
         description: "Get cloud sync status",
         schema: r#"{"type": "object", "properties": {}}"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_sync_media",
@@ -436,6 +469,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_search_by_image",
@@ -452,6 +486,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["image_path"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     // Stats and aggregation
     ToolDef {
@@ -459,6 +494,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
         description: "Get storage statistics",
         schema: r#"{"type": "object", "properties": {}}"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Essential,
     },
     ToolDef {
         name: "memory_aggregate",
@@ -472,6 +508,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["group_by"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     // Graph
     ToolDef {
@@ -486,6 +523,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     // Quality
     ToolDef {
@@ -499,6 +537,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     // Clustering and duplicates
     ToolDef {
@@ -512,6 +551,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_find_duplicates",
@@ -523,6 +563,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_find_semantic_duplicates",
@@ -536,6 +577,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_merge",
@@ -549,6 +591,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["ids"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     // Project Context Discovery
     ToolDef {
@@ -563,6 +606,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_get_project_context",
@@ -576,6 +620,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_list_instruction_files",
@@ -588,6 +633,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     // Entity Extraction (RML-925)
     ToolDef {
@@ -601,6 +647,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::idempotent(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_get_entities",
@@ -613,6 +660,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_search_entities",
@@ -627,6 +675,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["query"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_entity_stats",
@@ -636,6 +685,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {}
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     // Graph Traversal (RML-926)
     ToolDef {
@@ -656,6 +706,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Essential,
     },
     ToolDef {
         name: "memory_find_path",
@@ -670,6 +721,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["from_id", "to_id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     // Document Ingestion (RML-928)
     ToolDef {
@@ -688,6 +740,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["path"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     // Workspace Management
     ToolDef {
@@ -698,6 +751,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {}
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Essential,
     },
     ToolDef {
         name: "workspace_stats",
@@ -710,6 +764,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["workspace"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "workspace_move",
@@ -723,6 +778,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id", "workspace"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "workspace_delete",
@@ -736,6 +792,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["workspace"]
         }"#,
         annotations: ToolAnnotations::destructive(),
+        tier: ToolTier::Advanced,
     },
     // Memory Tiering
     ToolDef {
@@ -755,6 +812,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["content"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_promote_to_permanent",
@@ -767,6 +825,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     // Embedding Cache
     ToolDef {
@@ -777,6 +836,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {}
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "embedding_cache_clear",
@@ -786,6 +846,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {}
         }"#,
         annotations: ToolAnnotations::destructive(),
+        tier: ToolTier::Advanced,
     },
     // Session Transcript Indexing
     ToolDef {
@@ -820,6 +881,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["session_id", "messages"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Essential,
     },
     ToolDef {
         name: "session_index_delta",
@@ -846,6 +908,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["session_id", "messages"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "session_get",
@@ -858,6 +921,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["session_id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "session_list",
@@ -870,6 +934,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Essential,
     },
     ToolDef {
         name: "session_delete",
@@ -882,6 +947,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["session_id"]
         }"#,
         annotations: ToolAnnotations::destructive(),
+        tier: ToolTier::Standard,
     },
     // Identity Management
     ToolDef {
@@ -900,6 +966,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["canonical_id", "display_name"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Essential,
     },
     ToolDef {
         name: "identity_get",
@@ -912,6 +979,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["canonical_id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "identity_update",
@@ -927,6 +995,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["canonical_id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "identity_delete",
@@ -939,6 +1008,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["canonical_id"]
         }"#,
         annotations: ToolAnnotations::destructive(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "identity_add_alias",
@@ -953,6 +1023,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["canonical_id", "alias"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "identity_remove_alias",
@@ -965,6 +1036,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["alias"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "identity_resolve",
@@ -977,6 +1049,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["alias"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Essential,
     },
     ToolDef {
         name: "identity_list",
@@ -989,6 +1062,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "identity_search",
@@ -1002,6 +1076,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["query"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "identity_link",
@@ -1016,6 +1091,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["memory_id", "canonical_id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "identity_unlink",
@@ -1029,6 +1105,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["memory_id", "canonical_id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_get_identities",
@@ -1041,6 +1118,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     // Content Utilities
     ToolDef {
@@ -1059,6 +1137,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_list_compact",
@@ -1079,6 +1158,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_content_stats",
@@ -1091,6 +1171,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     // Batch Operations
     ToolDef {
@@ -1119,6 +1200,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["memories"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_delete_batch",
@@ -1135,6 +1217,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["ids"]
         }"#,
         annotations: ToolAnnotations::destructive(),
+        tier: ToolTier::Standard,
     },
     // Tag Utilities
     ToolDef {
@@ -1145,6 +1228,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {}
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_tag_hierarchy",
@@ -1154,6 +1238,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {}
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_validate_tags",
@@ -1163,6 +1248,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {}
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     // Import/Export
     ToolDef {
@@ -1176,6 +1262,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_import",
@@ -1189,6 +1276,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["data"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     // Maintenance
     ToolDef {
@@ -1199,6 +1287,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {}
         }"#,
         annotations: ToolAnnotations::idempotent(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_rebuild_crossrefs",
@@ -1208,6 +1297,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {}
         }"#,
         annotations: ToolAnnotations::idempotent(),
+        tier: ToolTier::Advanced,
     },
     // Special Memory Types
     ToolDef {
@@ -1225,6 +1315,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["title"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_checkpoint",
@@ -1240,6 +1331,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["session_id", "summary"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     // Phase 1: Cognitive Memory Types (ENG-33)
     ToolDef {
@@ -1259,6 +1351,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["content", "event_time"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_create_procedural",
@@ -1276,6 +1369,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["content", "trigger_pattern"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_get_timeline",
@@ -1291,6 +1385,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_get_procedures",
@@ -1305,6 +1400,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_record_procedure_outcome",
@@ -1318,6 +1414,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id", "success"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_boost",
@@ -1332,6 +1429,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     // Phase 2: Context Compression Engine
     ToolDef {
@@ -1353,6 +1451,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["memory_ids"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_get_full",
@@ -1365,6 +1464,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "context_budget_check",
@@ -1390,6 +1490,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["memory_ids", "model", "budget"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_archive_old",
@@ -1405,6 +1506,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::destructive(),
+        tier: ToolTier::Advanced,
     },
     // Phase 3: Langfuse Integration (ENG-35) - feature-gated
     #[cfg(feature = "langfuse")]
@@ -1420,6 +1522,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     #[cfg(feature = "langfuse")]
     ToolDef {
@@ -1435,6 +1538,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     #[cfg(feature = "langfuse")]
     ToolDef {
@@ -1448,6 +1552,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["task_id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     #[cfg(feature = "langfuse")]
     ToolDef {
@@ -1462,6 +1567,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     #[cfg(feature = "langfuse")]
     ToolDef {
@@ -1478,6 +1584,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["trace_id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     // Phase 4: Search Result Caching (ENG-36)
     ToolDef {
@@ -1493,6 +1600,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["query", "positive"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "search_cache_stats",
@@ -1502,6 +1610,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {}
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "search_cache_clear",
@@ -1513,6 +1622,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::destructive(),
+        tier: ToolTier::Advanced,
     },
     // Phase 5: Memory Lifecycle Management (ENG-37)
     ToolDef {
@@ -1525,6 +1635,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "lifecycle_run",
@@ -1540,6 +1651,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::idempotent(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_set_lifecycle",
@@ -1553,6 +1665,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id", "state"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "lifecycle_config",
@@ -1567,6 +1680,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     // Retention Policies
     ToolDef {
@@ -1587,6 +1701,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["workspace"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "retention_policy_get",
@@ -1599,6 +1714,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["workspace"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "retention_policy_list",
@@ -1608,6 +1724,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {}
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "retention_policy_delete",
@@ -1620,6 +1737,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["workspace"]
         }"#,
         annotations: ToolAnnotations::destructive(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "retention_policy_apply",
@@ -1631,6 +1749,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::idempotent(),
+        tier: ToolTier::Advanced,
     },
     // Event System
     ToolDef {
@@ -1646,6 +1765,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_events_clear",
@@ -1659,6 +1779,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::destructive(),
+        tier: ToolTier::Advanced,
     },
     // Advanced Sync
     ToolDef {
@@ -1669,6 +1790,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {}
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "sync_delta",
@@ -1681,6 +1803,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["since_version"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "sync_state",
@@ -1694,6 +1817,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["agent_id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "sync_cleanup",
@@ -1705,6 +1829,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::destructive(),
+        tier: ToolTier::Advanced,
     },
     // Multi-Agent Sharing
     ToolDef {
@@ -1721,6 +1846,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["memory_id", "from_agent", "to_agent"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_shared_poll",
@@ -1734,6 +1860,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["agent_id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_share_ack",
@@ -1747,6 +1874,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["share_id", "agent_id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     // Scope-based access grants for multi-agent memory sharing
     ToolDef {
@@ -1763,6 +1891,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["agent_id", "scope_path"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_revoke_access",
@@ -1776,6 +1905,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["agent_id", "scope_path"]
         }"#,
         annotations: ToolAnnotations::destructive(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_list_grants",
@@ -1788,6 +1918,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["agent_id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_check_access",
@@ -1802,6 +1933,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["agent_id", "scope_path"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     // Search Variants
     ToolDef {
@@ -1817,6 +1949,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["identity"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_session_search",
@@ -1832,6 +1965,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["query"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     // Image Handling
     ToolDef {
@@ -1848,6 +1982,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["memory_id", "file_path"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_migrate_images",
@@ -1859,6 +1994,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::idempotent(),
+        tier: ToolTier::Advanced,
     },
     // Auto-Tagging
     ToolDef {
@@ -1882,6 +2018,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_auto_tag",
@@ -1900,6 +2037,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     // Phase 8: Salience & Sessions (ENG-66 to ENG-77)
     ToolDef {
@@ -1914,6 +2052,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "salience_set_importance",
@@ -1927,6 +2066,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id", "importance"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "salience_boost",
@@ -1941,6 +2081,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "salience_demote",
@@ -1955,6 +2096,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "salience_decay_run",
@@ -1970,6 +2112,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::destructive(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "salience_stats",
@@ -1981,6 +2124,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "salience_history",
@@ -1994,6 +2138,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "salience_top",
@@ -2008,6 +2153,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     // Session Context Tools (ENG-70, ENG-71)
     ToolDef {
@@ -2024,6 +2170,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["name"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "session_context_add_memory",
@@ -2039,6 +2186,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["session_id", "memory_id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "session_context_remove_memory",
@@ -2052,6 +2200,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["session_id", "memory_id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "session_context_get",
@@ -2064,6 +2213,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["session_id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "session_context_list",
@@ -2078,6 +2228,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "session_context_search",
@@ -2092,6 +2243,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["session_id", "query"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "session_context_update_summary",
@@ -2105,6 +2257,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["session_id", "summary"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "session_context_end",
@@ -2118,6 +2271,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["session_id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "session_context_export",
@@ -2132,6 +2286,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["session_id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     // Phase 9: Context Quality (ENG-48 to ENG-66)
     ToolDef {
@@ -2145,6 +2300,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "quality_report",
@@ -2156,6 +2312,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "quality_find_duplicates",
@@ -2168,6 +2325,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "quality_get_duplicates",
@@ -2179,6 +2337,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "quality_find_conflicts",
@@ -2191,6 +2350,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "quality_get_conflicts",
@@ -2202,6 +2362,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "quality_resolve_conflict",
@@ -2216,6 +2377,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["conflict_id", "resolution"]
         }"#,
         annotations: ToolAnnotations::destructive(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "quality_source_trust",
@@ -2231,6 +2393,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["source_type"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "quality_improve",
@@ -2243,6 +2406,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     // Phase 7: Meilisearch Integration (ENG-58) - feature-gated
     #[cfg(feature = "meilisearch")]
@@ -2262,6 +2426,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["query"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     #[cfg(feature = "meilisearch")]
     ToolDef {
@@ -2272,6 +2437,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {}
         }"#,
         annotations: ToolAnnotations::idempotent(),
+        tier: ToolTier::Advanced,
     },
     #[cfg(feature = "meilisearch")]
     ToolDef {
@@ -2282,6 +2448,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {}
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     #[cfg(feature = "meilisearch")]
     ToolDef {
@@ -2292,6 +2459,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {}
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     // ── Agent Registry ────────────────────────────────────────────────────
     ToolDef {
@@ -2309,6 +2477,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["agent_id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "agent_deregister",
@@ -2321,6 +2490,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["agent_id"]
         }"#,
         annotations: ToolAnnotations::destructive(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "agent_heartbeat",
@@ -2333,6 +2503,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["agent_id"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "agent_list",
@@ -2345,6 +2516,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "agent_get",
@@ -2357,6 +2529,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["agent_id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "agent_capabilities",
@@ -2370,6 +2543,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["agent_id", "capabilities"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
 
     // ── Snapshot Tools (agent-portability) ────────────────────────────────────
@@ -2393,6 +2567,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["output_path"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     #[cfg(feature = "agent-portability")]
     ToolDef {
@@ -2409,6 +2584,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["path", "strategy"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     #[cfg(feature = "agent-portability")]
     ToolDef {
@@ -2422,6 +2598,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["path"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
 
     // ── Attestation Tools (agent-portability) ──────────────────────────────────
@@ -2441,6 +2618,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["content", "document_name"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Advanced,
     },
     #[cfg(feature = "agent-portability")]
     ToolDef {
@@ -2454,6 +2632,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["content"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     #[cfg(feature = "agent-portability")]
     ToolDef {
@@ -2464,6 +2643,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "properties": {}
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     #[cfg(feature = "agent-portability")]
     ToolDef {
@@ -2480,6 +2660,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             }
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
 
     // ── DuckDB Graph Tools (duckdb-graph) ──────────────────────────────────────
@@ -2503,6 +2684,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             idempotent_hint: Some(true),
             open_world_hint: None,
         },
+        tier: ToolTier::Advanced,
     },
     #[cfg(feature = "duckdb-graph")]
     ToolDef {
@@ -2522,6 +2704,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             idempotent_hint: Some(true),
             open_world_hint: None,
         },
+        tier: ToolTier::Advanced,
     },
     #[cfg(feature = "duckdb-graph")]
     ToolDef {
@@ -2542,6 +2725,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             idempotent_hint: Some(true),
             open_world_hint: None,
         },
+        tier: ToolTier::Advanced,
     },
 
     // ── Claude-Mem Parity (v0.14.0) ──────────────────────────────────────────
@@ -2556,6 +2740,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Advanced,
     },
     ToolDef {
         name: "memory_search_compact",
@@ -2570,6 +2755,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["query"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Essential,
     },
     ToolDef {
         name: "memory_expand",
@@ -2582,6 +2768,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["ids"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Essential,
     },
     ToolDef {
         name: "memory_get_injection_prompt",
@@ -2597,6 +2784,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["query"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Essential,
     },
     ToolDef {
         name: "memory_observe_tool_use",
@@ -2613,6 +2801,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["tool_name", "tool_input", "tool_output"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     // ── Endless Mode (O(N) context management) ───────────────────────────────
     ToolDef {
@@ -2630,6 +2819,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["tool_name", "raw_output"]
         }"#,
         annotations: ToolAnnotations::mutating(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_get_archived_output",
@@ -2642,6 +2832,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["archive_id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
     ToolDef {
         name: "memory_get_working_memory",
@@ -2657,6 +2848,7 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
             "required": ["session_id"]
         }"#,
         annotations: ToolAnnotations::read_only(),
+        tier: ToolTier::Standard,
     },
 ];
 
@@ -2766,6 +2958,72 @@ mod tests {
                 ann.idempotent_hint,
                 Some(true),
                 "tool '{}' should have idempotentHint=true",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn test_tier_distribution() {
+        let essential = TOOL_DEFINITIONS
+            .iter()
+            .filter(|t| t.tier == ToolTier::Essential)
+            .count();
+        let standard = TOOL_DEFINITIONS
+            .iter()
+            .filter(|t| t.tier == ToolTier::Standard)
+            .count();
+        let advanced = TOOL_DEFINITIONS
+            .iter()
+            .filter(|t| t.tier == ToolTier::Advanced)
+            .count();
+        assert!(
+            essential >= 18 && essential <= 25,
+            "essential: {}",
+            essential
+        );
+        assert!(
+            standard >= 40 && standard <= 60,
+            "standard: {}",
+            standard
+        );
+        // Advanced count depends on feature flags (19 feature-gated tools are Advanced)
+        assert!(advanced >= 80, "advanced: {}", advanced);
+        assert_eq!(essential + standard + advanced, TOOL_DEFINITIONS.len());
+    }
+
+    #[test]
+    fn test_essential_tools_present() {
+        let essential_names = [
+            "memory_create",
+            "context_seed",
+            "memory_get",
+            "memory_update",
+            "memory_delete",
+            "memory_list",
+            "memory_search",
+            "memory_search_compact",
+            "memory_expand",
+            "memory_get_injection_prompt",
+            "memory_link",
+            "memory_related",
+            "memory_traverse",
+            "memory_stats",
+            "workspace_list",
+            "session_index",
+            "session_list",
+            "identity_create",
+            "identity_resolve",
+        ];
+        for name in essential_names {
+            let tool = TOOL_DEFINITIONS
+                .iter()
+                .find(|t| t.name == name)
+                .unwrap_or_else(|| panic!("tool '{}' not found", name));
+            assert_eq!(
+                tool.tier,
+                ToolTier::Essential,
+                "tool '{}' should be Essential",
                 name
             );
         }
