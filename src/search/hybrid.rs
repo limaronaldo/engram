@@ -187,7 +187,8 @@ fn semantic_only_search(
 
         // Add type filter
         if let Some(ref memory_type) = options.memory_type {
-            sql.push_str(&format!(" AND m.memory_type = '{}'", memory_type.as_str()));
+            sql.push_str(" AND m.memory_type = ?");
+            params.push(Box::new(memory_type.as_str().to_string()));
         }
     }
 
