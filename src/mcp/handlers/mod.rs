@@ -364,6 +364,7 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         // ── Compact search + expand ──────────────────────────────────────────
         "memory_search_compact" => search::memory_search_compact(ctx, params),
         "memory_expand" => search::memory_expand(ctx, params),
+        "recent_activity" => search::recent_activity(ctx, params),
 
         // ── Compression (semantic compression + context packing + consolidation) ─
         "memory_compress" => compression::memory_compress(ctx, params),

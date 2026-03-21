@@ -715,3 +715,227 @@ fn test_prompts_get_unknown() {
         error.message
     );
 }
+
+// ---------------------------------------------------------------------------
+// recent_activity tool tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_recent_activity_returns_activities_field() {
+    let handler = TestHandler::new();
+
+    // Create a memory so there is recent activity to discover
+    let create_req = make_request(
+        70,
+        "tools/call",
+        json!({
+            "name": "memory_create",
+            "arguments": {
+                "content": "Test recent activity memory",
+                "memory_type": "note"
+            }
+        }),
+    );
+    let create_resp = handler.handle_request(create_req);
+    assert!(
+        create_resp.error.is_none(),
+        "memory_create failed: {:?}",
+        create_resp.error
+    );
+
+    // Call recent_activity with default params
+    let req = make_request(
+        71,
+        "tools/call",
+        json!({
+            "name": "recent_activity",
+            "arguments": {}
+        }),
+    );
+
+    let resp = handler.handle_request(req);
+    assert!(
+        resp.error.is_none(),
+        "recent_activity returned error: {:?}",
+        resp.error
+    );
+
+    let result = resp.result.expect("Expected result");
+    let content = result["content"]
+        .as_array()
+        .expect("Expected content array");
+    assert!(!content.is_empty(), "Expected at least one content item");
+
+    let text = content[0]["text"].as_str().expect("Expected text content");
+    let data: Value = serde_json::from_str(text).expect("recent_activity should return valid JSON");
+
+    assert!(
+        data["activities"].is_array(),
+        "Result must have 'activities' array, got: {}",
+        data
+    );
+    assert!(
+        data["count"].is_number(),
+        "Result must have 'count' field"
+    );
+    assert!(
+        data["timeframe"].is_string(),
+        "Result must have 'timeframe' field"
+    );
+
+    let activities = data["activities"].as_array().unwrap();
+    assert!(
+        !activities.is_empty(),
+        "Should find at least one recent memory"
+    );
+
+    // Verify activity shape
+    let activity = &activities[0];
+    assert!(activity["id"].is_number(), "Activity must have 'id'");
+    assert!(activity["preview"].is_string(), "Activity must have 'preview'");
+    assert!(activity["memory_type"].is_string(), "Activity must have 'memory_type'");
+    assert!(activity["workspace"].is_string(), "Activity must have 'workspace'");
+    assert!(activity["created_at"].is_string(), "Activity must have 'created_at'");
+}
+
+#[test]
+fn test_recent_activity_timeframe_1h() {
+    let handler = TestHandler::new();
+
+    // Create a memory
+    let create_req = make_request(
+        80,
+        "tools/call",
+        json!({
+            "name": "memory_create",
+            "arguments": {
+                "content": "Memory for 1h timeframe test",
+                "memory_type": "note"
+            }
+        }),
+    );
+    handler.handle_request(create_req);
+
+    let req = make_request(
+        81,
+        "tools/call",
+        json!({
+            "name": "recent_activity",
+            "arguments": {"timeframe": "1h", "limit": 5}
+        }),
+    );
+
+    let resp = handler.handle_request(req);
+    assert!(resp.error.is_none(), "Expected no error: {:?}", resp.error);
+
+    let result = resp.result.expect("Expected result");
+    let content = result["content"].as_array().expect("Expected content array");
+    let text = content[0]["text"].as_str().expect("Expected text");
+    let data: Value = serde_json::from_str(text).unwrap();
+
+    assert_eq!(
+        data["timeframe"].as_str(),
+        Some("1h"),
+        "Timeframe should echo '1h'"
+    );
+    assert!(
+        data["activities"].is_array(),
+        "Must have activities array"
+    );
+}
+
+#[test]
+fn test_recent_activity_limit_enforced() {
+    let handler = TestHandler::new();
+
+    // Create 5 memories
+    for i in 0..5 {
+        let req = make_request(
+            90 + i,
+            "tools/call",
+            json!({
+                "name": "memory_create",
+                "arguments": {
+                    "content": format!("Memory {} for limit test", i),
+                    "memory_type": "note"
+                }
+            }),
+        );
+        handler.handle_request(req);
+    }
+
+    // Request only 2 results
+    let req = make_request(
+        95,
+        "tools/call",
+        json!({
+            "name": "recent_activity",
+            "arguments": {"limit": 2}
+        }),
+    );
+
+    let resp = handler.handle_request(req);
+    assert!(resp.error.is_none(), "Expected no error: {:?}", resp.error);
+
+    let result = resp.result.expect("Expected result");
+    let content = result["content"].as_array().expect("Expected content array");
+    let text = content[0]["text"].as_str().expect("Expected text");
+    let data: Value = serde_json::from_str(text).unwrap();
+
+    let activities = data["activities"].as_array().unwrap();
+    assert!(
+        activities.len() <= 2,
+        "Should return at most 2 activities, got {}",
+        activities.len()
+    );
+}
+
+#[test]
+fn test_recent_activity_preview_truncated_at_100_chars() {
+    let handler = TestHandler::new();
+
+    // Create memory with content > 100 chars
+    let long_content: String = "A".repeat(200);
+    let create_req = make_request(
+        100,
+        "tools/call",
+        json!({
+            "name": "memory_create",
+            "arguments": {
+                "content": long_content,
+                "memory_type": "note"
+            }
+        }),
+    );
+    handler.handle_request(create_req);
+
+    let req = make_request(
+        101,
+        "tools/call",
+        json!({
+            "name": "recent_activity",
+            "arguments": {"timeframe": "1h", "limit": 1}
+        }),
+    );
+
+    let resp = handler.handle_request(req);
+    let result = resp.result.expect("Expected result");
+    let content = result["content"].as_array().expect("Expected content array");
+    let text = content[0]["text"].as_str().expect("Expected text");
+    let data: Value = serde_json::from_str(text).unwrap();
+
+    let activities = data["activities"].as_array().unwrap();
+    if !activities.is_empty() {
+        let preview = activities[0]["preview"].as_str().unwrap();
+        assert!(
+            preview.ends_with("..."),
+            "Preview of long content should end with '...', got: {}",
+            preview
+        );
+        assert!(
+            preview.len() <= 103,
+            "Preview + '...' should be at most 103 chars, got: {}",
+            preview.len()
+        );
+    }
+}
