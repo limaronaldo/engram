@@ -508,7 +508,7 @@ pub fn memory_sync_media(ctx: &HandlerContext, params: Value) -> Value {
     }
 
     ctx.storage
-        .with_transaction(|conn| sync_to_cloud(conn, &config, dry_run))
+        .with_connection(|conn| sync_to_cloud(conn, &config, dry_run))
         .map(|report: MediaSyncReport| json!(report))
         .unwrap_or_else(|e| json!({"error": e.to_string()}))
 }

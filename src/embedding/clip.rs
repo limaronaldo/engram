@@ -23,7 +23,7 @@
 //! ```no_run
 //! # #[cfg(feature = "multimodal")]
 //! # async fn run() -> engram::error::Result<()> {
-//! use engram::embedding::clip::{ClipEmbedder, MultimodalEmbedder};
+//! use engram::embedding::{clip::{ClipEmbedder, MultimodalEmbedder}, Embedder};
 //!
 //! let embedder = ClipEmbedder::from_env()?;
 //!

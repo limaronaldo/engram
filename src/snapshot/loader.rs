@@ -137,6 +137,7 @@ impl SnapshotLoader {
                 event_duration_seconds: memory.event_duration_seconds,
                 trigger_pattern: memory.trigger_pattern.clone(),
                 summary_of_id: None,
+                media_url: None,
             };
 
             let new_memory = storage.with_transaction(|conn| {
@@ -412,6 +413,7 @@ mod tests {
                     event_duration_seconds: None,
                     trigger_pattern: None,
                     summary_of_id: None,
+                    media_url: None,
                 };
                 create_memory(conn, &input)?;
                 Ok(())
