@@ -2867,6 +2867,26 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
         }"#,
         annotations: ToolAnnotations::mutating(),
     },
+    ToolDef {
+        name: "memory_build_context",
+        description: "Build a structured prompt context from relevant memories using hybrid search, with optional graph traversal depth, timeframe filtering, type filtering, and relationship graph inclusion. Inspired by Basic Memory's build_context.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query to retrieve relevant memories"},
+                "total_budget": {"type": "integer", "description": "Max tokens for the entire prompt (default: 4096)"},
+                "strategy": {"type": "string", "enum": ["greedy", "balanced", "recency"], "default": "greedy", "description": "Context assembly strategy"},
+                "workspace": {"type": "string", "description": "Workspace to search in"},
+                "limit": {"type": "integer", "description": "Max memories to retrieve (default: 20)"},
+                "depth": {"type": "integer", "minimum": 1, "maximum": 3, "default": 1, "description": "Graph traversal depth: 1=search only, 2=search+1 hop of related memories, 3=search+2 hops"},
+                "timeframe": {"type": "string", "enum": ["1h", "24h", "7d", "30d", "all"], "default": "all", "description": "Time window for memory filtering"},
+                "include_types": {"type": "array", "items": {"type": "string"}, "description": "Only include these memory types (e.g., ['note', 'decision'])"},
+                "include_graph": {"type": "boolean", "default": false, "description": "Include entity relationship graph in response"}
+            },
+            "required": ["query"]
+        }"#,
+        annotations: ToolAnnotations::read_only(),
+    },
 ];
 
 /// Get all tool definitions as ToolDefinition structs.
