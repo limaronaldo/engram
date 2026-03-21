@@ -17,16 +17,20 @@ pub mod agent;
 pub mod autonomous;
 pub mod compression;
 pub mod context;
+pub mod document_ingest;
 pub mod evolution;
 pub mod graph;
 pub mod identity;
 pub mod lifecycle;
 pub mod memory_crud;
 pub mod misc;
+pub mod project_context;
 pub mod quality;
 pub mod retrieval;
 pub mod search;
 pub mod session;
+pub mod stats;
+pub mod summarize;
 pub mod sync;
 pub mod temporal;
 pub mod workspace;
@@ -213,14 +217,30 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         "memory_events_poll" => sync::memory_events_poll(ctx, params),
         "memory_events_clear" => sync::memory_events_clear(ctx, params),
 
+        // ── Stats / Versions / Cache / Compact ───────────────────────────────
+        "memory_stats" => stats::memory_stats(ctx, params),
+        "memory_versions" => stats::memory_versions(ctx, params),
+        "embedding_cache_stats" => stats::embedding_cache_stats(ctx, params),
+        "embedding_cache_clear" => stats::embedding_cache_clear(ctx, params),
+        "memory_soft_trim" => stats::memory_soft_trim(ctx, params),
+        "memory_list_compact" => stats::memory_list_compact(ctx, params),
+        "memory_content_stats" => stats::memory_content_stats(ctx, params),
+
+        // ── Project context / scanning ────────────────────────────────────────
+        "memory_scan_project" => project_context::scan_project(ctx, params),
+        "memory_get_project_context" => project_context::get_project_context(ctx, params),
+        "memory_list_instruction_files" => project_context::list_instruction_files(ctx, params),
+
+        // ── Document ingestion ────────────────────────────────────────────────
+        "memory_ingest_document" => document_ingest::ingest_document(ctx, params),
+
+        // ── Summarization & archival ──────────────────────────────────────────
+        "memory_summarize" => summarize::memory_summarize(ctx, params),
+        "memory_get_full" => summarize::memory_get_full(ctx, params),
+        "context_budget_check" => summarize::context_budget_check(ctx, params),
+        "memory_archive_old" => summarize::memory_archive_old(ctx, params),
+
         // ── Misc ─────────────────────────────────────────────────────────────
-        "memory_stats" => misc::memory_stats(ctx, params),
-        "memory_versions" => misc::memory_versions(ctx, params),
-        "embedding_cache_stats" => misc::embedding_cache_stats(ctx, params),
-        "embedding_cache_clear" => misc::embedding_cache_clear(ctx, params),
-        "memory_soft_trim" => misc::memory_soft_trim(ctx, params),
-        "memory_list_compact" => misc::memory_list_compact(ctx, params),
-        "memory_content_stats" => misc::memory_content_stats(ctx, params),
         "memory_tags" => misc::memory_tags(ctx, params),
         "memory_tag_hierarchy" => misc::memory_tag_hierarchy(ctx, params),
         "memory_validate_tags" => misc::memory_validate_tags(ctx, params),
@@ -232,14 +252,6 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         "memory_migrate_images" => misc::memory_migrate_images(ctx, params),
         "memory_suggest_tags" => misc::memory_suggest_tags(ctx, params),
         "memory_auto_tag" => misc::memory_auto_tag(ctx, params),
-        "memory_scan_project" => misc::scan_project(ctx, params),
-        "memory_get_project_context" => misc::get_project_context(ctx, params),
-        "memory_list_instruction_files" => misc::list_instruction_files(ctx, params),
-        "memory_ingest_document" => misc::ingest_document(ctx, params),
-        "memory_summarize" => misc::memory_summarize(ctx, params),
-        "memory_get_full" => misc::memory_get_full(ctx, params),
-        "context_budget_check" => misc::context_budget_check(ctx, params),
-        "memory_archive_old" => misc::memory_archive_old(ctx, params),
 
         // ── Langfuse (feature-gated) ──────────────────────────────────────────
         #[cfg(feature = "langfuse")]
