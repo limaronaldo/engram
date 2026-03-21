@@ -2887,6 +2887,20 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
         }"#,
         annotations: ToolAnnotations::read_only(),
     },
+    ToolDef {
+        name: "memory_export_markdown",
+        description: "Export a workspace as human-readable Markdown files with YAML frontmatter and wiki-style [[links]]. Creates one .md file per memory, organized by type in subdirectories, with an index.md overview.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "workspace": {"type": "string", "description": "Workspace to export"},
+                "output_dir": {"type": "string", "description": "Output directory path (default: ./engram-export/{workspace}/)"},
+                "include_links": {"type": "boolean", "default": true, "description": "Include [[wiki links]] to related memories in each file"}
+            },
+            "required": ["workspace"]
+        }"#,
+        annotations: ToolAnnotations::read_only(),
+    },
 ];
 
 /// Get all tool definitions as ToolDefinition structs.
