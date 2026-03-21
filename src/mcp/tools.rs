@@ -177,7 +177,8 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
                 "importance": {"type": "number", "minimum": 0, "maximum": 1},
                 "ttl_seconds": {"type": "integer", "description": "Time-to-live in seconds (0 = remove expiration, positive = set new expiration)"},
                 "event_time": {"type": ["string", "null"], "format": "date-time", "description": "ISO8601 timestamp for episodic memories (null to clear)"},
-                "trigger_pattern": {"type": ["string", "null"], "description": "Pattern that triggers this procedure (null to clear)"}
+                "trigger_pattern": {"type": ["string", "null"], "description": "Pattern that triggers this procedure (null to clear)"},
+                "media_url": {"type": ["string", "null"], "description": "URL or local path to the primary media asset (null to clear)"}
             },
             "required": ["id"]
         }"#,
@@ -2658,12 +2659,41 @@ pub const TOOL_DEFINITIONS: &[ToolDef] = &[
         }"#,
         annotations: ToolAnnotations::read_only(),
     },
+    // ── Session Handoff ────────────────────────────────────────────────
+    ToolDef {
+        name: "session_land",
+        description: "Generate a structured session handoff ('land the plane'). Creates a checkpoint memory with session summary, open items, recent decisions, and a bootstrap prompt for the next session. Call this at the end of every work session for seamless continuity.",
+        schema: r#"{
+            "type": "object",
+            "properties": {
+                "session_id": {"type": "string", "description": "Session identifier to hand off"},
+                "workspace": {"type": "string", "description": "Workspace scope (default: 'default')"},
+                "summary": {"type": "string", "description": "Summary of what was accomplished this session"},
+                "next_session_hints": {"type": "array", "items": {"type": "string"}, "description": "Hints for what should be done next session"}
+            },
+            "required": ["session_id"]
+        }"#,
+        annotations: ToolAnnotations::mutating(),
+    },
 ];
 
-/// Get all tool definitions as ToolDefinition structs
+/// Get all tool definitions as ToolDefinition structs.
+///
+/// Feature-gated tools are excluded when their required features are not enabled.
 pub fn get_tool_definitions() -> Vec<ToolDefinition> {
     TOOL_DEFINITIONS
         .iter()
+        .filter(|def| {
+            // memory_sync_media requires both multimodal and cloud features
+            if def.name == "memory_sync_media" {
+                return cfg!(all(feature = "multimodal", feature = "cloud"));
+            }
+            // memory_search_by_image requires multimodal feature
+            if def.name == "memory_search_by_image" {
+                return cfg!(feature = "multimodal");
+            }
+            true
+        })
         .map(|def| ToolDefinition {
             name: def.name.to_string(),
             description: def.description.to_string(),

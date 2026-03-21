@@ -19,6 +19,7 @@ pub mod compression;
 pub mod context;
 pub mod evolution;
 pub mod graph;
+pub mod handoff;
 pub mod identity;
 pub mod lifecycle;
 pub mod memory_crud;
@@ -168,6 +169,7 @@ pub fn dispatch(ctx: &HandlerContext, tool_name: &str, params: Value) -> Value {
         "session_context_update_summary" => session::session_context_update_summary(ctx, params),
         "session_context_end" => session::session_context_end(ctx, params),
         "session_context_export" => session::session_context_export(ctx, params),
+        "session_land" => handoff::session_land(ctx, params),
 
         // ── Lifecycle ────────────────────────────────────────────────────────
         "lifecycle_status" => lifecycle::lifecycle_status(ctx, params),
