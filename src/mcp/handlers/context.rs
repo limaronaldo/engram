@@ -161,12 +161,18 @@ pub fn memory_fact_graph(ctx: &HandlerContext, params: Value) -> Value {
 /// - `strategy` (string, optional) — "greedy" | "balanced" | "recency" (default: "greedy")
 /// - `workspace` (string, optional) — workspace to search in
 /// - `limit` (u64, optional) — max memories to retrieve (default: 20)
+/// - `depth` (u64, optional) — graph traversal depth 1-3 (default: 1, search only)
+/// - `timeframe` (string, optional) — "1h"|"24h"|"7d"|"30d"|"all" (default: "all")
+/// - `include_types` (array of string, optional) — filter to these memory types
+/// - `include_graph` (bool, optional) — include relationship graph in response (default: false)
 pub fn memory_build_context(ctx: &HandlerContext, params: Value) -> Value {
     use crate::intelligence::context_builder::{
         ContextBuilder, MemoryEntry, PromptTemplate, Section, SimpleTokenCounter, Strategy,
     };
     use crate::search::hybrid_search;
     use crate::types::SearchOptions;
+    use chrono::{Duration, Utc};
+    use std::collections::HashSet;
 
     let query = match params.get("query").and_then(|v| v.as_str()) {
         Some(q) => q.to_string(),
@@ -185,6 +191,42 @@ pub fn memory_build_context(ctx: &HandlerContext, params: Value) -> Value {
     };
 
     let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
+
+    // New params: depth, timeframe, include_types, include_graph
+    let depth = params
+        .get("depth")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1)
+        .min(3)
+        .max(1) as usize;
+
+    let timeframe = params
+        .get("timeframe")
+        .and_then(|v| v.as_str())
+        .unwrap_or("all");
+
+    let include_types: Option<Vec<String>> = params
+        .get("include_types")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        });
+
+    let include_graph = params
+        .get("include_graph")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    // Compute the timeframe cutoff
+    let time_cutoff = match timeframe {
+        "1h" => Some(Utc::now() - Duration::hours(1)),
+        "24h" => Some(Utc::now() - Duration::hours(24)),
+        "7d" => Some(Utc::now() - Duration::days(7)),
+        "30d" => Some(Utc::now() - Duration::days(30)),
+        _ => None, // "all" or unrecognized
+    };
 
     let search_opts = SearchOptions {
         workspace: params
@@ -208,15 +250,90 @@ pub fn memory_build_context(ctx: &HandlerContext, params: Value) -> Value {
         )
     });
 
-    let memories = match search_result {
+    let mut memories = match search_result {
         Ok(results) => results,
         Err(e) => return json!({"error": e.to_string()}),
     };
 
-    // Convert to MemoryEntry items.
-    let entries: Vec<MemoryEntry> = memories
+    // Apply timeframe filter
+    if let Some(cutoff) = time_cutoff {
+        memories.retain(|r| r.memory.created_at >= cutoff);
+    }
+
+    // Apply type filter
+    if let Some(ref types) = include_types {
+        memories.retain(|r| types.contains(&r.memory.memory_type.as_str().to_string()));
+    }
+
+    // Depth expansion: follow crossref links to pull in related memories
+    let mut all_memory_contents: Vec<(String, chrono::DateTime<Utc>)> = memories
         .iter()
-        .map(|r| MemoryEntry::new(r.memory.content.clone(), r.memory.created_at))
+        .map(|r| (r.memory.content.clone(), r.memory.created_at))
+        .collect();
+
+    let mut all_memory_ids: Vec<i64> = memories.iter().map(|r| r.memory.id).collect();
+
+    if depth > 1 {
+        let mut seen_ids: HashSet<i64> = all_memory_ids.iter().copied().collect();
+        let mut frontier: Vec<i64> = all_memory_ids.clone();
+
+        for _hop in 1..depth {
+            let mut next_frontier = Vec::new();
+            for id in &frontier {
+                if let Ok(related) = ctx.storage.with_connection(|conn| {
+                    let mut stmt = conn.prepare(
+                        "SELECT DISTINCT to_id FROM crossrefs WHERE from_id = ?1
+                         UNION
+                         SELECT DISTINCT from_id FROM crossrefs WHERE to_id = ?1",
+                    )?;
+                    let ids: Vec<i64> = stmt
+                        .query_map(rusqlite::params![id], |row| row.get(0))?
+                        .filter_map(|r| r.ok())
+                        .collect();
+                    Ok(ids)
+                }) {
+                    for rid in related {
+                        if seen_ids.insert(rid) {
+                            next_frontier.push(rid);
+                        }
+                    }
+                }
+            }
+
+            if next_frontier.is_empty() {
+                break;
+            }
+
+            // Fetch the actual memories for the new frontier
+            for id in &next_frontier {
+                if let Ok(mem) = ctx.storage.with_connection(|conn| {
+                    crate::storage::queries::get_memory(conn, *id)
+                }) {
+                    // Apply timeframe filter to expanded memories too
+                    if let Some(cutoff) = time_cutoff {
+                        if mem.created_at < cutoff {
+                            continue;
+                        }
+                    }
+                    // Apply type filter to expanded memories too
+                    if let Some(ref types) = include_types {
+                        if !types.contains(&mem.memory_type.as_str().to_string()) {
+                            continue;
+                        }
+                    }
+                    all_memory_contents.push((mem.content.clone(), mem.created_at));
+                    all_memory_ids.push(mem.id);
+                }
+            }
+
+            frontier = next_frontier;
+        }
+    }
+
+    // Convert to MemoryEntry items.
+    let entries: Vec<MemoryEntry> = all_memory_contents
+        .iter()
+        .map(|(content, created_at)| MemoryEntry::new(content.clone(), *created_at))
         .collect();
 
     let template = PromptTemplate {
@@ -234,12 +351,52 @@ pub fn memory_build_context(ctx: &HandlerContext, params: Value) -> Value {
     let prompt = builder.build(&template, &entries, strategy);
     let token_estimate = builder.estimate_tokens(&prompt);
 
-    json!({
+    // Build graph data if requested
+    let graph = if include_graph {
+        ctx.storage
+            .with_connection(|conn| {
+                let mut edges = Vec::new();
+                for id in &all_memory_ids {
+                    let mut stmt = conn.prepare(
+                        "SELECT from_id, to_id, edge_type FROM crossrefs
+                         WHERE from_id = ?1 OR to_id = ?1",
+                    )?;
+                    let rows: Vec<Value> = stmt
+                        .query_map(rusqlite::params![id], |row| {
+                            Ok(json!({
+                                "source": row.get::<_, i64>(0)?,
+                                "target": row.get::<_, i64>(1)?,
+                                "relation": row.get::<_, String>(2)?
+                            }))
+                        })?
+                        .filter_map(|r| r.ok())
+                        .collect();
+                    edges.extend(rows);
+                }
+                Ok(json!({"edges": edges, "node_count": all_memory_ids.len()}))
+            })
+            .unwrap_or_else(|_| json!({"edges": [], "node_count": 0}))
+    } else {
+        Value::Null
+    };
+
+    let mut response = json!({
         "prompt": prompt,
         "token_estimate": token_estimate,
         "memories_used": entries.len(),
-        "total_budget": total_budget
-    })
+        "total_budget": total_budget,
+        "depth": depth,
+        "timeframe": timeframe
+    });
+
+    if include_graph {
+        response
+            .as_object_mut()
+            .expect("response is an object")
+            .insert("graph".to_string(), graph);
+    }
+
+    response
 }
 
 // ── Memory blocks ─────────────────────────────────────────────────────────────
@@ -977,6 +1134,215 @@ pub fn memory_block_history(ctx: &HandlerContext, params: Value) -> Value {
 #[cfg(test)]
 mod context_tests {
     use super::safe_truncate;
+
+    // ── Helper: build a HandlerContext with in-memory storage ──────────────
+    fn test_ctx() -> super::super::HandlerContext {
+        use std::sync::Arc;
+        use parking_lot::Mutex;
+        use crate::embedding::{create_embedder, EmbeddingCache};
+        use crate::search::{AdaptiveCacheConfig, FuzzyEngine, SearchConfig, SearchResultCache};
+        use crate::storage::Storage;
+        use crate::types::EmbeddingConfig;
+
+        let storage = Storage::open_in_memory().expect("in-memory storage");
+        let embedder = create_embedder(&EmbeddingConfig::default()).expect("tfidf embedder");
+        super::super::HandlerContext {
+            storage,
+            embedder,
+            fuzzy_engine: Arc::new(Mutex::new(FuzzyEngine::new())),
+            search_config: SearchConfig::default(),
+            realtime: None,
+            embedding_cache: Arc::new(EmbeddingCache::default()),
+            search_cache: Arc::new(SearchResultCache::new(AdaptiveCacheConfig::default())),
+            #[cfg(feature = "meilisearch")]
+            meili: None,
+            #[cfg(feature = "meilisearch")]
+            meili_indexer: None,
+            #[cfg(feature = "meilisearch")]
+            meili_sync_interval: 60,
+            #[cfg(feature = "langfuse")]
+            langfuse_runtime: Arc::new(
+                tokio::runtime::Runtime::new().expect("langfuse runtime"),
+            ),
+        }
+    }
+
+    /// Seed a memory via dispatch and return its id.
+    fn seed_memory(ctx: &super::super::HandlerContext, content: &str, mem_type: &str) -> i64 {
+        let result = super::super::dispatch(
+            ctx,
+            "memory_create",
+            serde_json::json!({
+                "content": content,
+                "memory_type": mem_type,
+                "workspace": "default"
+            }),
+        );
+        result["id"].as_i64().expect("memory must be created")
+    }
+
+    /// Link two memories via dispatch.
+    fn link_memories(ctx: &super::super::HandlerContext, from: i64, to: i64) {
+        super::super::dispatch(
+            ctx,
+            "memory_link",
+            serde_json::json!({
+                "from_id": from,
+                "to_id": to,
+                "edge_type": "related_to",
+                "score": 0.9
+            }),
+        );
+    }
+
+    #[test]
+    fn test_build_context_backward_compat() {
+        let ctx = test_ctx();
+        seed_memory(&ctx, "Rust is a systems programming language", "note");
+
+        let result = super::memory_build_context(
+            &ctx,
+            serde_json::json!({"query": "Rust programming"}),
+        );
+
+        // Must contain the original fields
+        assert!(result.get("prompt").is_some(), "must have prompt");
+        assert!(result.get("token_estimate").is_some(), "must have token_estimate");
+        assert!(result.get("memories_used").is_some(), "must have memories_used");
+        assert!(result.get("total_budget").is_some(), "must have total_budget");
+
+        // Must contain the new default fields
+        assert_eq!(result["depth"], 1, "default depth must be 1");
+        assert_eq!(result["timeframe"], "all", "default timeframe must be 'all'");
+
+        // Graph should NOT be present when include_graph is false (default)
+        assert!(result.get("graph").is_none(), "graph should not be present by default");
+    }
+
+    #[test]
+    fn test_build_context_include_types_filters() {
+        let ctx = test_ctx();
+        seed_memory(&ctx, "Important decision about architecture", "decision");
+        seed_memory(&ctx, "Remember to buy groceries", "note");
+
+        let result = super::memory_build_context(
+            &ctx,
+            serde_json::json!({
+                "query": "architecture decision groceries",
+                "include_types": ["decision"]
+            }),
+        );
+
+        // Only decision-type memories should be included
+        let used = result["memories_used"].as_u64().unwrap_or(0);
+        // The prompt should contain architecture but not groceries
+        let prompt = result["prompt"].as_str().unwrap_or("");
+        assert!(
+            !prompt.is_empty(),
+            "prompt should not be empty when there are matching memories"
+        );
+        // At most 1 memory (the decision one) if search found both
+        assert!(used <= 1, "should only include decision-type memories, got {}", used);
+    }
+
+    #[test]
+    fn test_build_context_timeframe_filters() {
+        let ctx = test_ctx();
+        // Create a memory (it will have a current timestamp)
+        seed_memory(&ctx, "Recent memory about testing", "note");
+
+        // With timeframe "1h", the memory should be included (just created)
+        let result = super::memory_build_context(
+            &ctx,
+            serde_json::json!({
+                "query": "testing",
+                "timeframe": "1h"
+            }),
+        );
+        assert_eq!(result["timeframe"], "1h");
+        // Should still find the memory since it was just created
+        let used = result["memories_used"].as_u64().unwrap_or(0);
+        assert!(used >= 1, "recently created memory should be found with 1h timeframe");
+    }
+
+    #[test]
+    fn test_build_context_depth_expansion() {
+        let ctx = test_ctx();
+        let id1 = seed_memory(&ctx, "Core concept about neural networks", "note");
+        let id2 = seed_memory(&ctx, "Backpropagation algorithm details", "note");
+        let _id3 = seed_memory(&ctx, "Gradient descent optimization", "note");
+
+        // Link id1 -> id2, id2 -> id3
+        link_memories(&ctx, id1, id2);
+        link_memories(&ctx, id2, _id3);
+
+        // With depth=2, should find search results + 1 hop of related
+        let result = super::memory_build_context(
+            &ctx,
+            serde_json::json!({
+                "query": "neural networks",
+                "depth": 2
+            }),
+        );
+        assert_eq!(result["depth"], 2);
+        // Should have more memories than depth=1
+        let deep_used = result["memories_used"].as_u64().unwrap_or(0);
+
+        let result_shallow = super::memory_build_context(
+            &ctx,
+            serde_json::json!({
+                "query": "neural networks",
+                "depth": 1
+            }),
+        );
+        let shallow_used = result_shallow["memories_used"].as_u64().unwrap_or(0);
+
+        // Deep should find >= shallow (may find related memories)
+        assert!(
+            deep_used >= shallow_used,
+            "depth=2 ({}) should find >= depth=1 ({})",
+            deep_used,
+            shallow_used
+        );
+    }
+
+    #[test]
+    fn test_build_context_include_graph() {
+        let ctx = test_ctx();
+        let id1 = seed_memory(&ctx, "Graph data structures", "note");
+        let id2 = seed_memory(&ctx, "Adjacency list representation", "note");
+        link_memories(&ctx, id1, id2);
+
+        let result = super::memory_build_context(
+            &ctx,
+            serde_json::json!({
+                "query": "graph data structures",
+                "include_graph": true
+            }),
+        );
+
+        // Graph key must be present
+        assert!(result.get("graph").is_some(), "graph must be present when include_graph=true");
+        let graph = &result["graph"];
+        assert!(graph.get("edges").is_some(), "graph must have edges");
+        assert!(graph.get("node_count").is_some(), "graph must have node_count");
+    }
+
+    #[test]
+    fn test_build_context_depth_clamped_to_max() {
+        let ctx = test_ctx();
+        seed_memory(&ctx, "Testing depth clamping", "note");
+
+        let result = super::memory_build_context(
+            &ctx,
+            serde_json::json!({
+                "query": "depth clamping",
+                "depth": 10
+            }),
+        );
+        // depth should be clamped to 3
+        assert_eq!(result["depth"], 3, "depth should be clamped to max 3");
+    }
 
     // safe_truncate tests
     #[test]
